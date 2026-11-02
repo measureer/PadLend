@@ -45,6 +45,7 @@
 | 握手 | `python -m padlend --headless --duration 5` | 读 1 字节 `00` 成功（scrcpy 5.0.1 实测；设计原记 4 字节） | ✅ |
 | UHID | `dumpsys input \| grep PadLend` | `PadLend Mouse` / `PadLend Keyboard` 均注册 | ✅ |
 | 指针移动 | `pointer_location=1` + 发送相对位移后截图 | 叠加层出现 `P:1/1`、`X/Y` 变化，屏幕出现系统指针 | ✅ |
+| headless 1:1 | `python -m padlend --headless`（S1-6） | 已实现：连接后 Raw Input → CursorEstimator → UHID；无设备定时退出冒烟 exit 0 | ⏳ 待设备重连后实机复验 |
 | 退出清理 | headless Ctrl+C/到时退出 | `pointer_speed` 还原 -3、server 进程清空、`dumpsys input \| grep -c scrcpy` = 0 | ✅ |
 | jar 重打包 | `tools/repack_server_jar.py` | 官方 jar 的 classes.dex 为 DEFLATE，Android 17 加载失败；重打包为 stored 后启动成功 | ✅ |
 

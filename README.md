@@ -49,7 +49,7 @@ adb devices -l
 # 3. 启动 GUI
 .\.venv\Scripts\python.exe -m padlend
 
-# 4. 无 GUI 冒烟（可选）
+# 4. 无 GUI 模式（可选；连接后把鼠标位移 1:1 送到平板）
 .\.venv\Scripts\python.exe -m padlend --headless
 ```
 
@@ -69,15 +69,16 @@ adb devices -l
 
 | 状态 | 托盘/顶栏 | 含义 |
 |---|---|---|
-| 灰 | IDLE | 未接管，输入归 PC |
-| 黄 | ARMING | 检测到边缘外推，观察窗口 80ms |
+| 灰 | 未连接 | 设备未连上，输入归 PC |
+| 绿 | IDLE | 已连接、未接管 |
+| 黄 | ARMING / RETURNING | 边缘外推观察窗口 / 正在交还 |
 | 红 | CAPTURED | 接管中 |
-| 蓝 | RETURNING | 正在交还 |
-| 橙 | FAULT | 连接/钩子异常，输入已全部交还系统 |
+| 红（错误色） | FAULT | 连接/钩子异常，输入已全部交还系统 |
 
 ## 配置
 
 配置文件：`%APPDATA%\PadLend\config.yaml`（日志在 `%APPDATA%\PadLend\logs\`）。
+受限环境若 `%APPDATA%` 不可写，会依次回退到 `%LOCALAPPDATA%\PadLend`、项目下 `.padlend/`；`PADLEND_HOME` 可显式覆盖配置根目录。
 
 ```yaml
 version: 1

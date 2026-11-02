@@ -23,9 +23,10 @@
 
 - `GetCurrentThreadId` 误从 user32 加载（全局热键与低级键盘钩子启动即失败）：改从 kernel32 加载，并加真实安装测试。
 - GUI 启动时安装低级键盘钩子、退出时卸载；此前键盘转发虽已实现但未接线。
-- GUI/headless 启动时启动 RawInputSource 并接线 `Router.on_raw`；此前只有 `--debug-raw` 使用 Raw Input，正常模式收不到鼠标事件。
+- GUI 启动时启动 RawInputSource 并接线 `Router.on_raw`；此前只有 `--debug-raw` 使用 Raw Input，正常 GUI 模式收不到鼠标事件。
 - `warp_to` 亚像素残差导致入口不命中/出口溢出失效：边界轴补一帧精确落边。
 - 错位双屏下默认吸附段取错（首条而非最长段）：改为同边同显示器取最长合法段。
+- `--headless` 此前只连接设备、不转发鼠标，且 `--duration` 在 session 已置 started 但 facts 未发布的窗口内失效（会卡到 40s 首连超时）：连接后启动 Raw Input，位移经 `CursorEstimator` 直接发 UHID（不经过边缘状态机），定时检查移到循环顶部。
 
 ### 已知限制
 

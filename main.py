@@ -248,11 +248,40 @@ class Runtime:
 # 无头模式
 # ---------------------------------------------------------------------------
 def run_headless(cfg: Config, args: argparse.Namespace) -> int:
+    from tablet.cursor import CursorEstimator
+    from win.rawinput import RawInputSource
+
     runtime = Runtime(cfg)
     stop_event = threading.Event()
+    source: RawInputSource | None = None
 
     def _on_state(old: Any, new: Any, reason: str) -> None:
         print(f"[state] {old} -> {new} ({reason})", flush=True)
+
+    # S1-6：无 GUI 时把 Raw Input 位移直接换算成 UHID 相对报告，
+    # 不经过边缘状态机（没有遮罩/ClipCursor），用于验证 1:1 指针链路。
+    estimator: CursorEstimator | None = None
+    estimator_key: tuple[int, int, float] | None = None
+
+    def _on_raw(ev: Any) -> None:
+        nonlocal estimator, estimator_key
+        if not runtime.session.started:
+            return
+        facts = runtime.session.facts
+        if facts is None:
+            return
+        key = (facts.width, facts.height, facts.xscale)
+        if key != estimator_key:
+            estimator = CursorEstimator(facts.width, facts.height, facts.xscale)
+            estimator_key = key
+        if estimator is None:
+            return
+        cx, cy = estimator.feed(ev.dx, ev.dy, cfg.motion.gain)
+        try:
+            runtime.session.send_mouse(ev.buttons, cx, cy, ev.wheel)
+        except PadLendError:
+            # 断线期间丢弃；supervisor 会重连并重新发布 facts。
+            return
 
     runtime.router.on_state_changed = _on_state
     runtime.router.start()
@@ -262,11 +291,15 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     connected = False
     try:
         while not stop_event.is_set():
+            now = time.monotonic()
+            if args.duration and now >= deadline:
+                break
             if runtime.session.started:
                 if not connected:
                     facts = runtime.session.facts
                     if facts is None:
-                        # session 先置 started，随后才发布 facts；避免竞态窗口解引用
+                        # session 先置 started，随后才发布 facts；等下一轮再查。
+                        # 定时模式已在循环顶部按 deadline 退出，不会卡在这里。
                         stop_event.wait(0.05)
                         continue
                     runtime.facts = facts
@@ -276,18 +309,25 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
                         flush=True,
                     )
                     connected = True
-            elif not connected and time.monotonic() >= deadline:
+                    if source is None:
+                        try:
+                            source = RawInputSource(_on_raw)
+                            source.start()
+                            print("[input] Raw Input 已启动，鼠标位移 1:1 发送到平板", flush=True)
+                        except PadLendError as exc:
+                            LOG.warning("Raw Input 不可用：%s", exc.user_message)
+            elif not connected and now >= deadline:
                 print(
                     "[error] 未发现可用设备（见 tools/probe.py 或 docs/TROUBLESHOOTING.md）",
                     flush=True,
                 )
                 return 2
-            if args.duration and time.monotonic() >= deadline:
-                break
             stop_event.wait(0.25)
     except KeyboardInterrupt:
         print("\n收到 Ctrl+C", flush=True)
     finally:
+        if source is not None:
+            source.stop()
         runtime.stop()
         _mark_clean_exit()
     return 0
