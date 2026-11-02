@@ -196,6 +196,7 @@ class Runtime:
         from tablet.adb import Adb
         from tablet.session import TabletSession
         from win.desktop import DesktopMap
+        from win.keyboard_hook import KeyboardHook
         from win.mask import CursorMask
 
         self.cfg = cfg
@@ -204,6 +205,9 @@ class Runtime:
         self.session: TabletSession = TabletSession(cfg, adb=self.adb)
         self.mask: CursorMask = CursorMask()
         self.router: Router = Router(cfg, self.session, self.desktop, self.mask)
+        # 低级钩子必须在 GUI 线程外独立线程；回调只把事件交给 Router，
+        # 是否吞键完全由 Router 的状态机/白名单决定。
+        self.keyboard_hook: KeyboardHook = KeyboardHook(self.router.on_key)
         # 诊断模式：主线程计数由 Router 外的旁路 RawInput 读取，不影响接管。
         self.raw_debug: Any = None
         self.facts: DeviceFacts | None = None
@@ -213,16 +217,19 @@ class Runtime:
 
     def stop(self) -> None:
         try:
-            self.router.stop()
+            self.keyboard_hook.uninstall()
         finally:
             try:
-                self.session.stop()
+                self.router.stop()
             finally:
                 try:
-                    self.mask.release()
+                    self.session.stop()
                 finally:
-                    if self.raw_debug is not None:
-                        self.raw_debug.stop()
+                    try:
+                        self.mask.release()
+                    finally:
+                        if self.raw_debug is not None:
+                            self.raw_debug.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +367,14 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
             hotkeys = None
 
     runtime.start()
+
+    if sys.platform == "win32":
+        try:
+            runtime.keyboard_hook.install()
+            LOG.info("键盘钩子已安装")
+        except PadLendError as exc:
+            # 钩子失败不阻断鼠标链路；GUI 仍可用，只是键盘不转发/不屏蔽。
+            LOG.warning("键盘钩子不可用：%s", exc.user_message)
 
     # 设备信息同步到顶栏/画布（只在 facts 变化时）。
     last_facts: tuple[Any, ...] | None = None

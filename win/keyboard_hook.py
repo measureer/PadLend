@@ -133,7 +133,6 @@ def _load_user32() -> Any:
         wintypes.LPARAM,
     ]
     user32.PostThreadMessageW.restype = wintypes.BOOL
-    user32.GetCurrentThreadId.restype = wintypes.DWORD
     user32.GetLastInputInfo.argtypes = [ctypes.POINTER(LASTINPUTINFO)]
     user32.GetLastInputInfo.restype = wintypes.BOOL
     _USER32 = user32
@@ -150,6 +149,9 @@ def _load_kernel32() -> Any:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    # GetCurrentThreadId 在 kernel32，不在 user32（实测报 function not found）。
+    kernel32.GetCurrentThreadId.argtypes = []
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
     _KERNEL32 = kernel32
     return kernel32
 
@@ -297,7 +299,7 @@ class KeyboardHook:
             # 先创建线程消息队列：PostThreadMessage / 看门狗依赖它。
             msg = wintypes.MSG()
             user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_NOREMOVE)
-            self._thread_id = int(user32.GetCurrentThreadId())
+            self._thread_id = int(_load_kernel32().GetCurrentThreadId())
 
             self._proc = _HOOKPROC(self._hook_proc)
             handle = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, _module_handle(), 0)
