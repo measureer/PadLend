@@ -15,27 +15,30 @@ from typing import Final
 # 颜色
 # ---------------------------------------------------------------------------
 COLORS: Final[dict[str, str]] = {
-    "bg_window": "#1F1F1F",
-    "bg_surface": "#272727",
-    "bg_raised": "#323232",
-    "bg_sunken": "#1A1A1A",
-    "border": "#3A3A3A",
-    "border_strong": "#4A4A4A",
-    "text_primary": "#E8E8E8",
-    "text_secondary": "#9A9A9A",
-    "text_on_accent": "#101010",
-    "accent": "#4CC2FF",
-    "accent_hover": "#6FCFFF",
-    "ok": "#4ADE80",
-    "warn": "#FBBF24",
-    "err": "#F87171",
-    "capturing": "#FF5C5C",
-    "disconnected": "#6B6B6B",
+    "bg_window": "#0E1116",
+    "bg_surface": "#151A21",
+    "bg_raised": "#1D242D",
+    "bg_sunken": "#0A0D12",
+    "border": "#27313C",
+    "border_strong": "#3B4756",
+    "text_primary": "#EDF2F7",
+    "text_secondary": "#93A1B1",
+    "text_on_accent": "#071018",
+    "accent": "#6E9BFF",
+    "accent_hover": "#8FB2FF",
+    "accent_soft": "#22304A",
+    "ok": "#3DDC97",
+    "warn": "#FFC857",
+    "err": "#FF6B6B",
+    "capturing": "#FF5C7A",
+    "disconnected": "#5D6A79",
 }
 
 # 托盘/状态点颜色（6.10.7：灰=未连接 / 绿=空闲 / 红=接管中 / 黄=故障）
 STATE_COLORS: Final[dict[str, str]] = {
     "": COLORS["disconnected"],
+    "disconnected": COLORS["disconnected"],
+    "connecting": COLORS["accent"],
     "idle": COLORS["ok"],
     "arming": COLORS["warn"],
     "returning": COLORS["warn"],
@@ -46,6 +49,8 @@ STATE_COLORS: Final[dict[str, str]] = {
 # 顶栏状态文案（与 State 枚举值一一对应）
 STATE_LABELS: Final[dict[str, str]] = {
     "": "未连接",
+    "disconnected": "未连接",
+    "connecting": "连接中",
     "idle": "已连接",
     "arming": "外推中",
     "returning": "回程中",
@@ -71,18 +76,20 @@ LOG_EVENT_COLORS: Final[dict[str, str]] = {
 # ---------------------------------------------------------------------------
 # 尺寸
 # ---------------------------------------------------------------------------
-RADIUS: Final[dict[str, int]] = {"card": 8, "button": 6, "input": 4}
+RADIUS: Final[dict[str, int]] = {"card": 12, "button": 8, "input": 6}
 
 SPACING: Final[dict[str, int]] = {"xs": 4, "s": 8, "m": 12, "l": 16, "xl": 24}
 
-CONTROL_HEIGHT: Final[dict[str, int]] = {"normal": 32, "compact": 28}
+CONTROL_HEIGHT: Final[dict[str, int]] = {"normal": 34, "compact": 28}
 
 ICON_SIZE: Final[int] = 16
-STATUS_DOT_SIZE: Final[int] = 12
+STATUS_DOT_SIZE: Final[int] = 10
 
-WINDOW_DEFAULT_SIZE: Final[tuple[int, int]] = (1200, 760)
-WINDOW_MIN_SIZE: Final[tuple[int, int]] = (1000, 640)
+WINDOW_DEFAULT_SIZE: Final[tuple[int, int]] = (1280, 820)
+WINDOW_MIN_SIZE: Final[tuple[int, int]] = (1060, 680)
 SETTINGS_PANEL_WIDTH: Final[int] = 340
+SIDEBAR_WIDTH: Final[int] = 84
+HEADER_HEIGHT: Final[int] = 64
 
 # ---------------------------------------------------------------------------
 # 字体

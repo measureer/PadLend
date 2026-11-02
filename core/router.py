@@ -183,6 +183,8 @@ class Router:
         self._next_reconnect_at = 0.0
         self._connect_in_progress = False
         self._connect_lock = threading.Lock()
+        # 设备管理（6.10 设备页）：用户主动断开后禁止 supervisor 自动重连。
+        self._device_suspended = False
         self._last_pointer_poll: float | None = None
         self._desktop_sig: tuple[tuple[int, tuple[int, int, int, int]], ...] | None = None
 
@@ -221,6 +223,18 @@ class Router:
     def estimator(self) -> CursorEstimator | None:
         with self._lock:
             return self._estimator
+
+    @property
+    def facts(self) -> DeviceFacts | None:
+        """当前已连接设备的真实事实；未连接时为 ``None``。"""
+        with self._lock:
+            return self._facts
+
+    @property
+    def connected(self) -> bool:
+        """是否已拿到设备事实（GUI 设备页/画布据此显示真实尺寸）。"""
+        with self._lock:
+            return self._facts is not None and self._state is not State.FAULT
 
     def start(self) -> None:
         """启动 sender / supervisor 线程；可重复调用（第二次起为空操作）。
@@ -265,6 +279,73 @@ class Router:
         self._sender_thread.start()
         self._supervisor_thread.start()
         log.info("router.start state=%s", self._state.value)
+
+    def connect_device(self, serial: str | None) -> None:
+        """用户从设备页选择一台设备并连接（可重复调用）。
+
+        会先停掉当前会话、清空旧 facts / 估计器，再把配置里的 serial 换成目标
+        设备并立即触发一次首连。supervisor 随后按 1/2/4/8/16s 退避重试。
+        调用方（GUI）应在后台线程执行，因为 ``session.stop()`` 可能做 adb I/O。
+        """
+        with self._lock:
+            if self._stopped:
+                return
+            self._device_suspended = False
+            current = str(getattr(self._cfg.device, "serial", "") or "")
+            if current != (serial or ""):
+                self._cfg.device.serial = serial or ""
+            self._reconnect_attempt = 0
+            self._next_reconnect_at = self._clock()
+            try:
+                self._abort_capture_locked("device.connect")
+            except Exception:  # pragma: no cover - 清理不应阻断切换
+                log.exception("router.connect_device_cleanup_failed")
+            self._facts = None
+            self._estimator = None
+        self._stop_session_for_device()
+        with self._lock:
+            if self._stopped:
+                return
+            self._device_suspended = False
+            self._reconnect_attempt = 0
+            self._next_reconnect_at = self._clock()
+            self._change_state(State.FAULT, "device.connect")
+        log.info("router.device.connect serial=%s", serial or "")
+
+    def disconnect_device(self) -> None:
+        """用户主动断开设备；停止会话并禁止 supervisor 自动重连。"""
+        with self._lock:
+            if self._stopped:
+                return
+            self._device_suspended = True
+            self._next_reconnect_at = float("inf")
+            self._reconnect_attempt = 0
+            try:
+                self._abort_capture_locked("device.disconnect")
+            except Exception:  # pragma: no cover
+                log.exception("router.disconnect_device_cleanup_failed")
+            self._facts = None
+            self._estimator = None
+        self._stop_session_for_device()
+        with self._lock:
+            if self._stopped:
+                return
+            self._facts = None
+            self._estimator = None
+            self._change_state(State.IDLE, "device.disconnect")
+        log.info("router.device.disconnect")
+
+    def _stop_session_for_device(self) -> None:
+        """串行地停掉当前会话，避免与 supervisor 的连接尝试并发。"""
+        self._cancel_connection_best_effort()
+        stopper = getattr(self._session, "stop", None)
+        if not callable(stopper):
+            return
+        with self._connect_lock:
+            try:
+                stopper()
+            except Exception:
+                log.warning("router.device.session_stop_failed", exc_info=True)
 
     def stop(self) -> None:
         """停止所有线程并**保证**释放遮罩；幂等，不调用 ``session.stop()``。
@@ -979,6 +1060,7 @@ class Router:
                 self._state is State.FAULT
                 and current >= self._next_reconnect_at
                 and not self._connect_in_progress
+                and not self._device_suspended
             )
             if connect_due:
                 self._connect_in_progress = True
@@ -987,6 +1069,12 @@ class Router:
             return
         with self._lock:
             if self._stopped:
+                return
+            if self._device_suspended:
+                if self._state is State.FAULT:
+                    self._change_state(State.IDLE, "device.suspended")
+                if self._state is not State.FAULT:
+                    self._emit_metrics_locked()
                 return
             if self._state is not State.FAULT:
                 self._check_health_locked()
@@ -1042,6 +1130,14 @@ class Router:
         with self._lock:
             self._connect_in_progress = False
             if self._stopped:
+                return
+            if self._device_suspended:
+                # 用户在连接过程中点了“断开”：丢弃晚到的 facts，保持 IDLE。
+                self._facts = None
+                self._estimator = None
+                if self._state is not State.FAULT:
+                    self._change_state(State.IDLE, "device.suspended")
+                self._emit_metrics_locked()
                 return
             if ok and facts is not None:
                 self._facts = facts

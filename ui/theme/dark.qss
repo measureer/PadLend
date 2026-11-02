@@ -566,3 +566,208 @@ QScrollArea {
 QScrollArea > QWidget > QWidget {
     background-color: transparent;
 }
+
+/* ------------------------------------------------------ 2026 重设计：外壳 */
+#sideBar {
+    background-color: @bg_surface;
+    border-right: 1px solid @border;
+}
+
+#brandBlock {
+    background-color: transparent;
+}
+
+#brandTitle {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+}
+
+#brandSub {
+    color: @text_secondary;
+    font-size: 10px;
+    letter-spacing: 0.8px;
+}
+
+QPushButton#navButton, QToolButton#navButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: @radius_button;
+    color: @text_primary;
+    min-height: 58px;
+    max-height: 58px;
+    padding: 6px 2px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton#navButton:hover, QToolButton#navButton:hover {
+    background-color: @bg_raised;
+    color: @text_primary;
+}
+
+QPushButton#navButton:checked, QToolButton#navButton:checked {
+    background-color: @accent_soft;
+    border-color: @border_strong;
+    color: @text_primary;
+}
+
+#pageTitle {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+#pageSubtitle {
+    color: @text_secondary;
+    font-size: 12px;
+}
+
+#sectionCard {
+    background-color: @bg_surface;
+    border: 1px solid @border;
+    border-radius: @radius_card;
+}
+
+#cardTitle {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#cardHint {
+    color: @text_secondary;
+    font-size: 11px;
+}
+
+#statusPill {
+    background-color: @bg_raised;
+    border: 1px solid @border;
+    border-radius: 11px;
+}
+
+#statusPill[state="idle"] {
+    background-color: rgba(61, 220, 151, 0.12);
+    border-color: rgba(61, 220, 151, 0.42);
+}
+
+#statusPill[state="captured"] {
+    background-color: rgba(255, 92, 122, 0.14);
+    border-color: rgba(255, 92, 122, 0.48);
+}
+
+#statusPill[state="fault"] {
+    background-color: rgba(255, 107, 107, 0.12);
+    border-color: rgba(255, 107, 107, 0.42);
+}
+
+#statusPill[state="arming"],
+#statusPill[state="returning"] {
+    background-color: rgba(255, 200, 87, 0.12);
+    border-color: rgba(255, 200, 87, 0.42);
+}
+
+#statusPillText {
+    font-size: 11px;
+    font-weight: 600;
+}
+
+#deviceHeading {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+#deviceMeta {
+    color: @text_secondary;
+    font-size: 11px;
+}
+
+#detailLabel {
+    color: @text_secondary;
+    font-size: 11px;
+}
+
+#detailValue {
+    color: @text_primary;
+    font-family: @font_mono;
+    font-size: 12px;
+}
+
+#emptyTitle {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+#emptyHint {
+    color: @text_secondary;
+    font-size: 11px;
+}
+
+QListWidget#deviceList {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+
+QListWidget#deviceList::item {
+    background-color: @bg_raised;
+    border: 1px solid transparent;
+    border-radius: @radius_button;
+    color: @text_primary;
+    padding: 10px 12px;
+    margin: 3px 0;
+}
+
+QListWidget#deviceList::item:hover {
+    border-color: @border_strong;
+}
+
+QListWidget#deviceList::item:selected {
+    background-color: @accent_soft;
+    border-color: @accent;
+    color: @text_primary;
+}
+
+QPushButton#primaryButton {
+    background-color: @accent;
+    border-color: @accent;
+    color: @text_on_accent;
+    font-weight: 600;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: @accent_hover;
+    border-color: @accent_hover;
+}
+
+QPushButton#dangerButton {
+    background-color: transparent;
+    border-color: rgba(255, 107, 107, 0.45);
+    color: @err;
+}
+
+QPushButton#dangerButton:hover {
+    background-color: rgba(255, 107, 107, 0.12);
+    border-color: @err;
+}
+
+QPushButton#primaryButton:disabled,
+QPushButton#dangerButton:disabled {
+    background-color: transparent;
+    border-color: @border;
+    color: @disconnected;
+}
+
+QFrame#canvasCard {
+    background-color: @bg_surface;
+    border: 1px solid @border;
+    border-radius: @radius_card;
+}
+
+#bottomBar {
+    background-color: @bg_surface;
+    border-top: 1px solid @border;
+}
+
+#bottomHint {
+    color: @text_secondary;
+    font-size: 10px;
+}

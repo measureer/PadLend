@@ -439,6 +439,7 @@ class TabletItem(QGraphicsItem):
         self._height = int(size[1])
         self._owner = owner
         self._highlighted = False
+        self._connected = False
         self._attached_edge: Edge | None = None
         self._pointer: QPointF | None = None
         self.setZValue(10)
@@ -462,6 +463,13 @@ class TabletItem(QGraphicsItem):
         self._width = width
         self._height = height
         self.update()
+
+    def set_connected(self, connected: bool) -> None:
+        """未连接时不显示任何具体分辨率（不同型号尺寸不同）。"""
+        connected = bool(connected)
+        if self._connected != connected:
+            self._connected = connected
+            self.update()
 
     def set_highlighted(self, value: bool) -> None:
         if self._highlighted != value:
@@ -502,12 +510,19 @@ class TabletItem(QGraphicsItem):
         y = inner.top() + _device_px(painter, 28.0)
         painter.setFont(_font_for(painter, 13.0, bold=True))
         painter.setPen(QPen(color("text_primary")))
-        orientation = "横屏" if self._width >= self._height else "竖屏"
-        painter.drawText(QPointF(pad, y), f"平板 {self._width}×{self._height}")
-        y += _device_px(painter, 18.0)
-        painter.setFont(_font_for(painter, 11.0))
-        painter.setPen(QPen(color("text_secondary")))
-        painter.drawText(QPointF(pad, y), f"{orientation}  ·  拖动吸附")
+        if self._connected:
+            painter.drawText(QPointF(pad, y), f"{self._width} × {self._height}")
+            y += _device_px(painter, 18.0)
+            painter.setFont(_font_for(painter, 11.0))
+            painter.setPen(QPen(color("text_secondary")))
+            orientation = "横屏" if self._width >= self._height else "竖屏"
+            painter.drawText(QPointF(pad, y), f"{orientation}  ·  拖动吸附")
+        else:
+            painter.drawText(QPointF(pad, y), "未连接设备")
+            y += _device_px(painter, 18.0)
+            painter.setFont(_font_for(painter, 11.0))
+            painter.setPen(QPen(color("text_secondary")))
+            painter.drawText(QPointF(pad, y), "连接后显示实际尺寸")
 
         if self._attached_edge is not None:
             pen = QPen(color("capturing"), max(1.2, _device_px(painter, 4.0)))

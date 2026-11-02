@@ -1,0 +1,451 @@
+"""设备连接页：扫描 adb、选择设备、连接/断开、展示真实设备事实。
+
+只通过注入的 ``adb`` 对象调用公开方法（``devices()``），不 import win32，
+也不在 GUI 线程里执行 adb 命令；扫描与连接动作都在后台线程完成。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ui.icons import make_icon
+from ui.style import repolish
+from ui.theme import tokens
+
+log = logging.getLogger("ui.device_page")
+
+
+class _EmptyArt(QWidget):
+    """空状态插画：一台平板、一条线缆和一点微光。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(130)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt 命名
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w = float(self.width())
+        h = float(self.height())
+        cx = w / 2.0
+        cy = h / 2.0 - 2.0
+
+        glow = QColor(tokens.COLORS["accent"])
+        glow.setAlpha(28)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(glow)
+        painter.drawEllipse(QPointF(cx, cy), 54.0, 42.0)
+
+        tablet = QRectF(cx - 40.0, cy - 30.0, 80.0, 58.0)
+        painter.setBrush(QColor(tokens.COLORS["bg_raised"]))
+        painter.setPen(QPen(QColor(tokens.COLORS["border_strong"]), 1.4))
+        painter.drawRoundedRect(tablet, 8.0, 8.0)
+        painter.setPen(QPen(QColor(tokens.COLORS["accent"]), 1.4))
+        inner = tablet.adjusted(8.0, 8.0, -8.0, -8.0)
+        painter.drawRoundedRect(inner, 3.0, 3.0)
+
+        painter.setPen(QPen(QColor(tokens.COLORS["text_secondary"]), 1.4))
+        painter.drawLine(cx, cy + 30.0, cx, cy + 44.0)
+        painter.setPen(QPen(QColor(tokens.COLORS["accent"]), 1.6))
+        painter.drawLine(cx, cy + 44.0, cx - 18.0, cy + 52.0)
+        painter.drawLine(cx, cy + 44.0, cx + 18.0, cy + 52.0)
+        painter.end()
+
+
+class _ScanThread(QThread):
+    """一次性 adb 扫描；信号携带 ``list[DeviceEntry]`` 与错误文本。"""
+
+    completed = Signal(object, str)
+
+    def __init__(self, scan: Any, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._scan = scan
+
+    def run(self) -> None:  # noqa: D401 - QThread 入口
+        try:
+            entries = list(self._scan() or [])
+        except Exception as exc:  # noqa: BLE001 - 设备扫描失败要显示在页面上
+            log.warning("device scan failed: %r", exc)
+            self.completed.emit([], f"扫描失败：{exc}")
+            return
+        self.completed.emit(entries, "")
+
+
+class DevicePage(QWidget):
+    """设备管理页。"""
+
+    connectRequested = Signal(str)
+    disconnectRequested = Signal()
+
+    def __init__(
+        self,
+        adb: Any | None = None,
+        router: Any | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("devicePage")
+        self._adb = adb
+        self._router = router
+        self._entries: list[Any] = []
+        self._scan_thread: _ScanThread | None = None
+        self._facts: Any | None = None
+        self._busy = False
+        self._state = ""
+        self._values: dict[str, QLabel] = {}
+        self._build()
+        self.set_facts(None)
+
+    # ------------------------------------------------------------------ 构建
+    def _build(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 22)
+        layout.setSpacing(18)
+
+        title = QLabel("设备")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("连接平板后才会读取并显示它的真实分辨率、朝向与输入参数。")
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        heading = QVBoxLayout()
+        heading.setSpacing(3)
+        heading.addWidget(title)
+        heading.addWidget(subtitle)
+
+        self.refresh_button = QPushButton("刷新设备")
+        self.refresh_button.setObjectName("ghostButton")
+        self.refresh_button.setIcon(make_icon("refresh", tokens.COLORS["text_primary"], 16))
+        self.refresh_button.setIconSize(QSize(16, 16))
+        self.refresh_button.clicked.connect(self.refresh)
+        self.scan_hint = QLabel("")
+        self.scan_hint.setObjectName("cardHint")
+
+        top = QHBoxLayout()
+        top.addLayout(heading, 1)
+        top.addWidget(self.scan_hint, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(top)
+
+        content = QHBoxLayout()
+        content.setSpacing(18)
+        content.addWidget(self._build_list_card(), 5)
+        content.addWidget(self._build_detail_card(), 6)
+        layout.addLayout(content, 1)
+
+    def _build_list_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("sectionCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(18, 16, 18, 16)
+        box.setSpacing(10)
+
+        title = QLabel("可用设备")
+        title.setObjectName("cardTitle")
+        hint = QLabel("USB 直连优先；同一台设备同时存在 USB 与无线时只显示稳定的一条。")
+        hint.setObjectName("cardHint")
+        hint.setWordWrap(True)
+        box.addWidget(title)
+        box.addWidget(hint)
+
+        self.device_list = QListWidget()
+        self.device_list.setObjectName("deviceList")
+        self.device_list.setSpacing(2)
+        self.device_list.itemSelectionChanged.connect(self._on_selection)
+        self.device_list.itemDoubleClicked.connect(lambda _item: self._connect_selected())
+        box.addWidget(self.device_list, 1)
+
+        self.empty_box = QWidget()
+        empty_layout = QVBoxLayout(self.empty_box)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        empty_layout.setSpacing(6)
+        empty_layout.addWidget(_EmptyArt())
+        self.empty_title = QLabel("未检测到设备")
+        self.empty_title.setObjectName("emptyTitle")
+        self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_hint = QLabel("用 USB 连接平板并开启「USB 调试」，或先在平板上开启无线调试。")
+        self.empty_hint.setObjectName("emptyHint")
+        self.empty_hint.setWordWrap(True)
+        self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(self.empty_title)
+        empty_layout.addWidget(self.empty_hint)
+        box.addWidget(self.empty_box, 1)
+
+        self.connect_button = QPushButton("连接此设备")
+        self.connect_button.setObjectName("primaryButton")
+        self.connect_button.setIcon(make_icon("link", tokens.COLORS["text_on_accent"], 16))
+        self.connect_button.setIconSize(QSize(16, 16))
+        self.connect_button.setEnabled(False)
+        self.connect_button.clicked.connect(self._connect_selected)
+        box.addWidget(self.connect_button)
+        return card
+
+    def _build_detail_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("sectionCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(20, 16, 20, 16)
+        box.setSpacing(12)
+
+        head = QHBoxLayout()
+        title = QLabel("设备详情")
+        title.setObjectName("cardTitle")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.state_pill = QFrame()
+        self.state_pill.setObjectName("statusPill")
+        pill_layout = QHBoxLayout(self.state_pill)
+        pill_layout.setContentsMargins(9, 3, 10, 3)
+        pill_layout.setSpacing(6)
+        self.pill_dot = QLabel()
+        self.pill_dot.setFixedSize(6, 6)
+        self.pill_text = QLabel("未连接")
+        self.pill_text.setObjectName("statusPillText")
+        pill_layout.addWidget(self.pill_dot)
+        pill_layout.addWidget(self.pill_text)
+        head.addWidget(self.state_pill)
+        box.addLayout(head)
+
+        self.detail_headline = QLabel("尚未连接平板")
+        self.detail_headline.setObjectName("deviceHeading")
+        self.detail_meta = QLabel("连接后显示型号、序列号与真实屏幕参数")
+        self.detail_meta.setObjectName("deviceMeta")
+        self.detail_meta.setWordWrap(True)
+        box.addWidget(self.detail_headline)
+        box.addWidget(self.detail_meta)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet(f"color: {tokens.COLORS['border']};")
+        box.addWidget(divider)
+
+        for key, label in (
+            ("model", "型号"),
+            ("serial", "序列号"),
+            ("resolution", "分辨率"),
+            ("orientation", "方向"),
+            ("xscale", "输入比例"),
+            ("pointer_speed", "指针速度"),
+        ):
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            name = QLabel(label)
+            name.setObjectName("detailLabel")
+            value = QLabel("—")
+            value.setObjectName("detailValue")
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row.addWidget(name)
+            row.addStretch(1)
+            row.addWidget(value)
+            self._values[key] = value
+            box.addLayout(row)
+
+        box.addSpacing(10)
+        tips = QLabel(
+            "连接步骤\n"
+            "1. 在平板上开启“开发者选项 → USB 调试”；\n"
+            "2. 首次连接时在平板上允许此电脑的调试授权；\n"
+            "3. 连接后自动读取真实分辨率与输入参数，不依赖型号。"
+        )
+        tips.setObjectName("deviceMeta")
+        tips.setWordWrap(True)
+        tips.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.addWidget(tips)
+
+        box.addStretch(1)
+        self.disconnect_button = QPushButton("断开连接")
+        self.disconnect_button.setObjectName("dangerButton")
+        self.disconnect_button.setIcon(make_icon("unlink", tokens.COLORS["err"], 16))
+        self.disconnect_button.setIconSize(QSize(16, 16))
+        self.disconnect_button.setEnabled(False)
+        self.disconnect_button.clicked.connect(self._disconnect)
+        box.addWidget(self.disconnect_button)
+        return card
+
+    # ------------------------------------------------------------------ 扫描
+    def set_adb(self, adb: Any | None) -> None:
+        self._adb = adb
+
+    def refresh(self) -> None:
+        if self._adb is None:
+            self._set_scan_hint("未找到 adb（打包版应内置）")
+            self._show_entries([], "")
+            return
+        if self._scan_thread is not None:
+            return
+        scan = getattr(self._adb, "devices", None)
+        if not callable(scan):
+            self._set_scan_hint("adb 接口不可用")
+            return
+        self._set_scan_hint("正在扫描…")
+        self.refresh_button.setEnabled(False)
+        thread = _ScanThread(scan, self)
+        thread.completed.connect(self._on_scan_done)
+        thread.finished.connect(self._on_thread_finished)
+        self._scan_thread = thread
+        thread.start()
+
+    def _on_thread_finished(self) -> None:
+        thread = self._scan_thread
+        self._scan_thread = None
+        if thread is not None:
+            thread.deleteLater()
+        self.refresh_button.setEnabled(True)
+
+    def _on_scan_done(self, entries: object, error: str) -> None:
+        self._show_entries(list(entries or []), error)
+
+    def _show_entries(self, entries: list[Any], error: str) -> None:
+        self._entries = entries
+        current = self.device_list.currentItem()
+        selected_serial = ""
+        if current is not None:
+            selected_serial = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        self.device_list.clear()
+
+        for entry in entries:
+            model = str(getattr(entry, "model", "") or "Android 设备").replace("_", " ")
+            serial = str(getattr(entry, "serial", "") or "")
+            transport = "USB" if getattr(entry, "is_usb", False) else "无线"
+            state = str(getattr(entry, "state", "") or "")
+            label = f"{model}\n{serial}    {transport} · {state}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, serial)
+            item.setSizeHint(QSize(0, 62))
+            item.setToolTip(serial)
+            self.device_list.addItem(item)
+            if serial == selected_serial:
+                self.device_list.setCurrentItem(item)
+
+        has_entries = bool(entries)
+        self.device_list.setVisible(has_entries)
+        self.empty_box.setVisible(not has_entries)
+        if error:
+            self.empty_title.setText("扫描失败")
+            self.empty_hint.setText(error)
+        else:
+            self.empty_title.setText("未检测到设备")
+            self.empty_hint.setText(
+                "用 USB 连接平板并开启「USB 调试」，或先在平板上开启无线调试。"
+            )
+        if has_entries and self.device_list.currentItem() is None:
+            self.device_list.setCurrentRow(0)
+        self._on_selection()
+        self._set_scan_hint(f"{len(entries)} 台设备" if has_entries else "")
+
+    def _set_scan_hint(self, text: str) -> None:
+        self.scan_hint.setText(text)
+
+    # ------------------------------------------------------------------ 交互
+    def _on_selection(self) -> None:
+        item = self.device_list.currentItem()
+        self.connect_button.setEnabled(item is not None and not self._busy)
+
+    def _connect_selected(self) -> None:
+        item = self.device_list.currentItem()
+        if item is None or self._busy:
+            return
+        serial = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if not serial:
+            return
+        self.set_busy(True)
+        self.connectRequested.emit(serial)
+
+    def _disconnect(self) -> None:
+        if self._busy:
+            return
+        self.set_busy(True)
+        self.disconnectRequested.emit()
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.refresh_button.setEnabled(not busy)
+        self.connect_button.setEnabled(not busy and self.device_list.currentItem() is not None)
+        self.disconnect_button.setEnabled(not busy and self._facts is not None)
+        if busy:
+            self._set_scan_hint("正在连接…")
+
+    def show_error(self, text: str) -> None:
+        """在列表下方显示一行可恢复的错误，不弹模态框。"""
+        self._set_scan_hint(text or "操作失败")
+        self.scan_hint.setProperty("error", True)
+        repolish(self.scan_hint)
+
+    # ------------------------------------------------------------------ 状态
+    def set_state(self, state: str) -> None:
+        self._state = state
+        label, color = {
+            "disconnected": ("未连接", tokens.COLORS["disconnected"]),
+            "connecting": ("连接中", tokens.COLORS["accent"]),
+            "idle": ("已连接", tokens.COLORS["ok"]),
+            "arming": ("外推中", tokens.COLORS["warn"]),
+            "captured": ("接管中", tokens.COLORS["capturing"]),
+            "returning": ("回程中", tokens.COLORS["warn"]),
+            "fault": ("连接异常", tokens.COLORS["err"]),
+        }.get(state, ("未连接", tokens.COLORS["disconnected"]))
+        self.pill_text.setText(label)
+        self.pill_dot.setStyleSheet(
+            f"background-color: {color}; border-radius: 3px;"
+        )
+        self.state_pill.setProperty("state", state)
+        repolish(self.state_pill)
+
+    def set_facts(self, facts: Any | None) -> None:
+        self._facts = facts
+        if facts is None:
+            self.detail_headline.setText("尚未连接平板")
+            self.detail_meta.setText("连接后显示型号、序列号与真实屏幕参数")
+            for value in self._values.values():
+                value.setText("—")
+            self.disconnect_button.setEnabled(False)
+            self.set_state("")
+            return
+
+        model = str(getattr(facts, "model", "") or "Android 设备").replace("_", " ")
+        serial = str(getattr(facts, "serial", "") or "")
+        width = int(getattr(facts, "width", 0) or 0)
+        height = int(getattr(facts, "height", 0) or 0)
+        orientation = int(getattr(facts, "orientation", 0) or 0)
+        xscale = float(getattr(facts, "xscale", 1.0) or 1.0)
+        pointer_speed = getattr(facts, "pointer_speed", None)
+
+        self.detail_headline.setText(model)
+        self.detail_meta.setText(serial or "序列号未知")
+        self._values["model"].setText(model)
+        self._values["serial"].setText(serial or "—")
+        self._values["resolution"].setText(f"{width} × {height}" if width and height else "—")
+        self._values["orientation"].setText("横屏" if orientation & 1 else "竖屏")
+        self._values["xscale"].setText(f"{xscale:.3f}")
+        self._values["pointer_speed"].setText(
+            "—" if pointer_speed is None else str(pointer_speed)
+        )
+        self.disconnect_button.setEnabled(not self._busy)
+        if self._state in ("", "fault"):
+            self.set_state("idle")
+
+    def set_connected(self, connected: bool) -> None:
+        self.disconnect_button.setEnabled(connected and not self._busy)
+
+    # ------------------------------------------------------------------ 清理
+    def stop(self) -> None:
+        thread = self._scan_thread
+        if thread is None:
+            return
+        thread.requestInterruption()
+        thread.wait(1500)
+        self._scan_thread = None

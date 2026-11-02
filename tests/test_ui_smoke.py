@@ -450,3 +450,61 @@ def test_wizard_has_five_idle_pages(qapp: QApplication) -> None:
         assert page._chain is None
     wizard.stop_all()
     wizard.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# 设备页：未连接不显示任何具体分辨率
+# ---------------------------------------------------------------------------
+def test_device_page_hides_resolution_until_facts(qapp: QApplication) -> None:
+    from tablet.session import DeviceFacts
+    from ui.device_page import DevicePage
+
+    page = DevicePage()
+    try:
+        page.set_facts(None)
+        assert page._values["resolution"].text() == "—"
+        assert page._values["orientation"].text() == "—"
+        texts = [label.text() for label in page.findChildren(QLabel)]
+        assert not any("3200" in text or "2136" in text for text in texts)
+
+        page.set_facts(
+            DeviceFacts(
+                serial="serial-1",
+                model="HONOR CGA-W00",
+                width=3200,
+                height=2136,
+                orientation=1,
+                xscale=1.312,
+                pointer_speed=-3,
+            )
+        )
+        assert page._values["resolution"].text() == "3200 × 2136"
+        assert page._values["orientation"].text() == "横屏"
+    finally:
+        page.deleteLater()
+        qapp.processEvents()
+
+
+def test_main_window_device_header_has_no_default_resolution(
+    window: Any, qapp: QApplication
+) -> None:
+    from tablet.session import DeviceFacts
+
+    window.update_device(None)
+    assert "3200" not in window.device_text.text()
+    assert "2136" not in window.orientation_text.text()
+    assert window.orientation_text.text() == "—"
+
+    window.update_device(
+        DeviceFacts(
+            serial="serial-1",
+            model="Pad",
+            width=2560,
+            height=1600,
+            orientation=1,
+            xscale=1.0,
+            pointer_speed=0,
+        )
+    )
+    assert "2560" in window.orientation_text.text()
+    assert window._orientation == "横屏"

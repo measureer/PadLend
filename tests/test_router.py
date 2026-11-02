@@ -656,3 +656,47 @@ def test_router_metrics_callback() -> None:
     }
     assert set(collected[0]) == expected
     assert rig.router.metrics_snapshot()["backlog"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 设备管理（GUI 设备页）：主动连接/断开不能破坏 supervisor 重连语义
+# ---------------------------------------------------------------------------
+def test_connect_device_switches_serial_and_clears_old_facts() -> None:
+    rig = make_rig()
+    rig.router._supervisor_tick()
+    assert rig.router.facts is not None
+
+    rig.router.connect_device("serial-2")
+    assert rig.config.device.serial == "serial-2"
+    assert rig.router.facts is None
+    assert rig.router.state is State.FAULT
+    assert rig.session.stop_calls >= 1
+
+    rig.router._supervisor_tick()
+    assert rig.router.state is State.IDLE
+    assert rig.router.facts is not None
+    assert rig.router.connected is True
+
+
+def test_disconnect_device_suspends_auto_reconnect_until_user_connects() -> None:
+    rig = make_rig()
+    rig.router.connect_device("serial-1")
+    rig.router._supervisor_tick()
+    assert rig.router.facts is not None
+
+    rig.router.disconnect_device()
+    assert rig.router.state is State.IDLE
+    assert rig.router.facts is None
+    assert rig.router.connected is False
+    calls = rig.session.start_calls
+
+    rig.clock.advance(120.0)
+    rig.router._supervisor_tick()
+    assert rig.session.start_calls == calls
+    assert rig.router.state is State.IDLE
+
+    rig.router.connect_device("serial-2")
+    rig.router._supervisor_tick()
+    assert rig.router.state is State.IDLE
+    assert rig.router.facts is not None
+    assert rig.config.device.serial == "serial-2"

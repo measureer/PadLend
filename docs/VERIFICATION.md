@@ -84,14 +84,27 @@ adb devices -l
 4. 任务管理器强杀 `PadLend.exe`，重新运行，确认启动自清理（`dumpsys input | grep -c scrcpy` == 0，`ClipCursor` 已释放）；
 5. 连续 2h 后看 `%APPDATA%\PadLend\logs\padlend.log` 是否有 `drop_pct` 上升/异常。
 
-## 6. 打包（2026-11-02 实测）
+## 6. 界面与设备管理（0.2.0）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 新主窗 | 原生窗口截图（`docs/screenshots/ui-devices.png`） | 84px 导航、64px 顶栏、设备页双卡布局、中文正常 | ✅ |
+| 未连接门控 | `test_device_page_hides_resolution_until_facts`、`test_main_window_device_header_has_no_default_resolution` | 未连接时分辨率/方向均为“—”，界面无 3200/2136 字样 | ✅ |
+| 连接后事实 | 同一测试注入 `DeviceFacts(3200×2136)` | 显示 `3200 × 2136`、横屏、画布切到已连接 | ✅ |
+| 设备管理 Router | `test_connect_device_switches_serial_and_clears_old_facts`、`test_disconnect_device_suspends_auto_reconnect_until_user_connects` | 切换 serial、断开后 supervisor 不自动重连 | ✅ |
+| 打包 GUI | `dist\PadLend.exe` 原生启动截图 | 无设备时顶栏/设备页显示中性“未连接”，不误报故障 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 296 passed, 3 skipped | ✅ |
+
+真机点击“连接此设备” → 画布出现真实尺寸 → 边缘穿越的交互链路，待平板重新连接后按 A1–A13 复验。
+
+## 7. 打包（2026-11-02 实测）
 
 | 项 | 命令 | 实际 | 结论 |
 |---|---|---|---|
 | 安装 PyInstaller | `python -m pip install pyinstaller` | PyInstaller 6.22.3 | ✅ |
 | onefile 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | Build complete（约 56s） | ✅ |
 | 产物 | `dist\PadLend.exe` | 单文件约 51MB，含 PySide6/jar/adb/图标 | ✅ |
-| 版本冒烟 | `dist\PadLend.exe --version` | `PadLend 0.1.0` | ✅ |
+| 版本冒烟 | `dist\PadLend.exe --version` | `PadLend 0.2.0` | ✅ |
 | 内置 adb | 去掉 PATH 后 `PadLend.exe --headless --duration 1` | exit 0；E101（说明用的是内置 adb，而非 PATH） | ✅ |
 | GUI 启动 | 双击 `dist\PadLend.exe` | 主窗/画布/设置/日志正常，标题 PadLend | ✅ |
 | 便携目录 | 运行后检查 `dist\.padlend\` | `config.yaml`、`logs\padlend.log`、`exit.clean` 持久化 | ✅ |

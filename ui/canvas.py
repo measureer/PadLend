@@ -155,6 +155,10 @@ class DesktopCanvas(QGraphicsView):
         if self._auto_fit:
             self.fit_view()
 
+    def set_connected(self, connected: bool) -> None:
+        """未连接时画布只显示占位文案，不暴露默认分辨率。"""
+        self._tablet_item.set_connected(connected)
+
     def set_pc_cursor(self, x: float, y: float) -> None:
         """PC 光标位置（虚拟桌面物理像素）。"""
         self._pc_ghost.setPos(float(x), float(y))

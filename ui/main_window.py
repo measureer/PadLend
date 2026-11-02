@@ -21,6 +21,8 @@ import ctypes
 import logging
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,19 +37,25 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSplitter,
+    QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 import constants as C
 from ui.bridge import RouterBridge, state_value
+from ui.device_page import DevicePage
 from ui.diagnostics import DiagnosticsDialog, static_summary
+from ui.icons import brand_pixmap, make_icon
 from ui.log_view import LogView
 from ui.settings_panel import SettingsPanel
 from ui.style import repolish
@@ -147,6 +155,8 @@ class MainWindow(QMainWindow):
     settingsSaved = Signal(object)
     # 供热键线程/非 GUI 线程请求“把 PC 剪贴板发给平板”；排队回 GUI 线程读取。
     clipboardSyncRequested = Signal()
+    # 设备连接/断开在后台线程执行，完成后经队列信号回到 GUI 线程。
+    deviceActionFinished = Signal(bool, str)
 
     def __init__(
         self,
@@ -155,6 +165,7 @@ class MainWindow(QMainWindow):
         desktop: object,
         *,
         config_path: Path | None = None,
+        adb: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -167,9 +178,10 @@ class MainWindow(QMainWindow):
         self.config = config
         self.router = router
         self.desktop = desktop
+        self._adb = adb
         self._config_path = Path(config_path) if config_path is not None else C.config_path()
         self._state = ""
-        self._orientation = "横屏"
+        self._orientation = "—"
         self._pointer_pos: tuple[float, float] = (0.0, 0.0)
         self._placement: object | None = None
         self._force_quit = False
@@ -177,15 +189,18 @@ class MainWindow(QMainWindow):
         self._hidden_notice_shown = False
         self._wizard: SetupWizard | None = None
         self._diagnostics: DiagnosticsDialog | None = None
+        self._facts: Any | None = None
+        self._connecting = False
 
         self._build_ui()
         self._build_tray()
         self._build_bridge()
         self.clipboardSyncRequested.connect(self.sync_clipboard, Qt.ConnectionType.QueuedConnection)
+        self.deviceActionFinished.connect(self._on_device_action_finished)
         self._build_shortcuts()
         self._build_actions()
         self._connect_canvas()
-        self._refresh_header_device()
+        self.update_device(None)
         self._install_initial_placement()
         self.log_view.append_event("APP", f"{C.APP_NAME} {C.VERSION} 启动")
         log.info("main window ready (canvas=%s)", self.canvas_mode)
@@ -203,81 +218,94 @@ class MainWindow(QMainWindow):
         self.settings = SettingsPanel(
             self.config, self.desktop, config_path=self._config_path, parent=self
         )
-        self.settings.setMinimumWidth(tokens.SETTINGS_PANEL_WIDTH)
-        self.settings.setMaximumWidth(tokens.SETTINGS_PANEL_WIDTH + 80)
         self.canvas, self.canvas_mode = self._create_canvas()
+        self.device_page = DevicePage(self._adb, self.router, self)
+        self.device_page.connectRequested.connect(self._on_device_connect_requested)
+        self.device_page.disconnectRequested.connect(self._on_device_disconnect_requested)
 
-        self.main_split = QSplitter(Qt.Orientation.Horizontal, root)
-        self.main_split.setObjectName("mainSplit")
-        self.main_split.setChildrenCollapsible(False)
-        self.main_split.addWidget(self.canvas)
-        self.main_split.addWidget(self.settings)
-        self.main_split.setStretchFactor(0, 1)
-        self.main_split.setStretchFactor(1, 0)
-        self.main_split.setSizes([860, tokens.SETTINGS_PANEL_WIDTH])
+        self.log_view = LogView(self)
+        self.metrics_panel = MetricsPanel(self)
 
-        self.log_view = LogView(root)
-        self.metrics_panel = MetricsPanel(root)
-        self.bottom_split = QSplitter(Qt.Orientation.Horizontal, root)
-        self.bottom_split.setObjectName("bottomSplit")
-        self.bottom_split.setChildrenCollapsible(False)
-        self.bottom_split.addWidget(self.log_view)
-        self.bottom_split.addWidget(self.metrics_panel)
-        self.bottom_split.setStretchFactor(0, 1)
-        self.bottom_split.setStretchFactor(1, 0)
-        self.bottom_split.setSizes([800, _METRICS_WIDTH])
-
-        self.vertical_split = QSplitter(Qt.Orientation.Vertical, root)
-        self.vertical_split.setObjectName("verticalSplit")
-        self.vertical_split.setChildrenCollapsible(False)
-        self.vertical_split.addWidget(self.main_split)
-        self.vertical_split.addWidget(self.bottom_split)
-        self.vertical_split.setStretchFactor(0, 1)
-        self.vertical_split.setStretchFactor(1, 0)
-        self.vertical_split.setSizes([540, 220])
-        layout.addWidget(self.vertical_split, 1)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self.sidebar = self._build_sidebar()
+        self.pages = QStackedWidget()
+        self.pages.setObjectName("pages")
+        self.pages.addWidget(self.device_page)
+        self.pages.addWidget(self._build_canvas_page())
+        self.pages.addWidget(self._build_settings_page())
+        self.pages.addWidget(self._build_logs_page())
+        body.addWidget(self.sidebar)
+        body.addWidget(self.pages, 1)
+        layout.addLayout(body, 1)
+        layout.addWidget(self._build_bottom_bar())
 
         self.settings.placementChanged.connect(self._on_settings_placement)
         self.settings.configChanged.connect(self._on_config_saved)
+        self._switch_page(0)
 
     def _build_header(self) -> QFrame:
         header = QFrame(self)
         header.setObjectName("header")
-        header.setFixedHeight(44)
+        header.setFixedHeight(tokens.HEADER_HEIGHT)
+
+        mark = QLabel(header)
+        mark.setPixmap(brand_pixmap(34))
+        mark.setFixedSize(QSize(34, 34))
 
         self.wordmark = QLabel(C.APP_NAME, header)
         self.wordmark.setObjectName("wordmark")
+        subtitle = QLabel("TABLET BRIDGE", header)
+        subtitle.setObjectName("brandSub")
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(0)
+        brand_text.addWidget(self.wordmark)
+        brand_text.addWidget(subtitle)
 
-        self.status_dot = QLabel(header)
+        divider = QFrame(header)
+        divider.setObjectName("headerSeparator")
+        divider.setFixedHeight(26)
+
+        self.status_pill = QFrame(header)
+        self.status_pill.setObjectName("statusPill")
+        pill = QHBoxLayout(self.status_pill)
+        pill.setContentsMargins(10, 4, 11, 4)
+        pill.setSpacing(7)
+        self.status_dot = QLabel(self.status_pill)
         self.status_dot.setObjectName("statusDot")
         size = tokens.STATUS_DOT_SIZE
         self.status_dot.setFixedSize(QSize(size, size))
         self._paint_status_dot("")
-
-        self.status_text = QLabel(tokens.state_label(""), header)
+        self.status_text = QLabel(tokens.state_label(""), self.status_pill)
         self.status_text.setObjectName("statusText")
+        pill.addWidget(self.status_dot)
+        pill.addWidget(self.status_text)
+
         self.device_text = QLabel("未连接设备", header)
         self.device_text.setObjectName("deviceText")
-        self.orientation_text = QLabel(self._orientation, header)
-        self.orientation_text.setObjectName("deviceText")
+        self.orientation_text = QLabel("—", header)
+        self.orientation_text.setObjectName("orientationText")
         self.latency_text = QLabel("RTT —", header)
         self.latency_text.setObjectName("latencyText")
 
-        self.menu_button = QPushButton("☰", header)
-        self.settings_button = QPushButton("⚙", header)
-        self.minimize_button = QPushButton("—", header)
-        self.close_button = QPushButton("×", header)
-        for button in (self.menu_button, self.settings_button, self.minimize_button):
-            button.setObjectName("iconButton")
+        icon_color = tokens.COLORS["text_secondary"]
+        self.menu_button = QPushButton(header)
+        self.settings_button = QPushButton(header)
+        self.minimize_button = QPushButton(header)
+        self.close_button = QPushButton(header)
+        for button, icon_name, tooltip in (
+            (self.menu_button, "dots", "菜单"),
+            (self.settings_button, "settings", "设置 (Ctrl+,)"),
+            (self.minimize_button, "minimize", "最小化"),
+            (self.close_button, "close", "关闭到托盘"),
+        ):
+            button.setObjectName("closeButton" if button is self.close_button else "iconButton")
             button.setFixedSize(QSize(28, 28))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button.setObjectName("closeButton")
-        self.close_button.setFixedSize(QSize(28, 28))
-        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.menu_button.setToolTip("菜单")
-        self.settings_button.setToolTip("设置 (Ctrl+,)")
-        self.minimize_button.setToolTip("最小化")
-        self.close_button.setToolTip("关闭到托盘")
+            button.setIcon(make_icon(icon_name, icon_color, 18))
+            button.setIconSize(QSize(18, 18))
+            button.setToolTip(tooltip)
 
         self.settings_button.clicked.connect(self.open_settings)
         self.minimize_button.clicked.connect(self.showMinimized)
@@ -285,23 +313,173 @@ class MainWindow(QMainWindow):
         self.menu_button.clicked.connect(self._popup_menu)
 
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(16, 0, 12, 0)
-        layout.setSpacing(8)
-        layout.addWidget(self.wordmark)
+        layout.setContentsMargins(18, 0, 12, 0)
+        layout.setSpacing(9)
+        layout.addWidget(mark)
+        layout.addLayout(brand_text)
         layout.addSpacing(8)
-        layout.addWidget(self.status_dot)
-        layout.addWidget(self.status_text)
-        layout.addSpacing(12)
+        layout.addWidget(divider)
+        layout.addSpacing(4)
+        layout.addWidget(self.status_pill)
+        layout.addSpacing(8)
         layout.addWidget(self.device_text)
         layout.addWidget(self.orientation_text)
-        layout.addWidget(self.latency_text)
         layout.addStretch(1)
+        layout.addWidget(self.latency_text)
+        layout.addSpacing(6)
         layout.addWidget(self.menu_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.minimize_button)
         layout.addWidget(self.close_button)
         self.header = header
         return header
+
+    def _build_sidebar(self) -> QFrame:
+        bar = QFrame(self)
+        bar.setObjectName("sideBar")
+        bar.setFixedWidth(tokens.SIDEBAR_WIDTH)
+        layout = QVBoxLayout(bar)
+        layout.setContentsMargins(9, 16, 9, 14)
+        layout.setSpacing(7)
+
+        self.nav_buttons: list[QToolButton] = []
+        self.nav_group = QButtonGroup(bar)
+        self.nav_group.setExclusive(True)
+        for index, (name, label) in enumerate(
+            (("devices", "设备"), ("canvas", "布局"), ("settings", "设置"), ("logs", "日志"))
+        ):
+            button = QToolButton(bar)
+            button.setObjectName("navButton")
+            button.setText(label)
+            button.setIcon(make_icon(name, tokens.COLORS["text_primary"], 20))
+            button.setIconSize(QSize(20, 20))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(label)
+            self.nav_group.addButton(button, index)
+            self.nav_buttons.append(button)
+            layout.addWidget(button)
+        layout.addStretch(1)
+        self.nav_group.idClicked.connect(self._switch_page)
+        return bar
+
+    def _build_canvas_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("canvasPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 20, 24, 18)
+        layout.setSpacing(12)
+
+        title = QLabel("桌面布局")
+        title.setObjectName("pageTitle")
+        hint = QLabel("把平板拖到屏幕外轮廓边；Shift 切换角落优先边，双击平板切换横竖。")
+        hint.setObjectName("pageSubtitle")
+        hint.setWordWrap(True)
+        heading = QVBoxLayout()
+        heading.setSpacing(3)
+        heading.addWidget(title)
+        heading.addWidget(hint)
+        row = QHBoxLayout()
+        row.addLayout(heading, 1)
+        self.fit_button = QPushButton("适应窗口")
+        self.fit_button.setObjectName("ghostButton")
+        self.fit_button.setIcon(make_icon("canvas", tokens.COLORS["text_primary"], 15))
+        self.fit_button.clicked.connect(lambda: self._canvas_call("fit_view"))
+        row.addWidget(self.fit_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(row)
+
+        card = QFrame()
+        card.setObjectName("canvasCard")
+        card_box = QVBoxLayout(card)
+        card_box.setContentsMargins(2, 2, 2, 2)
+        card_box.addWidget(self.canvas)
+        layout.addWidget(card, 1)
+        return page
+
+    def _build_settings_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("settingsPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("设置")
+        title.setObjectName("pageTitle")
+        hint = QLabel("摆位、手感、键盘与快捷键；保存后立即生效。")
+        hint.setObjectName("pageSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.settings.setMaximumWidth(760)
+        holder = QWidget()
+        holder_layout = QHBoxLayout(holder)
+        holder_layout.setContentsMargins(0, 4, 0, 0)
+        holder_layout.addWidget(self.settings)
+        holder_layout.addStretch(1)
+        scroll.setWidget(holder)
+        layout.addWidget(scroll, 1)
+        self.settings_scroll = scroll
+        return page
+
+    def _build_logs_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("logsPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 20, 24, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("运行日志")
+        title.setObjectName("pageTitle")
+        hint = QLabel("固定事件名与实时指标；复制诊断时会包含最近日志。")
+        hint.setObjectName("pageSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setChildrenCollapsible(False)
+        split.addWidget(self.log_view)
+        split.addWidget(self.metrics_panel)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
+        split.setSizes([820, _METRICS_WIDTH])
+        layout.addWidget(split, 1)
+        self.logs_split = split
+        return page
+
+    def _build_bottom_bar(self) -> QFrame:
+        bar = QFrame(self)
+        bar.setObjectName("bottomBar")
+        bar.setFixedHeight(30)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(16, 0, 14, 0)
+        layout.setSpacing(10)
+        self.bottom_state = QLabel("未连接设备", bar)
+        self.bottom_state.setObjectName("bottomHint")
+        self.bottom_hint = QLabel("等待设备连接 · 命令行参数仅用于开发验证", bar)
+        self.bottom_hint.setObjectName("bottomHint")
+        layout.addWidget(self.bottom_state)
+        layout.addStretch(1)
+        layout.addWidget(self.bottom_hint)
+        version = QLabel(f"v{C.VERSION}", bar)
+        version.setObjectName("bottomHint")
+        layout.addWidget(version)
+        self.bottom_bar = bar
+        return bar
+
+    def _switch_page(self, index: int) -> None:
+        if index < 0 or index >= self.pages.count():
+            return
+        self.pages.setCurrentIndex(index)
+        for position, button in enumerate(self.nav_buttons):
+            button.setChecked(position == index)
+        if index == 0:
+            self.device_page.refresh()
+        elif index == 1:
+            QTimer.singleShot(0, lambda: self._canvas_call("fit_view"))
 
     def _create_canvas(self) -> tuple[QWidget, str]:
         canvas_cls = DesktopCanvas
@@ -505,16 +683,32 @@ class MainWindow(QMainWindow):
         log.debug("pointer moved: %r", self._pointer_pos)
 
     # ------------------------------------------------------------------ 状态/指标
+    def _present_state(self, state: str) -> str:
+        """未拿到设备事实前，不把 FAULT 当成用户可见的“故障”。"""
+        if not state:
+            return "disconnected"
+        if self._facts is None and state in ("fault", "idle"):
+            return "connecting" if self._connecting else "disconnected"
+        return state
+
     def _on_state(self, old: object, new: object, reason: object) -> None:
         old_value = state_value(old)
         new_value = state_value(new)
         self._state = new_value
-        self._paint_status_dot(new_value)
-        self.status_text.setText(tokens.state_label(new_value))
-        self.status_text.setProperty("state", new_value)
+        present = self._present_state(new_value)
+        self._paint_status_dot(present)
+        self.status_text.setText(tokens.state_label(present))
+        self.status_text.setProperty("state", present)
         repolish(self.status_text)
-        self.tray.set_state(new_value)
-        self.tray.set_connected(new_value != "")
+        self.tray.set_state(present)
+        self.tray.set_connected(self._facts is not None)
+        self.device_page.set_state(present)
+        if present == "disconnected":
+            self.bottom_state.setText("未连接设备")
+        elif present == "connecting":
+            self.bottom_state.setText("正在连接设备…")
+        else:
+            self.bottom_state.setText(f"状态 · {tokens.state_label(present)}")
         text = f"{old_value or '-'} → {new_value or '未连接'}"
         if reason:
             text = f"{text} {reason}"
@@ -579,11 +773,11 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ 动作
     def open_settings(self) -> None:
-        """Ctrl+, / ⚙：展开设置面板并聚焦。"""
-        self.settings.setVisible(True)
-        sizes = self.main_split.sizes()
-        if len(sizes) == 2 and sizes[1] == 0:
-            self.main_split.setSizes([max(560, sizes[0] - 340), 340])
+        """Ctrl+, / ⚙：切到设置页并聚焦第一个控件。"""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._switch_page(2)
         self.settings.focus_first()
 
     def toggle_window(self) -> None:
@@ -708,10 +902,114 @@ class MainWindow(QMainWindow):
         return ""
 
     def _refresh_header_device(self) -> None:
-        serial = str(getattr(getattr(self.config, "device", None), "serial", "") or "")
-        self.device_text.setText(serial or "未连接设备")
-        self.orientation_text.setText(self._orientation)
-        self.tray.set_device(serial)
+        self.update_device(self._facts)
+
+    # ------------------------------------------------------------------ 设备管理
+    def update_device(self, facts: Any | None) -> None:
+        """把连接事实同步到顶栏/画布/设备页；None 表示未连接。"""
+        self._facts = facts
+        if facts is not None:
+            serial = str(getattr(facts, "serial", "") or "")
+            model = str(getattr(facts, "model", "") or "")
+            width = int(getattr(facts, "width", 0) or 0)
+            height = int(getattr(facts, "height", 0) or 0)
+            orientation = int(getattr(facts, "orientation", 0) or 0)
+            self._orientation = "横屏" if orientation & 1 else "竖屏"
+            self.device_text.setText(model or serial or "已连接")
+            self.device_text.setToolTip(serial)
+            if width and height:
+                self.orientation_text.setText(f"{self._orientation} · {width}×{height}")
+                self._canvas_call("set_tablet_size", width, height)
+                self.bottom_hint.setText(
+                    f"{self._orientation} {width}×{height} · 输入桥已就绪"
+                )
+            else:
+                self.orientation_text.setText(self._orientation)
+                self.bottom_hint.setText("已连接 · 正在读取显示信息")
+            self._canvas_call("set_connected", True)
+            self.device_page.set_facts(facts)
+            self.device_page.set_connected(True)
+            self.bottom_state.setText(f"{model or '平板'} · {serial}")
+            self.tray.set_device(serial)
+            self.tray.set_connected(True)
+        else:
+            self._orientation = "—"
+            self.device_text.setText("未连接设备")
+            self.device_text.setToolTip("")
+            self.orientation_text.setText("—")
+            self._canvas_call("set_connected", False)
+            self.device_page.set_facts(None)
+            self.device_page.set_connected(False)
+            self.bottom_state.setText("未连接设备")
+            self.bottom_hint.setText("在设备页连接平板 · 命令行仅用于开发验证")
+            self.tray.set_device("")
+            self.tray.set_connected(False)
+
+    def _on_device_connect_requested(self, serial: str) -> None:
+        serial = str(serial or "").strip()
+        if not serial:
+            self.device_page.show_error("请选择一个已授权的设备")
+            return
+        self.device_page.set_busy(True)
+        self.log_view.append_event("DEVICE", f"连接请求：{serial}")
+        self._run_device_action(self._connect_worker, serial)
+
+    def _on_device_disconnect_requested(self) -> None:
+        self._connecting = False
+        self.device_page.set_busy(True)
+        self.log_view.append_event("DEVICE", "断开当前设备")
+        self._run_device_action(self._disconnect_worker)
+
+    def _connect_worker(self, serial: str) -> tuple[bool, str]:
+        connect = getattr(self.router, "connect_device", None)
+        if not callable(connect):
+            return False, "当前 Router 不支持设备切换"
+        try:
+            connect(serial)
+        except Exception as exc:  # noqa: BLE001 - 回报给 GUI 线程
+            return False, str(exc)
+        deadline = time.monotonic() + 45.0
+        while time.monotonic() < deadline:
+            facts = getattr(self.router, "facts", None)
+            if facts is not None and getattr(facts, "serial", ""):
+                return True, ""
+            time.sleep(0.1)
+        return False, "连接超时：请确认 USB 调试已授权，且 adb 能看到设备"
+
+    def _disconnect_worker(self) -> tuple[bool, str]:
+        disconnect = getattr(self.router, "disconnect_device", None)
+        if not callable(disconnect):
+            return False, "当前 Router 不支持断开"
+        try:
+            disconnect()
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+        return True, ""
+
+    def _run_device_action(self, action: Any, *args: Any) -> None:
+        def runner() -> None:
+            try:
+                ok, message = action(*args)
+            except Exception as exc:  # noqa: BLE001 - 后台线程绝不吞异常退出
+                ok, message = False, str(exc)
+            self.deviceActionFinished.emit(bool(ok), str(message or ""))
+
+        threading.Thread(target=runner, name="padlend-device-action", daemon=True).start()
+
+    def _on_device_action_finished(self, ok: bool, message: str) -> None:
+        self._connecting = False
+        self.device_page.set_busy(False)
+        if ok:
+            facts = getattr(self.router, "facts", None)
+            self.update_device(facts)
+            self.log_view.append_event(
+                "DEVICE",
+                f"已连接 {getattr(facts, 'serial', '') or ''}".strip(),
+            )
+        else:
+            self.log_view.append_event("DEVICE", f"操作失败：{message or '未知错误'}")
+            self.device_page.show_error(message or "操作失败")
+
 
     def _save_config(self) -> bool:
         problems = list(self.config.validate())

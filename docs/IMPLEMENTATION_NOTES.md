@@ -124,7 +124,17 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
    依次尝试 `PADLEND_HOME` / `%APPDATA%` / `%LOCALAPPDATA%` / `<项目>/.padlend`，
    用真实写探针判定；当前实际落在 `<项目>/.padlend`。
 
-## 8. 任务板
+## 8. 0.2.0 UI 重设计与设备管理
+
+- 主窗由「顶栏 + 左右分栏」改为「顶栏 + 84px 导航栏 + QStackedWidget 四页」：设备 / 布局 / 设置 / 日志；旧 `QSplitter` 布局与 emoji 按钮已移除。
+- 新增 `ui/device_page.py`：后台 `QThread` 扫描 adb，设备列表与详情卡；连接/断开由 `Router.connect_device(serial)` / `Router.disconnect_device()` 驱动。
+- `Router` 新增 `_device_suspended`：用户主动断开后 supervisor 不再自动重连；`connect_device()` 切换 `cfg.device.serial` 并清空旧 facts/estimator。
+- 未连接门控：`TabletItem` 默认 `connected=False`，只画“未连接设备 / 连接后显示实际尺寸”；`MainWindow.update_device(None)` 时设备页分辨率/方向为“—”，不出现任何型号默认尺寸。
+- 无设备时 Router 的 FAULT 不再直接显示为“故障”：`_present_state()` 在无 facts 时映射为“未连接”（连接中映射为“连接中”），避免误报。
+- 设置页放入 QScrollArea（最大宽 760），日志页保留 LogView + MetricsPanel 分栏。
+- 主题：新深色分层配色、12px 卡片圆角、QPainter 图标与渐变品牌标识；禁用态按钮补样式。
+
+## 9. 任务板
 
 每个实施者从 `team_task_list` 领取自己的任务，完成后 `team_task_update(action="complete")`
 并向 Lead 发送简报（完成项 / 测试命令与结果 / 未决风险）。写作用域见任务描述。

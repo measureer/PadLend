@@ -385,6 +385,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
         runtime.router,
         runtime.desktop,
         config_path=Path(args.config) if args.config else None,
+        adb=runtime.adb,
     )
     window.show()
 
@@ -428,26 +429,20 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
             # 钩子失败不阻断鼠标链路；GUI 仍可用，只是键盘不转发/不屏蔽。
             LOG.warning("键盘钩子不可用：%s", exc.user_message)
 
-    # 设备信息同步到顶栏/画布（只在 facts 变化时）。
+    # 设备信息同步到设备页/顶栏/画布（只在事实变化时）。
     last_facts: tuple[Any, ...] | None = None
 
     def _sync_device() -> None:
         nonlocal last_facts
-        facts = runtime.session.facts
-        if facts is None:
-            return
-        key = (facts.serial, facts.width, facts.height, facts.orientation)
+        facts = getattr(runtime.router, "facts", None)
+        key = None
+        if facts is not None:
+            key = (facts.serial, facts.width, facts.height, facts.orientation)
         if key == last_facts:
             return
         last_facts = key
         runtime.facts = facts
-        window.set_device_info(facts.serial, facts.width, facts.height)
-        canvas = getattr(window, "canvas", None)
-        if canvas is not None:
-            try:
-                canvas.set_tablet_size(facts.width, facts.height)
-            except Exception as exc:  # noqa: BLE001 - 画布占位时忽略
-                LOG.debug("canvas.set_tablet_size failed: %r", exc)
+        window.update_device(facts)
 
     timer = QTimer()
     timer.setInterval(1000)
