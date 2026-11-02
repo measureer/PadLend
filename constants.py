@@ -29,11 +29,48 @@ ASSETS_DIR = PROJECT_ROOT / "ui" / "theme"
 ICONS_DIR = ASSETS_DIR / "icons"
 
 
+def _writable_dir(base: Path, name: str = APP_NAME) -> Path | None:
+    """返回可写的 ``base/name``；无法创建或写入时返回 ``None``。
+
+    设计要求 ``%APPDATA%\\PadLend``，但受限环境（沙箱/商店版 Python/
+    受控文件夹访问）可能拒绝写用户目录，因此用真实探针而不是 ``os.access``。
+    """
+    target = base / name
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        probe = target / ".write-probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return target
+    except OSError:
+        return None
+
+
 def config_dir() -> Path:
-    """%APPDATA%\\PadLend（6.9）。找不到 APPDATA 时退回用户目录。"""
+    """%APPDATA%\\PadLend（6.9）。找不到时按 PADLEND_HOME/APPDATA/LOCALAPPDATA/项目目录逐级回退。"""
+    override = os.environ.get("PADLEND_HOME")
+    if override:
+        target = Path(override).expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    candidates: list[Path] = []
     appdata = os.environ.get("APPDATA")
-    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-    return base / APP_NAME
+    if appdata:
+        candidates.append(Path(appdata))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local))
+    candidates.append(PROJECT_ROOT)
+
+    for base in candidates:
+        name = ".padlend" if base == PROJECT_ROOT else APP_NAME
+        found = _writable_dir(base, name)
+        if found is not None:
+            return found
+    raise OSError(
+        "找不到可写的配置目录（尝试过 PADLEND_HOME/APPDATA/LOCALAPPDATA/项目目录）"
+    )
 
 
 def config_path() -> Path:
@@ -82,7 +119,10 @@ def scrcpy_server_args(port: int) -> list[str]:
     ]
 
 
-HANDSHAKE_DUMMY = b"\x00\x00\x00\x00"
+# 握手字节：scrcpy 5.0.1 在 tunnel_forward 且只开 control 通道时，
+# DesktopConnection 只 accept 一次并写 **1 个** 0 字节
+# （server/.../device/DesktopConnection.java: controlSocket.write(0)）。
+HANDSHAKE_DUMMY = b"\x00"
 
 # ---------------------------------------------------------------------------
 # adb
@@ -93,6 +133,10 @@ ADB_PUSH_TIMEOUT = 120.0
 ADB_FORWARD_TIMEOUT = 10.0
 SOCKET_CONNECT_TIMEOUT = 5.0
 SOCKET_HANDSHAKE_TIMEOUT = 3.0
+# app_process 起来后到开始在 abstract socket 上监听有几百毫秒延迟；
+# adb forward 会先接受本地连接再因远端未就绪而立即关闭。握手必须重试。
+HANDSHAKE_RETRY_TIMEOUT_S = 8.0
+HANDSHAKE_RETRY_INTERVAL_S = 0.1
 SOCKET_SEND_TIMEOUT = 2.0
 
 # 6.1.4 健康检查与重连

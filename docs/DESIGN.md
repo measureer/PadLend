@@ -231,8 +231,8 @@
 | **F3** | Raw Input 是**累加前**数据 | 光标被钉在屏幕边缘时 `WM_INPUT` 仍上报真实位移 | "PC 光标不动 + 平板指针继续走"成立 |
 | **F4** | `XScale` **不受** `pointer_speed` 影响 | 把 `pointer_speed` 改成 -3/0/3/7，`XScale` 恒为 1.312 | 速度系数在更上层且不可读 ⇒ **必须把 pointer_speed 归零** |
 | **F5** | `dumpsys input` **不输出**指针坐标 | 全文搜索只有 `Pointer Speed: -3` | 位置只能靠估计器；标定只能靠 `pointer_location` 叠加层 |
-| **F6** | headless 模式可行 | `video=false control=true` 启动成功，客户端读 4 字节 `0x00` dummy | 不需要视频/窗口 |
-| **F7** | 强杀客户端会留**幽灵 UHID 设备** | 平板残留 `app_process` 持有 `/dev/uhid` fd，`ps \| grep scrcpy` **抓不到**（进程名是 `app_process`） | 必须 `pkill -9 -f scrcpy-server-manual.jar` |
+| **F6** | headless 模式可行 | `video=false control=true` 启动成功，客户端读 1 字节 `0x00` dummy（2026-11-02 实测修正；原记 4 字节有误） | 不需要视频/窗口 |
+| **F7** | 强杀客户端会留**幽灵 UHID 设备** | 平板残留 `app_process` 持有 `/dev/uhid` fd，`ps \| grep scrcpy` **抓不到**（进程名是 `app_process`） | 必须 `pkill -9 -f com.genymobile.scrcpy.Server` 与 `...CleanUp`（命令行不含 jar 文件名，2026-11-02 实测修正） |
 | **F8** | 首次点击不丢 | scrcpy 未聚焦时单击仍正确命中 | 无需特殊处理焦点 |
 
 ## 3.4 必须在 S0 验证的残留假设
@@ -371,7 +371,7 @@ def start(self) -> DeviceFacts:
     self._push_server()            # 校验远端 md5，不一致才推
     self._spawn_server()           # 见下方参数
     self._forward()                # adb forward tcp:1234 localabstract:scrcpy
-    self._connect_socket()         # 读 4 字节 dummy，MUST == b"\x00\x00\x00\x00"
+    self._connect_socket()         # 读 1 字节 dummy，MUST == b"\x00"（实测修正：原 4 字节有误）
     self._create_uhid()            # UHID_CREATE 鼠标(id=1) + 键盘(id=2)
     self._keep_screen_on()         # svc power stayon true
     return facts
@@ -391,8 +391,8 @@ adb shell "CLASSPATH=/data/local/tmp/scrcpy-server-manual.jar app_process / \
 | `video=false` / `audio=false` | 不要视频音频流 |
 | `control=true` | 只要控制通道 |
 | `tunnel_forward=true` | 配合 `adb forward` 的 socket 方式 |
-| `send_dummy_byte=true` | 连接后先读 4 字节 `0x00` 做握手 |
-| `cleanup=true` | 退出时清理（**注意 F7：强杀时不生效**） |
+| `send_dummy_byte=true` | 连接后先读 1 字节 `0x00` 做握手（实测修正：原 4 字节有误） |
+| `cleanup=true` | 退出时清理（**注意 F7：强杀时不生效**；启动时 CleanUp 会删除 CLASSPATH 首项的 jar，重连需重新 push） |
 
 ### 6.1.3 退出序列（缺一不可）
 
@@ -1371,7 +1371,7 @@ class Config:
 PC --TCP 127.0.0.1:{port}--> adb forward --> localabstract:scrcpy --> scrcpy-server
 ```
 
-- 握手：连接后先读 **4 字节**，MUST 等于 `00 00 00 00`（`send_dummy_byte=true`）
+- 握手：连接后先读 **1 字节**，MUST 等于 `00`（`send_dummy_byte=true`；2026-11-02 实测修正，scrcpy 5.0.1 `DesktopConnection` 只写一个 0 字节）
 - 之后为连续消息流，无长度前缀，按首字节 `type` 分派
 - 单向：PC → 平板（本方案不消费平板回传）
 

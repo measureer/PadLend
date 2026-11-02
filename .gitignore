@@ -5,4 +5,8 @@ __pycache__/
 .ruff_cache/
 build/
 dist/
-*.spec
+*.log
+.coverage
+pytest-of-*/
+.padlend/
+!PadLend.spec

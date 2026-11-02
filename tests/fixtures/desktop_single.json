@@ -1,0 +1,16 @@
+{
+  "name": "single",
+  "tablet": {"width": 3200, "height": 2136},
+  "monitors": [
+    {
+      "handle": 1,
+      "device": "\\\\.\\DISPLAY1",
+      "left": 0,
+      "top": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "primary": true
+    }
+  ]
+}

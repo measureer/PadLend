@@ -103,7 +103,28 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
 
 其余签名以 `docs/DESIGN.md` 第 8 章为准（冻结契约，公开签名不得改）。
 
-## 6. 任务板
+## 7. 真机实测偏差（2026-11-02，Honor CGA-W00 / Android 17）
+
+1. **握手是 1 字节，不是 4 字节**：scrcpy 5.0.1 在 `tunnel_forward=true` 且
+   `video=false audio=false control=true` 时只 accept 一个 control socket，并写
+   一个 `0x00`。`constants.HANDSHAKE_DUMMY = b"\x00"`，`DESIGN.md` 已就地勘误。
+2. **jar 需重打包**：官方 jar 的 `classes.dex` 是 DEFLATE，Android 17 的
+   `app_process` 会 `ClassNotFoundException`；`tools/repack_server_jar.py` 把
+   `classes.dex` 以 stored 方式放回，vendor jar 已替换（2,316,791 B，
+   sha256 `d0127708…d810ca`），`vendor/SHA256SUMS` 已更新。
+3. **cleanup=true 会删 jar**：`CleanUp.main()` 启动即 `unlinkSelf()` 删除
+   CLASSPATH 首项，所以每次 start/reconnect 都要重新 push 2.3MB；属预期行为。
+4. **幽灵进程清理模式**：当前进程命令行只有 `com.genymobile.scrcpy.Server`
+   和 `com.genymobile.scrcpy.CleanUp`，不含 jar 文件名；`tablet/server.py`
+   已改为三模式轮询 pkill（jar 名保留兼容）。
+5. **尺寸按当前旋转**：`wm size` 给自然方向尺寸；`orientation` 为 1/3 时
+   `read_facts()` 用 `oriented_size()` 交换宽高（真机 orientation=1 →
+   3200×2136）。
+6. **配置目录回退**：本机 Python 不能写 `%APPDATA%`，`constants.config_dir()`
+   依次尝试 `PADLEND_HOME` / `%APPDATA%` / `%LOCALAPPDATA%` / `<项目>/.padlend`，
+   用真实写探针判定；当前实际落在 `<项目>/.padlend`。
+
+## 8. 任务板
 
 每个实施者从 `team_task_list` 领取自己的任务，完成后 `team_task_update(action="complete")`
 并向 Lead 发送简报（完成项 / 测试命令与结果 / 未决风险）。写作用域见任务描述。

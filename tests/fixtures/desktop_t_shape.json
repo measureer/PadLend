@@ -1,0 +1,36 @@
+{
+  "name": "t_shape",
+  "tablet": {"width": 3200, "height": 2136},
+  "monitors": [
+    {
+      "handle": 1,
+      "device": "\\\\.\\DISPLAY1",
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 1024,
+      "dpi": 96,
+      "primary": true
+    },
+    {
+      "handle": 2,
+      "device": "\\\\.\\DISPLAY2",
+      "left": 1280,
+      "top": 0,
+      "width": 1280,
+      "height": 1024,
+      "dpi": 96,
+      "primary": false
+    },
+    {
+      "handle": 3,
+      "device": "\\\\.\\DISPLAY3",
+      "left": 640,
+      "top": 1024,
+      "width": 1280,
+      "height": 1024,
+      "dpi": 96,
+      "primary": false
+    }
+  ]
+}

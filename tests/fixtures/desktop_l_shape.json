@@ -1,0 +1,26 @@
+{
+  "name": "l_shape",
+  "tablet": {"width": 3200, "height": 2136},
+  "monitors": [
+    {
+      "handle": 1,
+      "device": "\\\\.\\DISPLAY1",
+      "left": 0,
+      "top": 0,
+      "width": 1920,
+      "height": 1080,
+      "dpi": 96,
+      "primary": true
+    },
+    {
+      "handle": 2,
+      "device": "\\\\.\\DISPLAY2",
+      "left": 0,
+      "top": 1080,
+      "width": 1280,
+      "height": 1024,
+      "dpi": 96,
+      "primary": false
+    }
+  ]
+}
