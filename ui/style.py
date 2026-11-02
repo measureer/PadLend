@@ -100,7 +100,7 @@ def build_mono_font(point_size: int | None = None) -> QFont:
 
 
 def build_palette() -> QPalette:
-    """暗色调色板：给 QSS 覆盖不到的绘制路径（原生控件/滚动区）兜底。"""
+    """当前主题调色板：给 QSS 覆盖不到的绘制路径（原生控件/滚动区）兜底。"""
     palette = QPalette()
     window = QColor(COLORS["bg_window"])
     surface = QColor(COLORS["bg_surface"])
@@ -128,8 +128,18 @@ def build_palette() -> QPalette:
     return palette
 
 
-def apply_theme(app: QApplication) -> str:
-    """把字体/调色板/QSS 装到 ``app``，返回最终 QSS（便于日志与测试断言）。"""
+def apply_theme(app: QApplication, theme: str | None = None) -> str:
+    """把字体/调色板/QSS 装到 ``app``，返回最终 QSS（便于日志与测试断言）。
+
+    ``theme`` 为 ``"dark"``/``"light"`` 时会先切换令牌并清掉 QSS 缓存，
+    因此可在运行期直接重复调用实现主题热切换。
+    """
+    if theme is not None:
+        from ui.theme import tokens
+
+        chosen = tokens.set_theme(theme)
+        reload_stylesheet()
+        log.info("theme switched name=%s", chosen)
     app.setFont(build_font())
     app.setPalette(build_palette())
     qss = stylesheet()

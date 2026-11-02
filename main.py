@@ -378,7 +378,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
     app.setApplicationVersion(C.VERSION)
     app.setQuitOnLastWindowClosed(False)  # 托盘常驻
 
-    apply_theme(app)
+    apply_theme(app, getattr(cfg.ui, "theme", "dark"))
     runtime = Runtime(cfg)
     window = MainWindow(
         cfg,

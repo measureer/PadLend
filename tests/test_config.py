@@ -83,6 +83,20 @@ def test_repair_clamps_and_reports(tmp_path):
     assert cfg.validate() == [], "load 之后对象必须已经自愈"
 
 
+def test_theme_repair_and_roundtrip(tmp_path):
+    path = tmp_path / "theme.yaml"
+    path.write_text("version: 1\nui:\n  theme: neon\n", encoding="utf-8")
+    cfg = Config.load(path)
+    assert cfg.ui.theme == "dark"
+    assert any("ui.theme" in issue for issue in cfg.issues)
+
+    cfg.ui.theme = "light"
+    cfg.save(path)
+    again = Config.load(path)
+    assert again.ui.theme == "light"
+    assert again.validate() == []
+
+
 def test_corrupt_yaml_backs_up_and_resets(tmp_path):
     path = tmp_path / "broken.yaml"
     path.write_text(":: not yaml ::: [", encoding="utf-8")

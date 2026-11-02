@@ -508,3 +508,22 @@ def test_main_window_device_header_has_no_default_resolution(
     )
     assert "2560" in window.orientation_text.text()
     assert window._orientation == "横屏"
+
+
+def test_theme_toggle_persists_and_repaints(window: Any, qapp: QApplication) -> None:
+    """主题按钮切到白天、保存到 config，再切回黑夜。"""
+    tokens.set_theme("dark")
+    assert tokens.current_theme() == "dark"
+    assert window.config.ui.theme == "dark"
+
+    window.theme_button.click()
+    assert tokens.current_theme() == "light"
+    assert window.config.ui.theme == "light"
+    assert Config.load(window._config_path).ui.theme == "light"
+    assert window.device_page._values["resolution"].text() == "—"
+    assert "3200" not in window.device_page._values["resolution"].text()
+
+    window.theme_button.click()
+    assert tokens.current_theme() == "dark"
+    assert Config.load(window._config_path).ui.theme == "dark"
+

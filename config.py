@@ -265,6 +265,13 @@ class Config:
             self.add_issue(f"device.server_port={d.server_port} 越界，已恢复默认")
             d.server_port = C.DEFAULT_SERVER_PORT
 
+        theme = str(self.ui.theme or "").lower()
+        if theme not in ("dark", "light"):
+            self.add_issue(f"ui.theme={self.ui.theme!r} 非法，已回退 dark")
+            self.ui.theme = "dark"
+        else:
+            self.ui.theme = theme
+
         if p.edge not in PLACEMENT_EDGES:
             self.add_issue(f"placement.edge={p.edge!r} 非法，已回退 right")
             p.edge = "right"

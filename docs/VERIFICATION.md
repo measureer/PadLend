@@ -84,7 +84,7 @@ adb devices -l
 4. 任务管理器强杀 `PadLend.exe`，重新运行，确认启动自清理（`dumpsys input | grep -c scrcpy` == 0，`ClipCursor` 已释放）；
 5. 连续 2h 后看 `%APPDATA%\PadLend\logs\padlend.log` 是否有 `drop_pct` 上升/异常。
 
-## 6. 界面与设备管理（0.2.0）
+## 6. 界面与设备管理（0.2.0 / 0.2.1）
 
 | 项 | 验证方式 | 实际 | 结论 |
 |---|---|---|---|
@@ -92,8 +92,10 @@ adb devices -l
 | 未连接门控 | `test_device_page_hides_resolution_until_facts`、`test_main_window_device_header_has_no_default_resolution` | 未连接时分辨率/方向均为“—”，界面无 3200/2136 字样 | ✅ |
 | 连接后事实 | 同一测试注入 `DeviceFacts(3200×2136)` | 显示 `3200 × 2136`、横屏、画布切到已连接 | ✅ |
 | 设备管理 Router | `test_connect_device_switches_serial_and_clears_old_facts`、`test_disconnect_device_suspends_auto_reconnect_until_user_connects` | 切换 serial、断开后 supervisor 不自动重连 | ✅ |
+| 主题切换 | `test_theme_toggle_persists_and_repaints`、`test_theme_repair_and_roundtrip` | 切换后 `tokens.current_theme()` 与 `config.ui.theme` 同步、重新加载仍生效 | ✅ |
+| 亮色原生渲染 | 原生窗口截图 `docs/screenshots/ui-light.png` | 浅色窗口/卡片/导航/设备页，中文正常 | ✅ |
 | 打包 GUI | `dist\PadLend.exe` 原生启动截图 | 无设备时顶栏/设备页显示中性“未连接”，不误报故障 | ✅ |
-| 全量回归 | `pytest -o addopts="" -q` | 296 passed, 3 skipped | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 298 passed, 3 skipped | ✅ |
 
 真机点击“连接此设备” → 画布出现真实尺寸 → 边缘穿越的交互链路，待平板重新连接后按 A1–A13 复验。
 
@@ -104,7 +106,8 @@ adb devices -l
 | 安装 PyInstaller | `python -m pip install pyinstaller` | PyInstaller 6.22.3 | ✅ |
 | onefile 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | Build complete（约 56s） | ✅ |
 | 产物 | `dist\PadLend.exe` | 单文件约 51MB，含 PySide6/jar/adb/图标 | ✅ |
-| 版本冒烟 | `dist\PadLend.exe --version` | `PadLend 0.2.0` | ✅ |
+| 版本冒烟 | `dist\PadLend.exe --version` | `PadLend 0.2.1` | ✅ |
+| 亮色打包启动 | `PADLEND_HOME=<临时目录> PadLend.exe --no-wizard`（config `ui.theme: light`） | 日志 `theme switched name=light`，窗口正常创建 | ✅ |
 | 内置 adb | 去掉 PATH 后 `PadLend.exe --headless --duration 1` | exit 0；E101（说明用的是内置 adb，而非 PATH） | ✅ |
 | GUI 启动 | 双击 `dist\PadLend.exe` | 主窗/画布/设置/日志正常，标题 PadLend | ✅ |
 | 便携目录 | 运行后检查 `dist\.padlend\` | `config.yaml`、`logs\padlend.log`、`exit.clean` 持久化 | ✅ |

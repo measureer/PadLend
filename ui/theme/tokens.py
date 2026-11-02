@@ -14,7 +14,27 @@ from typing import Final
 # ---------------------------------------------------------------------------
 # 颜色
 # ---------------------------------------------------------------------------
-COLORS: Final[dict[str, str]] = {
+LIGHT_COLORS: Final[dict[str, str]] = {
+    "bg_window": "#F4F6FA",
+    "bg_surface": "#FFFFFF",
+    "bg_raised": "#EEF2F7",
+    "bg_sunken": "#E7ECF4",
+    "border": "#D6DEE9",
+    "border_strong": "#B7C3D3",
+    "text_primary": "#18212C",
+    "text_secondary": "#5D6B7D",
+    "text_on_accent": "#FFFFFF",
+    "accent": "#3D6FE0",
+    "accent_hover": "#2D5FCC",
+    "accent_soft": "#E3EBFB",
+    "ok": "#1F9D6B",
+    "warn": "#A96A12",
+    "err": "#D14343",
+    "capturing": "#D9485F",
+    "disconnected": "#8794A5",
+}
+
+DARK_COLORS: Final[dict[str, str]] = {
     "bg_window": "#0E1116",
     "bg_surface": "#151A21",
     "bg_raised": "#1D242D",
@@ -34,17 +54,29 @@ COLORS: Final[dict[str, str]] = {
     "disconnected": "#5D6A79",
 }
 
+_THEME = "dark"
+COLORS: dict[str, str] = dict(DARK_COLORS)
+
 # 托盘/状态点颜色（6.10.7：灰=未连接 / 绿=空闲 / 红=接管中 / 黄=故障）
-STATE_COLORS: Final[dict[str, str]] = {
-    "": COLORS["disconnected"],
-    "disconnected": COLORS["disconnected"],
-    "connecting": COLORS["accent"],
-    "idle": COLORS["ok"],
-    "arming": COLORS["warn"],
-    "returning": COLORS["warn"],
-    "captured": COLORS["capturing"],
-    "fault": COLORS["err"],
-}
+STATE_COLORS: dict[str, str] = {}
+
+
+def _rebuild_state_colors() -> None:
+    STATE_COLORS.clear()
+    STATE_COLORS.update({
+        "": COLORS["disconnected"],
+        "disconnected": COLORS["disconnected"],
+        "connecting": COLORS["accent"],
+        "idle": COLORS["ok"],
+        "arming": COLORS["warn"],
+        "returning": COLORS["warn"],
+        "captured": COLORS["capturing"],
+        "fault": COLORS["err"],
+    })
+
+
+_rebuild_state_colors()
+
 
 # 顶栏状态文案（与 State 枚举值一一对应）
 STATE_LABELS: Final[dict[str, str]] = {
@@ -59,19 +91,44 @@ STATE_LABELS: Final[dict[str, str]] = {
 }
 
 # 日志事件着色（事件名前缀）
-LOG_EVENT_COLORS: Final[dict[str, str]] = {
-    "arm": COLORS["warn"],
-    "cap": COLORS["capturing"],
-    "hit": COLORS["ok"],
-    "back": COLORS["accent"],
-    "state": COLORS["text_secondary"],
-    "tablet": COLORS["accent"],
-    "kbd": COLORS["accent"],
-    "cfg": COLORS["warn"],
-    "ui": COLORS["text_secondary"],
-    "err": COLORS["err"],
-    "fault": COLORS["err"],
-}
+LOG_EVENT_COLORS: dict[str, str] = {}
+
+
+def _rebuild_log_colors() -> None:
+    LOG_EVENT_COLORS.clear()
+    LOG_EVENT_COLORS.update({
+        "arm": COLORS["warn"],
+        "cap": COLORS["capturing"],
+        "hit": COLORS["ok"],
+        "back": COLORS["accent"],
+        "state": COLORS["text_secondary"],
+        "tablet": COLORS["accent"],
+        "kbd": COLORS["accent"],
+        "cfg": COLORS["warn"],
+        "ui": COLORS["text_secondary"],
+        "err": COLORS["err"],
+        "fault": COLORS["err"],
+    })
+
+
+_rebuild_log_colors()
+
+
+def current_theme() -> str:
+    return _THEME
+
+
+def set_theme(name: str) -> str:
+    """切换当前调色板并就地更新派生表（保留其他模块持有的 dict 引用）。"""
+    global _THEME
+    chosen = "light" if str(name).lower() == "light" else "dark"
+    palette = LIGHT_COLORS if chosen == "light" else DARK_COLORS
+    _THEME = chosen
+    COLORS.clear()
+    COLORS.update(palette)
+    _rebuild_state_colors()
+    _rebuild_log_colors()
+    return chosen
 
 # ---------------------------------------------------------------------------
 # 尺寸

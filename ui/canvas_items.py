@@ -40,33 +40,23 @@ _FALLBACK_COLORS: dict[str, str] = {
 }
 
 
-def _resolve_colors() -> dict[str, str]:
-    """读取 ui.theme.tokens；模块或字段缺失时逐项回退到本地常量。"""
-    colors = dict(_FALLBACK_COLORS)
+def _theme_table() -> dict[str, str]:
+    """读取 ``ui.theme.tokens.COLORS``；缺失时返回本地兜底。"""
     try:
         module = importlib.import_module("ui.theme.tokens")
     except ImportError:
-        return colors
-    table: Any = getattr(module, "TOKENS", None)
-    for key in colors:
-        value: Any = None
-        if isinstance(table, dict):
-            value = table.get(key)
-        elif table is not None:
-            value = getattr(table, key, None)
-        if value is None:
-            value = getattr(module, key, None)
-        if isinstance(value, str) and value:
-            colors[key] = value
-    return colors
-
-
-COLORS: dict[str, str] = _resolve_colors()
+        return dict(_FALLBACK_COLORS)
+    table: Any = getattr(module, "COLORS", None)
+    if isinstance(table, dict) and table:
+        merged = dict(_FALLBACK_COLORS)
+        merged.update({k: v for k, v in table.items() if isinstance(v, str)})
+        return merged
+    return dict(_FALLBACK_COLORS)
 
 
 def color(name: str) -> QColor:
-    """按令牌名取颜色；未知名字回退到窗口底色。"""
-    return QColor(COLORS.get(name, _FALLBACK_COLORS["bg_window"]))
+    """按令牌名取**当前主题**颜色；每次绘制都重新解析，支持热切换。"""
+    return QColor(_theme_table().get(name, _FALLBACK_COLORS["bg_window"]))
 
 
 def _scale_of(painter: QPainter) -> float:

@@ -2,6 +2,24 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.1] — 2026-11-02
+
+### 新增
+
+- 白天/黑夜双主题：顶栏新增太阳/月亮切换按钮，切换后立即重绘 QSS、调色板、标题栏、画布、设备页与托盘，并持久化到 `ui.theme`；启动时读取配置应用。
+- 亮色令牌（`LIGHT_COLORS`）覆盖窗口/卡片/边框/文字/强调色与状态色；`tokens.set_theme()` 就地更新派生表，QSS 仍使用同一份模板。
+- 界面截图：`docs/screenshots/ui-light.png`。
+
+### 修复
+
+- 画布图元此前读取不存在的 `tokens.TOKENS`，主题切换后仍使用旧深色兜底；改为每次绘制读取当前 `tokens.COLORS`。
+- Windows 标题栏固定深色：改为跟随当前主题设置 `DWMWA_USE_IMMERSIVE_DARK_MODE`。
+- 配置 `ui.theme` 仅做类型校验；非法值现在回退 `dark` 并记录 issue。
+
+### 已知限制
+
+- 亮色模式已通过原生窗口截图与 offscreen 测试验证；真机连接/边缘穿越/键盘交互仍待平板重新连接后复验。
+
 ## [0.2.0] — 2026-11-02
 
 ### 新增

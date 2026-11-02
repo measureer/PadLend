@@ -14,12 +14,15 @@
 - **崩溃兜底**：三层清理（异常路径 / 看门狗 / 下次启动检测 `exit.clean`），不会留下锁死的 ClipCursor 或幽灵 UHID。
 - **无侵入**：不修改系统设置（仅临时归零 `pointer_speed`，退出还原）；不安装驱动；不需要管理员权限。
 - **设备管理**：启动即列出 adb 设备，型号/序列号/传输方式/授权状态一目了然；用户显式连接/断开，未连接时不假设平板分辨率。
+- **昼 / 夜双主题**：顶栏右侧太阳/月亮按钮一键切换，选择写入配置并在下次启动恢复；亮色与深色共用同一套布局与控件。
 
 ## 界面
 
 ![设备管理](docs/screenshots/ui-devices.png)
 
 ![桌面布局](docs/screenshots/ui-layout.png)
+
+![亮色主题](docs/screenshots/ui-light.png)
 
 ## 环境要求
 
@@ -82,6 +85,7 @@ adb devices -l
    - `Ctrl+Alt+S` 手动接管/交还
    - `Ctrl+Alt+Q` 急停（立刻释放鼠标/键盘/ClipCursor）
    - `Ctrl+Alt+V` 剪贴板同步（可选）
+6. 顶栏右侧的太阳/月亮按钮切换白天/黑夜主题，选择会保存并在下次启动时恢复。
 
 ### 状态颜色
 
@@ -133,7 +137,7 @@ hotkeys:
   clipboard: "Ctrl+Alt+V"
 ui:
   language: zh_CN
-  theme: dark
+  theme: dark            # dark / light
   tray_notifications: true
   show_pointer_ghost: true
 misc:

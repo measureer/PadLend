@@ -229,10 +229,10 @@ class DevicePage(QWidget):
         box.addWidget(self.detail_headline)
         box.addWidget(self.detail_meta)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet(f"color: {tokens.COLORS['border']};")
-        box.addWidget(divider)
+        self._divider = QFrame()
+        self._divider.setFrameShape(QFrame.Shape.HLine)
+        self._divider.setStyleSheet(f"color: {tokens.COLORS['border']};")
+        box.addWidget(self._divider)
 
         for key, label in (
             ("model", "型号"),
@@ -404,6 +404,19 @@ class DevicePage(QWidget):
         )
         self.state_pill.setProperty("state", state)
         repolish(self.state_pill)
+
+    def refresh_theme(self) -> None:
+        """主题切换后刷新自绘制颜色与按钮图标。"""
+        self.refresh_button.setIcon(
+            make_icon("refresh", tokens.COLORS["text_primary"], 16)
+        )
+        self.connect_button.setIcon(
+            make_icon("link", tokens.COLORS["text_on_accent"], 16)
+        )
+        self.disconnect_button.setIcon(make_icon("unlink", tokens.COLORS["err"], 16))
+        self._divider.setStyleSheet(f"color: {tokens.COLORS['border']};")
+        self.set_state(self._state)
+        self.update()
 
     def set_facts(self, facts: Any | None) -> None:
         self._facts = facts

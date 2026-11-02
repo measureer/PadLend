@@ -134,7 +134,15 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
 - 设置页放入 QScrollArea（最大宽 760），日志页保留 LogView + MetricsPanel 分栏。
 - 主题：新深色分层配色、12px 卡片圆角、QPainter 图标与渐变品牌标识；禁用态按钮补样式。
 
-## 9. 任务板
+## 9. 0.2.1 白天/黑夜主题
+
+- `ui/theme/tokens.py` 提供 `DARK_COLORS`/`LIGHT_COLORS`；`COLORS` 是可变字典，`set_theme()` 就地更新（保持其他模块持有的引用有效），并重建 `STATE_COLORS`/`LOG_EVENT_COLORS`。
+- `ui/style.py::apply_theme(app, theme)` 在应用 QSS 前切换令牌并清缓存；QSS 仍是同一份 `dark.qss` 模板，只是 `@token` 值不同。
+- 顶栏太阳/月亮按钮 → `MainWindow.toggle_theme()` → `apply_theme_choice()`：应用主题、重绘品牌标/导航/头部图标、状态点、设备页、画布、托盘标题栏，并写回 `config.ui.theme`。
+- 画布图元 `color()` 每次绘制读取当前 `tokens.COLORS`（修复旧实现读取不存在的 `TOKENS`）；`win32` 标题栏明暗跟随主题。
+- 配置校验：`ui.theme` 仅接受 `dark`/`light`，非法值回退 `dark` 并记录 issue。
+
+## 10. 任务板
 
 每个实施者从 `team_task_list` 领取自己的任务，完成后 `team_task_update(action="complete")`
 并向 Lead 发送简报（完成项 / 测试命令与结果 / 未决风险）。写作用域见任务描述。

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
@@ -87,6 +89,24 @@ def _draw(name: str, painter: QPainter, color: str) -> None:
     elif name == "close":
         painter.drawLine(QPointF(6.0, 6.0), QPointF(18.0, 18.0))
         painter.drawLine(QPointF(18.0, 6.0), QPointF(6.0, 18.0))
+    elif name == "sun":
+        painter.drawEllipse(QPointF(12.0, 12.0), 4.1, 4.1)
+        for index in range(8):
+            angle = math.radians(index * 45.0)
+            inner = 6.9
+            outer = 9.6
+            painter.drawLine(
+                QPointF(12.0 + inner * math.cos(angle), 12.0 + inner * math.sin(angle)),
+                QPointF(12.0 + outer * math.cos(angle), 12.0 + outer * math.sin(angle)),
+            )
+    elif name == "moon":
+        path = QPainterPath()
+        path.moveTo(15.9, 3.4)
+        path.cubicTo(10.6, 4.6, 7.9, 8.0, 7.9, 12.0)
+        path.cubicTo(7.9, 16.0, 10.6, 19.4, 15.9, 20.6)
+        path.cubicTo(12.1, 18.2, 11.5, 15.2, 11.5, 12.0)
+        path.cubicTo(11.5, 8.8, 12.1, 5.8, 15.9, 3.4)
+        painter.drawPath(path)
     elif name == "spark":
         path = QPainterPath()
         path.moveTo(12.0, 2.5)

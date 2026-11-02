@@ -58,7 +58,7 @@ from ui.diagnostics import DiagnosticsDialog, static_summary
 from ui.icons import brand_pixmap, make_icon
 from ui.log_view import LogView
 from ui.settings_panel import SettingsPanel
-from ui.style import repolish
+from ui.style import apply_theme, repolish
 from ui.theme import tokens
 from ui.tray import TrayController, status_icon
 from ui.wizard import SetupWizard
@@ -201,6 +201,7 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._connect_canvas()
         self.update_device(None)
+        self._refresh_theme_assets()
         self._install_initial_placement()
         self.log_view.append_event("APP", f"{C.APP_NAME} {C.VERSION} 启动")
         log.info("main window ready (canvas=%s)", self.canvas_mode)
@@ -251,6 +252,7 @@ class MainWindow(QMainWindow):
         header.setFixedHeight(tokens.HEADER_HEIGHT)
 
         mark = QLabel(header)
+        self._brand_mark = mark
         mark.setPixmap(brand_pixmap(34))
         mark.setFixedSize(QSize(34, 34))
 
@@ -292,11 +294,19 @@ class MainWindow(QMainWindow):
         icon_color = tokens.COLORS["text_secondary"]
         self.menu_button = QPushButton(header)
         self.settings_button = QPushButton(header)
+        self.theme_button = QPushButton(header)
         self.minimize_button = QPushButton(header)
         self.close_button = QPushButton(header)
+        self._header_icon_names: list[tuple[QPushButton, str]] = [
+            (self.menu_button, "dots"),
+            (self.settings_button, "settings"),
+            (self.minimize_button, "minimize"),
+            (self.close_button, "close"),
+        ]
         for button, icon_name, tooltip in (
             (self.menu_button, "dots", "菜单"),
             (self.settings_button, "settings", "设置 (Ctrl+,)"),
+            (self.theme_button, "sun", "切换到白天模式"),
             (self.minimize_button, "minimize", "最小化"),
             (self.close_button, "close", "关闭到托盘"),
         ):
@@ -308,6 +318,7 @@ class MainWindow(QMainWindow):
             button.setToolTip(tooltip)
 
         self.settings_button.clicked.connect(self.open_settings)
+        self.theme_button.clicked.connect(self.toggle_theme)
         self.minimize_button.clicked.connect(self.showMinimized)
         self.close_button.clicked.connect(self.close)
         self.menu_button.clicked.connect(self._popup_menu)
@@ -329,6 +340,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(6)
         layout.addWidget(self.menu_button)
         layout.addWidget(self.settings_button)
+        layout.addWidget(self.theme_button)
         layout.addWidget(self.minimize_button)
         layout.addWidget(self.close_button)
         self.header = header
@@ -343,6 +355,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(7)
 
         self.nav_buttons: list[QToolButton] = []
+        self._nav_icon_names = ["devices", "canvas", "settings", "logs"]
         self.nav_group = QButtonGroup(bar)
         self.nav_group.setExclusive(True)
         for index, (name, label) in enumerate(
@@ -780,6 +793,48 @@ class MainWindow(QMainWindow):
         self._switch_page(2)
         self.settings.focus_first()
 
+    def toggle_theme(self) -> None:
+        """白天/黑夜主题切换，并持久化到 config.ui.theme。"""
+        self.apply_theme_choice("light" if tokens.current_theme() == "dark" else "dark")
+
+    def apply_theme_choice(self, name: str) -> None:
+        """应用并保存主题（``dark`` / ``light``），同步所有自绘制图标与颜色。"""
+        chosen = tokens.set_theme(name)
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, chosen)
+        self.config.ui.theme = chosen
+        self._refresh_theme_assets()
+        self._apply_dwm_dark(chosen == "dark")
+        self._save_config()
+        self.log_view.append_event("UI", f"主题：{'白天' if chosen == 'light' else '黑夜'}")
+
+    def _refresh_theme_assets(self) -> None:
+        """主题切换后重绘 QSS 管不到的图标、品牌标与状态点。"""
+        muted = tokens.COLORS["text_secondary"]
+        for button, icon_name in self._header_icon_names:
+            button.setIcon(make_icon(icon_name, muted, 18))
+        current = tokens.current_theme()
+        self.theme_button.setIcon(
+            make_icon("moon" if current == "light" else "sun", muted, 18)
+        )
+        self.theme_button.setToolTip(
+            "切换到黑夜模式" if current == "light" else "切换到白天模式"
+        )
+        self._brand_mark.setPixmap(brand_pixmap(34))
+        primary = tokens.COLORS["text_primary"]
+        for button, icon_name in zip(self.nav_buttons, self._nav_icon_names, strict=False):
+            button.setIcon(make_icon(icon_name, primary, 20))
+        if hasattr(self, "fit_button"):
+            self.fit_button.setIcon(make_icon("canvas", primary, 15))
+        self._paint_status_dot(self._present_state(self._state))
+        if hasattr(self, "device_page"):
+            self.device_page.refresh_theme()
+        if hasattr(self, "canvas"):
+            self.canvas.update()
+        if hasattr(self, "tray"):
+            self.tray.set_state(self._present_state(self._state))
+
     def toggle_window(self) -> None:
         if self.isVisible() and not self.isMinimized():
             self.hide()
@@ -1047,18 +1102,21 @@ class MainWindow(QMainWindow):
             self._canvas_call("refresh_desktop")
 
     def _apply_dwm(self) -> None:
-        """暗色标题栏 + 圆角（Win11）；Win10/非 Windows 失败即忽略。"""
+        """按当前主题设置标题栏明暗 + 圆角（Win11）；Win10/非 Windows 静默忽略。"""
+        self._apply_dwm_dark(tokens.current_theme() == "dark")
+
+    def _apply_dwm_dark(self, dark: bool) -> None:
         if sys.platform != "win32":
             return
         try:
             hwnd = int(self.winId())
             dwm = ctypes.windll.dwmapi  # type: ignore[attr-defined]
-            dark = ctypes.c_int(1)
+            value = ctypes.c_int(1 if dark else 0)
             dwm.DwmSetWindowAttribute(
                 hwnd,
                 C.DWM_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(dark),
-                ctypes.sizeof(dark),
+                ctypes.byref(value),
+                ctypes.sizeof(value),
             )
             corner = ctypes.c_int(C.DWMWCP_ROUND)
             dwm.DwmSetWindowAttribute(
