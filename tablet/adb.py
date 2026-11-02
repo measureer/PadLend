@@ -241,12 +241,36 @@ class Adb:
         return self._decode(proc.stdout)
 
     # -- 设备 --------------------------------------------------------------
+    _KNOWN_STATES = frozenset(
+        {
+            "device",
+            "offline",
+            "unauthorized",
+            "bootloader",
+            "recovery",
+            "sideload",
+            "rescue",
+            "host",
+            "connecting",
+            "authorizing",
+            "unknown",
+            "no",  # "no permissions (...)"
+        }
+    )
+
     def devices(self) -> list[DeviceEntry]:
-        """枚举设备（含未授权/离线，由调用方裁决）。"""
+        """枚举设备（含未授权/离线，由调用方裁决）。
+
+        ``adb devices -l`` 偶尔会残留或打印畸形行（例如 mDNS 串名冲突后出现
+        ``serial (2)._adb-tls-connect._tcp device ...``，state 字段其实是串名的
+        碎片）。这里只接受已知 state，并按 serial 去重，避免同一台平板在
+        设备列表里出现两次。
+        """
         out = self._text(
             ["devices", "-l"], timeout=C.ADB_SHELL_TIMEOUT, code=ErrorCode.DEVICE_OFFLINE
         )
         entries: list[DeviceEntry] = []
+        seen: set[str] = set()
         for raw in out.splitlines():
             line = raw.strip()
             if not line or line.startswith("*") or line.lower().startswith("list of devices"):
@@ -254,15 +278,27 @@ class Adb:
             parts = line.split()
             if len(parts) < 2:
                 continue
+            serial = parts[0]
+            state = parts[1]
+            attr_start = 2
+            if state == "no" and len(parts) >= 4 and parts[2] == "permissions":
+                state = "no permissions"
+                attr_start = 4
+            if state not in self._KNOWN_STATES:
+                LOG.debug("忽略畸形 adb 设备行: %r", line)
+                continue
+            if serial in seen:
+                continue
+            seen.add(serial)
             attrs: dict[str, str] = {}
-            for token in parts[2:]:
+            for token in parts[attr_start:]:
                 key, sep, value = token.partition(":")
                 if sep:
                     attrs[key] = value
             entries.append(
                 DeviceEntry(
-                    serial=parts[0],
-                    state=parts[1],
+                    serial=serial,
+                    state=state,
                     product=attrs.get("product", ""),
                     model=attrs.get("model", ""),
                     device=attrs.get("device", ""),

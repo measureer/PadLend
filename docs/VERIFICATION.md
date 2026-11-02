@@ -115,3 +115,18 @@ adb devices -l
 
 产物为 `dist/PadLend.exe`（单文件）；`build/`、`dist/` 均已 gitignore。
 本机 `%TEMP%` 对进程不可写，spec 用 `runtime_tmpdir="."` 将解包目录放在 exe 同目录。
+
+## 8. 0.2.2 修复验收（2026-11-03）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 设备列表去重 | 真实 `adb devices -l`（两条同一平板，其中一条 mDNS 畸形行）→ `Adb().devices()` | 只返回 1 条稳定 serial；畸形行被丢弃 | ✅ |
+| 绝对光标外推 | `test_arm_uses_absolute_cursor_from_real_desktop_map`（真实 DesktopMap + 底边外推 40px） | 进入 CAPTURED，mask active | ✅ |
+| 查询失败不漂移 | `test_cursor_query_failure_does_not_accumulate_raw_counts` | `_pc_cursor` 保持绝对位置 | ✅ |
+| 连接状态一致性 | 源码 GUI 实机启动截图（自动连接） | 顶栏“已连接”、设备页“已连接”，分辨率仅在 facts 到达后显示 | ✅ |
+| 进入边提示 | 同一截图底栏 | “横屏 3200×2136 · 从屏幕右侧边缘滑入平板” | ✅ |
+| 键盘看门狗 | 运行 >1min 并只移动鼠标 | 不再每 30s 出现 `kbd.watchdog.stalled`/重装 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 305 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+
+真实“把鼠标推过屏幕边缘 → 平板指针接管 → 划回交还”仍需用户在 0.2.2 exe 上完成一次目视确认。

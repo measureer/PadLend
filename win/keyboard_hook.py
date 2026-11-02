@@ -425,10 +425,15 @@ class KeyboardHook:
                     and calls == last_calls
                 )
                 if stalled:
-                    log.warning(
-                        "kbd.watchdog.stalled calls=%d last_input_tick=%d", calls, tick
+                    # 仅凭“全局最后输入时间变化、键盘回调未增加”无法区分
+                    # “用户只动了鼠标”和“钩子被静默卸载”。此前每 30 秒重装
+                    # 一次会在正常使用中刷屏并造成无谓抖动，这里只记录调试
+                    # 信息；真正的失效由钩子线程/健康标记和用户按键验证。
+                    log.debug(
+                        "kbd.watchdog.idle_or_mouse_only calls=%d last_input_tick=%d",
+                        calls,
+                        tick,
                     )
-                    self._request_reinstall()
                 last_calls = calls
                 last_tick = tick
         except Exception:

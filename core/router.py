@@ -522,10 +522,22 @@ class Router:
             self._handle_captured_locked(ev)
 
     def _track_pc_cursor(self, ev: RawDelta) -> None:
-        """维护 PC 光标位置：优先 ``desktop.cursor_pos()``，否则按增量累计。"""
+        """维护 PC 光标位置：优先 ``desktop.cursor_pos()``，否则按增量累计。
+
+        ``cursor_pos()`` 存在但本次返回 ``None``（例如 ``GetCursorPos`` 临时
+        失败）时保持上一次已知位置，**不能**回退成原始计数累加：Raw Input 的
+        ``dx/dy`` 是未经系统加速的鼠标计数，不是像素，累加会迅速漂移。
+        """
+        has_getter = callable(getattr(self._desktop, "cursor_pos", None))
         position = self._query_cursor_pos()
         if position is not None:
+            if self._pc_cursor is None:
+                log.debug("router.cursor_abs x=%d y=%d", position[0], position[1])
             self._pc_cursor = position
+            return
+        if has_getter:
+            if self._pc_cursor is None:
+                self._pc_cursor = self._default_cursor()
             return
         if self._pc_cursor is None:
             self._pc_cursor = self._default_cursor()

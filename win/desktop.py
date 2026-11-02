@@ -33,7 +33,7 @@ from typing import Any
 import constants as C
 from core.errors import ErrorCode, PadLendError
 from core.geometry import Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect
-from win.dpi import get_monitor_dpi
+from win.dpi import get_monitor_dpi, set_cursor_pos, try_get_cursor_pos
 
 log = logging.getLogger("win.desktop")
 
@@ -327,6 +327,20 @@ class DesktopMap:
     def bounding_box(self) -> Rect:
         """所有显示器并集的包围盒；无显示器时为 ``Rect(0, 0, 0, 0)``。"""
         return self._state[2]
+
+    def cursor_pos(self) -> tuple[int, int] | None:
+        """当前系统光标的物理像素坐标；查询失败返回 ``None``。
+
+        Router 用它把 ``RawDelta`` 换算成绝对光标位置。若这里缺失，Router
+        只能把原始鼠标计数当像素累加；在开启指针加速时两者会迅速漂移，
+        导致边缘判定落在错误位置。``None`` 表示本次查询失败，Router 应保持
+        上一次已知位置而不是自行累计。
+        """
+        return try_get_cursor_pos()
+
+    def set_cursor_pos(self, x: int, y: int) -> bool:
+        """把系统光标移到物理像素坐标；成功返回 ``True``。"""
+        return set_cursor_pos(int(x), int(y))
 
     def exterior_segments(self) -> tuple[EdgeSegment, ...]:
         """当前外轮廓段（不可变元组，按 edge/span 稳定排序）。"""

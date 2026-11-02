@@ -675,6 +675,8 @@ class MainWindow(QMainWindow):
                 setter(placement)
             except Exception as exc:
                 log.warning("router.set_placement failed: %r", exc)
+        if self._facts is not None:
+            self.update_device(self._facts)
 
     def _on_tablet_orientation_toggled(self, *_args: object) -> None:
         self._orientation = "竖屏" if self._orientation == "横屏" else "横屏"
@@ -976,11 +978,11 @@ class MainWindow(QMainWindow):
                 self.orientation_text.setText(f"{self._orientation} · {width}×{height}")
                 self._canvas_call("set_tablet_size", width, height)
                 self.bottom_hint.setText(
-                    f"{self._orientation} {width}×{height} · 输入桥已就绪"
+                    self._connected_hint(f"{self._orientation} {width}×{height}")
                 )
             else:
                 self.orientation_text.setText(self._orientation)
-                self.bottom_hint.setText("已连接 · 正在读取显示信息")
+                self.bottom_hint.setText(self._connected_hint("已连接 · 正在读取显示信息"))
             self._canvas_call("set_connected", True)
             self.device_page.set_facts(facts)
             self.device_page.set_connected(True)
@@ -999,6 +1001,26 @@ class MainWindow(QMainWindow):
             self.bottom_hint.setText("在设备页连接平板 · 命令行仅用于开发验证")
             self.tray.set_device("")
             self.tray.set_connected(False)
+        # 设备事实变化后重新呈现状态：连接过程中 _on_state 可能先以
+        # “未连接”落盘，等 facts 到达后必须刷新状态胶囊/设备页标签。
+        self._on_state(self._state, self._state, "device.updated")
+
+    def _placement_edge_label(self) -> str:
+        segment = getattr(self._placement, "segment", None)
+        edge = getattr(segment, "edge", None)
+        value = str(getattr(edge, "value", edge or "")).lower()
+        return {
+            "left": "左侧",
+            "right": "右侧",
+            "top": "上侧",
+            "bottom": "下侧",
+        }.get(value, "")
+
+    def _connected_hint(self, base: str) -> str:
+        label = self._placement_edge_label()
+        if label:
+            return f"{base} · 从屏幕{label}边缘滑入平板"
+        return f"{base} · 在“布局”页把平板拖到屏幕边缘"
 
     def _on_device_connect_requested(self, serial: str) -> None:
         serial = str(serial or "").strip()
@@ -1057,10 +1079,12 @@ class MainWindow(QMainWindow):
         if ok:
             facts = getattr(self.router, "facts", None)
             self.update_device(facts)
-            self.log_view.append_event(
-                "DEVICE",
-                f"已连接 {getattr(facts, 'serial', '') or ''}".strip(),
-            )
+            if facts is not None:
+                self._save_config()
+                serial = str(getattr(facts, "serial", "") or "")
+                self.log_view.append_event("DEVICE", f"已连接 {serial}".strip())
+            else:
+                self.log_view.append_event("DEVICE", "已断开")
         else:
             self.log_view.append_event("DEVICE", f"操作失败：{message or '未知错误'}")
             self.device_page.show_error(message or "操作失败")

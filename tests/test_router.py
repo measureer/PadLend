@@ -30,6 +30,7 @@ from core.geometry import Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect
 from core.metrics import Metrics
 from core.router import Router
 from core.state import State
+from win.desktop import DesktopMap
 
 RIGHT = EdgeSegment(1, Edge.RIGHT, 0, 1080)
 
@@ -700,3 +701,43 @@ def test_disconnect_device_suspends_auto_reconnect_until_user_connects() -> None
     assert rig.router.state is State.IDLE
     assert rig.router.facts is not None
     assert rig.config.device.serial == "serial-2"
+
+
+def test_cursor_query_failure_does_not_accumulate_raw_counts():
+    """``cursor_pos()`` 存在但返回 None 时，保持绝对位置而不是累加鼠标计数。"""
+    rig = make_rig()
+    rig.desktop.cursor = (300, 300)
+    rig.router.on_raw(raw(1, 0))
+    assert rig.router._pc_cursor == (300, 300)
+
+    rig.desktop.cursor_pos = lambda: None  # type: ignore[method-assign]
+    rig.router.on_raw(raw(120, 80))
+    assert rig.router._pc_cursor == (300, 300)
+
+
+def test_arm_uses_absolute_cursor_from_real_desktop_map():
+    """真实 DesktopMap 提供绝对光标时，底边外推 40px 应能进入 CAPTURED。"""
+    desktop = DesktopMap(
+        monitors=[
+            MonitorInfo(1, r"\.\DISPLAY1", Rect(0, 0, 2560, 1600), 144, True),
+            MonitorInfo(2, r"\.\DISPLAY2", Rect(-2560, -198, 0, 1242), 144, False),
+        ]
+    )
+    bottom = next(
+        seg
+        for seg in desktop.exterior_segments()
+        if seg.edge is Edge.BOTTOM and seg.length >= 2000
+    )
+    cfg = FakeConfig()
+    session = FakeSession()
+    mask = FakeMask()
+    clock = FakeClock()
+    router = Router(cfg, session, desktop, mask, clock=clock, keymap=FakeKeymap())
+    router.set_placement(Placement(segment=bottom, offset=0.5))
+    desktop.cursor_pos = lambda: (-2000, 1242)  # type: ignore[method-assign]
+
+    for _ in range(5):
+        router.on_raw(raw(0, 10))
+
+    assert router.state is State.CAPTURED
+    assert mask.active

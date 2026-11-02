@@ -143,11 +143,11 @@ def get_monitor_dpi(hmon: int) -> int:
     return 96
 
 
-def get_cursor_pos() -> tuple[int, int]:
-    """返回光标的物理像素坐标；失败回退 ``(0, 0)``（不抛异常）。"""
+def try_get_cursor_pos() -> tuple[int, int] | None:
+    """返回光标的物理像素坐标；查询失败返回 ``None``（不抛异常）。"""
     user32 = _user32()
     if user32 is None:
-        return (0, 0)
+        return None
     try:
         get_cursor_pos = user32.GetCursorPos
         get_cursor_pos.argtypes = [POINTER(_POINT)]
@@ -158,7 +158,27 @@ def get_cursor_pos() -> tuple[int, int]:
         log.debug("GetCursorPos 失败: %s", ctypes.get_last_error())
     except (AttributeError, OSError, ValueError) as exc:
         log.debug("GetCursorPos 不可用: %s", exc)
-    return (0, 0)
+    return None
+
+
+def get_cursor_pos() -> tuple[int, int]:
+    """返回光标的物理像素坐标；失败回退 ``(0, 0)``（不抛异常）。"""
+    return try_get_cursor_pos() or (0, 0)
+
+
+def set_cursor_pos(x: int, y: int) -> bool:
+    """把光标移到物理像素坐标；成功返回 ``True``。"""
+    user32 = _user32()
+    if user32 is None:
+        return False
+    try:
+        setter = user32.SetCursorPos
+        setter.argtypes = [ctypes.c_int, ctypes.c_int]
+        setter.restype = ctypes.c_int
+        return bool(setter(int(x), int(y)))
+    except (AttributeError, OSError, ValueError) as exc:
+        log.debug("SetCursorPos 不可用: %s", exc)
+        return False
 
 
 def get_monitor_rect(hmon: int) -> Rect | None:

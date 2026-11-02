@@ -421,3 +421,25 @@ def test_constants_used_by_geometry():
     assert C.ENTRY_MARGIN_PX == 2
     assert C.BOUNDARY_INSET_PX == 0
     assert C.CORNER_DIRECTION_RATIO == 0.15
+
+
+def test_desktop_cursor_helpers_delegate_to_dpi(monkeypatch):
+    desktop = DesktopMap(
+        monitors=[MonitorInfo(handle=1, device=r"\.\DISPLAY1", rect=Rect(0, 0, 1920, 1080), dpi=96, primary=True)]  # noqa: E501
+    )
+    calls: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(desktop_module, "try_get_cursor_pos", lambda: (321, 654))
+    monkeypatch.setattr(desktop_module, "set_cursor_pos", lambda x, y: calls.append((x, y)) or True)
+
+    assert desktop.cursor_pos() == (321, 654)
+    assert desktop.set_cursor_pos(10, 20) is True
+    assert calls == [(10, 20)]
+
+
+def test_desktop_cursor_helpers_return_none_on_failure(monkeypatch):
+    desktop = DesktopMap(
+        monitors=[MonitorInfo(handle=1, device=r"\.\DISPLAY1", rect=Rect(0, 0, 1920, 1080), dpi=96, primary=True)]  # noqa: E501
+    )
+    monkeypatch.setattr(desktop_module, "try_get_cursor_pos", lambda: None)
+    assert desktop.cursor_pos() is None
