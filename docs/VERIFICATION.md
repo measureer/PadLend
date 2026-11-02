@@ -80,3 +80,15 @@ adb devices -l
 3. 拔线，确认 5 次重连与 FAULT 行为；
 4. 任务管理器强杀 `PadLend.exe`，重新运行，确认启动自清理（`dumpsys input | grep -c scrcpy` == 0，`ClipCursor` 已释放）；
 5. 连续 2h 后看 `%APPDATA%\PadLend\logs\padlend.log` 是否有 `drop_pct` 上升/异常。
+
+## 6. 打包（2026-11-02 实测）
+
+| 项 | 命令 | 实际 | 结论 |
+|---|---|---|---|
+| 安装 PyInstaller | `python -m pip install pyinstaller` | PyInstaller 6.22.3 | ✅ |
+| onedir 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | Build complete（约 44s） | ✅ |
+| 版本冒烟 | `dist\PadLend\PadLend.exe --version` | `PadLend 0.1.0` | ✅ |
+| 无设备 headless | `dist\PadLend\PadLend.exe --headless --duration 1 --no-single-instance` | exit 0；E101 后 `fault -> idle (stop)`，无残留 | ✅ |
+| vendor 完整性 | `dist\PadLend\_internal\vendor\` | jar 2,316,791 B + SHA256SUMS + README | ✅ |
+
+产物在 `dist/PadLend/`；`build/`、`dist/` 均已 gitignore。

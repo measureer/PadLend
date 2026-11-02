@@ -5,3 +5,6 @@ psutil>=5.9          # 指标采集（可选）
 # 开发
 pytest>=8.0
 ruff>=0.5
+
+# 打包（16 章，可选）
+pyinstaller>=6.10
