@@ -15,8 +15,9 @@
 | 键盘映射 | `pytest tests/test_keymap.py -q` | 全绿 | ✅ |
 | UI/画布 smoke | `QT_QPA_PLATFORM=offscreen pytest tests/test_ui_smoke.py tests/test_canvas.py -q` | 全绿 | ✅ |
 | 设备事实/旋转 | `pytest tests/test_session_facts.py -q` | 全绿 | ✅ |
-| 全量 | `pytest -q` | 全绿 | ✅ 289 passed, 3 skipped |
+| 全量 | `pytest -q` | 全绿 | ✅ 292 passed, 3 skipped |
 | 键盘钩子安装 | `pytest tests/test_keyboard_hook.py -q` | 安装/卸载/幂等 | ✅ |
+| 剪贴板注入 | `pytest tests/test_clipboard.py -q` | 4KB 截断/开关/空串 | ✅ |
 | 风格 | `ruff check .` | 无告警 | ✅ |
 
 ## 2. 事实表（S0，设计 3.1）

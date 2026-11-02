@@ -1325,6 +1325,29 @@ class Router:
         except Exception:  # pragma: no cover - 故障处理自身绝不再抛
             log.exception("router.fault_handler_failed code=%s", code.value)
 
+    # -- 剪贴板（6.8，SHOULD） ------------------------------------------------
+    def inject_clipboard(self, text: str) -> bool:
+        """把 PC 剪贴板文本注入平板（UTF-8，最多 4KB）。
+
+        只在 ``misc.clipboard_sync`` 打开时生效；不改变状态机。调用方负责在
+        GUI 线程读取剪贴板，本方法只做大小限制与发送。
+        """
+        if not bool(self._cfg.misc.clipboard_sync) or not text:
+            return False
+        payload = text.encode("utf-8")[:4096].decode("utf-8", "ignore")
+        if not payload:
+            return False
+        try:
+            self._session.inject_text(payload)
+        except PadLendError as exc:
+            log.debug("router.clipboard_skipped code=%s detail=%s", exc.code.value, exc.detail)
+            return False
+        except Exception as exc:  # noqa: BLE001 - 剪贴板失败不应影响接管
+            log.warning("router.clipboard_failed %r", exc)
+            return False
+        log.info("router.clipboard_sent chars=%d", len(payload))
+        return True
+
     # -- 键盘 ---------------------------------------------------------------
     def on_key(self, ev: KeyEvent) -> bool:
         """键盘入口；返回 ``True`` 表示本机应吞掉该键。

@@ -13,6 +13,7 @@
 - Raw Input 捕获（RIDEV_INPUTSINK、绝对坐标归一化、按钮/滚轮、时间戳）与 1000Hz 发送线程。
 - CursorMask：每显示器透明遮罩 + ClipCursor 边缘锁，`release()` 幂等，多级兜底。
 - 键盘转发：VK→HID 全表、左右修饰键、6KRO、扩展键、passthrough 白名单、`Ctrl+Alt+S/Q` 保命键。
+- 剪贴板（G9，SHOULD）：接管瞬间与 `Ctrl+Alt+V` 把 PC 文本经 `INJECT_TEXT` 发给平板，UTF-8 上限 4KB，仅文本。
 - GUI：暗色主窗（状态条/画布/设置栏/日志/指标）、可拖拽吸附画布、设置面板、托盘状态色、首次向导、诊断页与诊断包导出。
 - 配置：YAML 读写、校验与自动修复、版本迁移、单实例锁、日志轮转。
 - 打包：PyInstaller onedir spec、vendor 完整性校验（已实际构建并冒烟）。
@@ -22,6 +23,7 @@
 
 - `GetCurrentThreadId` 误从 user32 加载（全局热键与低级键盘钩子启动即失败）：改从 kernel32 加载，并加真实安装测试。
 - GUI 启动时安装低级键盘钩子、退出时卸载；此前键盘转发虽已实现但未接线。
+- GUI/headless 启动时启动 RawInputSource 并接线 `Router.on_raw`；此前只有 `--debug-raw` 使用 Raw Input，正常模式收不到鼠标事件。
 - `warp_to` 亚像素残差导致入口不命中/出口溢出失效：边界轴补一帧精确落边。
 - 错位双屏下默认吸附段取错（首条而非最长段）：改为同边同显示器取最长合法段。
 

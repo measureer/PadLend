@@ -145,6 +145,8 @@ class MainWindow(QMainWindow):
 
     placementChanged = Signal(object)
     settingsSaved = Signal(object)
+    # 供热键线程/非 GUI 线程请求“把 PC 剪贴板发给平板”；排队回 GUI 线程读取。
+    clipboardSyncRequested = Signal()
 
     def __init__(
         self,
@@ -179,6 +181,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_tray()
         self._build_bridge()
+        self.clipboardSyncRequested.connect(self.sync_clipboard, Qt.ConnectionType.QueuedConnection)
         self._build_shortcuts()
         self._build_actions()
         self._connect_canvas()
@@ -516,6 +519,31 @@ class MainWindow(QMainWindow):
         if reason:
             text = f"{text} {reason}"
         self.log_view.append_event("STATE", text)
+        if new_value == "captured" and old_value != "captured":
+            # 接管瞬间同步一次剪贴板（6.8）；实际读取必须回 GUI 线程。
+            self.clipboardSyncRequested.emit()
+
+    def sync_clipboard(self) -> None:
+        """把 PC 剪贴板文本发给平板（6.8，SHOULD）。
+
+        只在 ``misc.clipboard_sync`` 打开时执行；图片/富文本不做。
+        """
+        if not bool(getattr(getattr(self.config, "misc", None), "clipboard_sync", False)):
+            return
+        try:
+            text = QGuiApplication.clipboard().text()
+        except Exception as exc:  # noqa: BLE001 - 剪贴板不可用不应影响主流程
+            log.debug("clipboard read failed: %r", exc)
+            return
+        if not text:
+            return
+        inject = getattr(self.router, "inject_clipboard", None)
+        if not callable(inject):
+            return
+        try:
+            inject(text)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("clipboard inject failed: %r", exc)
 
     def _paint_status_dot(self, state: str) -> None:
         color = tokens.state_color(state)

@@ -198,6 +198,7 @@ class Runtime:
         from win.desktop import DesktopMap
         from win.keyboard_hook import KeyboardHook
         from win.mask import CursorMask
+        from win.rawinput import RawInputSource
 
         self.cfg = cfg
         self.adb = Adb(serial=cfg.device.serial or None)
@@ -205,6 +206,8 @@ class Runtime:
         self.session: TabletSession = TabletSession(cfg, adb=self.adb)
         self.mask: CursorMask = CursorMask()
         self.router: Router = Router(cfg, self.session, self.desktop, self.mask)
+        # Raw Input 在独立线程回调 Router；是否接管由 Router 状态机决定。
+        self.rawinput: RawInputSource = RawInputSource(self.router.on_raw)
         # 低级钩子必须在 GUI 线程外独立线程；回调只把事件交给 Router，
         # 是否吞键完全由 Router 的状态机/白名单决定。
         self.keyboard_hook: KeyboardHook = KeyboardHook(self.router.on_key)
@@ -214,22 +217,31 @@ class Runtime:
 
     def start(self) -> None:
         self.router.start()
+        try:
+            self.rawinput.start()
+            LOG.info("Raw Input 已启动")
+        except PadLendError as exc:
+            # 无 Raw Input 时鼠标仍可用，只是无法触发边缘接管；不阻断 GUI。
+            LOG.warning("Raw Input 不可用：%s", exc.user_message)
 
     def stop(self) -> None:
         try:
-            self.keyboard_hook.uninstall()
+            self.rawinput.stop()
         finally:
             try:
-                self.router.stop()
+                self.keyboard_hook.uninstall()
             finally:
                 try:
-                    self.session.stop()
+                    self.router.stop()
                 finally:
                     try:
-                        self.mask.release()
+                        self.session.stop()
                     finally:
-                        if self.raw_debug is not None:
-                            self.raw_debug.stop()
+                        try:
+                            self.mask.release()
+                        finally:
+                            if self.raw_debug is not None:
+                                self.raw_debug.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +371,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
                 with contextlib.suppress(Exception):
                     runtime.mask.release()
 
-        hotkeys = HotkeyManager(_toggle, _panic)
+        hotkeys = HotkeyManager(_toggle, _panic, window.clipboardSyncRequested.emit)
         try:
             hotkeys.start()
         except PadLendError as exc:
