@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
 APP_ID = "PadLend"
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。
@@ -249,6 +249,10 @@ MOD_RIGHT_GUI = 0x80
 ARM_PX = 40
 ARM_WINDOW_MS = 80
 EXIT_OVERFLOW_PX = 24
+
+# 进入保护：指针必须先离开入口边这么远，才允许累计出口溢出（防止刚进入就被
+# 反向滚动带回 PC）。0 表示关闭。
+ENTRY_GUARD_PX = 160
 EDGE_BAND_PX = 1
 ENTRY_MARGIN_PX = 2
 DEBOUNCE_MS = 250

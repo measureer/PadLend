@@ -173,6 +173,7 @@ class Router:
         self._entry_edge: Edge | None = None
         self._overflow = 0.0
         self._overflow_edge: Edge | None = None
+        self._entry_depth_ok = False
         self._hit_logged = False
         self._return_deadline = 0.0
 
@@ -766,6 +767,7 @@ class Router:
         self._entry_edge = placement.segment.edge.opposite
         self._overflow = 0.0
         self._overflow_edge = None
+        self._entry_depth_ok = False
         self._hit_logged = False
         self._suppress_logged = False
         self._enqueue_burst_locked(reports)
@@ -831,6 +833,28 @@ class Router:
         clamp = max(1, int(self._cfg.motion.hid_clamp))
         dx, dy = estimator.feed(int(ev.dx), int(ev.dy), gain, clamp=clamp)
         self._queue_mouse_locked(self._buttons, dx, dy, int(ev.wheel))
+        # 进入保护：指针必须先离开入口边足够远，才允许出口判定。否则从入口边
+        # 直接反向滚动（例如从平板顶部的文字向上滑）会被误判成“穿回 PC”。
+        if not self._entry_depth_ok:
+            guard = int(getattr(self._cfg.motion, "entry_guard_px", 0))
+            if guard <= 0:
+                self._entry_depth_ok = True
+            else:
+                entry = self._entry_edge
+                if entry is Edge.TOP:
+                    depth = estimator.y
+                elif entry is Edge.BOTTOM:
+                    depth = (estimator.height - 1) - estimator.y
+                elif entry is Edge.LEFT:
+                    depth = estimator.x
+                else:
+                    depth = (estimator.width - 1) - estimator.x
+                if depth >= guard:
+                    self._entry_depth_ok = True
+        if not self._entry_depth_ok:
+            self._overflow = 0.0
+            self._overflow_edge = None
+            return
         hit = estimator.hit()
         if hit is None or hit is not self._entry_edge:
             self._overflow = 0.0
@@ -877,6 +901,7 @@ class Router:
             self._reset_keymap_locked()
         self._overflow = 0.0
         self._overflow_edge = None
+        self._entry_depth_ok = False
         if not self._change_state(State.RETURNING, reason):
             return
         debounce_ms = max(0, int(self._cfg.motion.debounce_ms)) if debounce else 0

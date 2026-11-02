@@ -51,6 +51,7 @@ class FakeMaskApi:
         self.created: list[Rect] = []
         self.destroyed: list[int] = []
         self.clip_calls: list[Rect | None] = []
+        self.cursor_hidden_calls: list[bool] = []
         self._next_handle = 100
 
     def monitor_rects(self) -> list[Rect]:
@@ -80,6 +81,9 @@ class FakeMaskApi:
             if rect is not None:
                 return rect
         return None
+
+    def set_cursor_hidden(self, hidden: bool) -> None:
+        self.cursor_hidden_calls.append(hidden)
 
 
 def make_mask(api: FakeMaskApi) -> CursorMask:
@@ -285,8 +289,10 @@ def test_show_registers_atexit_guard() -> None:
 
 
 def test_ex_style_matches_design() -> None:
-    expected = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    # 接管期遮罩必须接收 WM_SETCURSOR，所以不再使用 WS_EX_TRANSPARENT。
+    expected = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
     assert expected == CursorMask.EX_STYLE
+    assert not (CursorMask.EX_STYLE & WS_EX_TRANSPARENT)
 
 
 # ---------------------------------------------------------------------------
@@ -358,3 +364,23 @@ def test_real_mask_show_and_hide() -> None:
         mask.release()
     assert mask.active is False
     assert mask.clip_owned is False
+
+
+def test_cursor_hidden_while_mask_active_and_restored() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+    mask.show(None)
+    mask.show(None)  # 重复 show 不能重复压 ShowCursor 计数
+    assert api.cursor_hidden_calls == [True]
+    mask.hide()
+    assert api.cursor_hidden_calls == [True, False]
+    mask.hide()  # 幂等
+    assert api.cursor_hidden_calls == [True, False]
+
+
+def test_release_restores_cursor() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+    mask.show(BAND_LEFT)
+    mask.release()
+    assert api.cursor_hidden_calls == [True, False]

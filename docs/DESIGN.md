@@ -713,6 +713,7 @@ arm_accum += |delta|
 若 光标离开边缘带 / 方向反转 / now > arm_deadline        → IDLE
 
 # CAPTURED → RETURNING
+若尚未越过进入保护（指针距入口边 < entry_guard_px, 默认 160）→ 不评估出口
 e = estimator.hit()
 若 e 非空 且 该方向累计溢出 >= exit_overflow_px(24)      → RETURNING
 
@@ -736,15 +737,16 @@ if hit_edge == Edge.LEFT and delta.dx < 0:
 
 ```python
 class CursorMask:
-    """接管期藏掉 PC 光标；不抢焦点、不接鼠标、不进 Alt-Tab"""
-    EX_STYLE = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    """接管期藏掉 PC 光标；不抢焦点、不进 Alt-Tab"""
+    # 接管期需要接收 WM_SETCURSOR 才能把光标置空，因此不再使用 WS_EX_TRANSPARENT。
+    EX_STYLE = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
 ```
 
 | 要点 | 做法 | 原因 |
 |---|---|---|
 | 覆盖范围 | 每显示器独立一个遮罩（推荐） | 错位/L 形桌面时单一包围盒会盖住不存在区域 |
 | 视觉 | `SetLayeredWindowAttributes(alpha=1)` 近乎全透明 | 用户不应看到任何遮挡 |
-| 隐藏光标 | `ClipCursor` 到边缘 1px 条 + 遮罩 | `ShowCursor(False)` 不可靠（系统会重置） |
+| 隐藏光标 | 遮罩窗口处理 `WM_SETCURSOR`→`SetCursor(NULL)`；`show()` 同时 `ShowCursor(FALSE)`+`SetCursor(NULL)`，`hide()/release()` 对称恢复 | 仅靠 `ClipCursor` 不会隐藏系统光标，会出现 PC 与平板双指针（0.2.3 实测修复） |
 | 释放 | `ClipCursor(None)` **必须在 finally** | 泄漏后果 = 用户光标被锁死在 1px 条里，系统不可用 |
 | 崩溃兜底 | 三层（12.3） | 同上 |
 

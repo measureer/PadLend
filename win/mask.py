@@ -1,13 +1,17 @@
 """光标遮罩与 ClipCursor（设计文档 6.6 / 8.2 / 12.3）。
 
 接管期把 PC 光标"藏起来"：``ClipCursor`` 把它钉在屏幕边缘 1px 条上，同时每个显示器
-盖一个几乎全透明（alpha=1）的 ``WS_EX_LAYERED | WS_EX_TRANSPARENT`` 窗口。
-遮罩窗口：
+盖一个几乎全透明（alpha=1）的 ``WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW``
+窗口。遮罩窗口：
 
 - 不抢焦点（``WS_EX_NOACTIVATE`` + ``SW_SHOWNOACTIVATE`` + ``SWP_NOACTIVATE``）；
 - 不进 Alt-Tab（``WS_EX_TOOLWINDOW``）；
-- 不接鼠标（``WS_EX_TRANSPARENT`` 点击穿透）；
+- 接管期**接收**鼠标消息（不再加 ``WS_EX_TRANSPARENT``），以便 ``WM_SETCURSOR``
+  把系统光标置空；此时 PC 点击本就应被忽略，不会影响平板输入；
 - 永远不调用 ``SetForegroundWindow``。
+
+隐藏光标是双保险：创建遮罩窗口后调用 ``ShowCursor(FALSE)`` + ``SetCursor(NULL)``，
+并在窗口过程里处理 ``WM_SETCURSOR`` 返回 1；``hide()/release()`` 对称恢复。
 
 **`ClipCursor` 泄漏是灾难级故障**（6.6 的教训）：用户光标会被锁死在 1px 条里。
 因此 `release()` 幂等、无异常、``ClipCursor(None)`` 走无条件路径，并在首次
@@ -32,10 +36,13 @@ _log = logging.getLogger("win.mask")
 
 # 遮罩扩展样式（6.6 的 EX_STYLE）
 WS_EX_LAYERED = 0x00080000
-WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TRANSPARENT = 0x00000020  # 仅保留常量供旧测试/文档引用，当前不再使用
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
-_MASK_EX_STYLE = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+_MASK_EX_STYLE = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+
+WM_SETCURSOR = 0x0020
+IDC_ARROW = 32512
 
 WS_POPUP = 0x80000000
 SW_SHOWNOACTIVATE = 4
@@ -201,6 +208,12 @@ def _user32() -> ctypes.WinDLL:
         lib.GetMonitorInfoW.restype = ctypes.c_int
         lib.GetSystemMetrics.argtypes = [ctypes.c_int]
         lib.GetSystemMetrics.restype = ctypes.c_int
+        lib.SetCursor.argtypes = [ctypes.c_void_p]
+        lib.SetCursor.restype = ctypes.c_void_p
+        lib.ShowCursor.argtypes = [ctypes.c_int]
+        lib.ShowCursor.restype = ctypes.c_int
+        lib.LoadCursorW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.LoadCursorW.restype = ctypes.c_void_p
         _user32_lib = lib
     return _user32_lib
 
@@ -244,6 +257,8 @@ class MaskApi(Protocol):
     def clip_cursor(self, rect: Rect | None) -> bool: ...
 
     def clip_rect(self) -> Rect | None: ...
+
+    def set_cursor_hidden(self, hidden: bool) -> None: ...
 
 
 class Win32MaskApi:
@@ -327,8 +342,27 @@ class Win32MaskApi:
             return None
         return Rect(native.left, native.top, native.right, native.bottom)
 
+    def set_cursor_hidden(self, hidden: bool) -> None:
+        """隐藏/恢复系统光标（幂等由 CursorMask 的生命周期保证）。"""
+        user32 = _user32()
+        if hidden:
+            # ShowCursor 是计数式 API：向负值方向压到 <0，确保一定隐藏。
+            for _ in range(16):
+                if user32.ShowCursor(0) < 0:
+                    break
+            user32.SetCursor(None)
+        else:
+            for _ in range(16):
+                if user32.ShowCursor(1) >= 0:
+                    break
+            user32.SetCursor(user32.LoadCursorW(None, ctypes.c_void_p(IDC_ARROW)))
+
 
 def _mask_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+    if msg == WM_SETCURSOR:
+        # 光标移到遮罩上时立即置空；返回 1 阻止 DefWindowProc 重新设置箭头。
+        _user32().SetCursor(None)
+        return 1
     return int(_user32().DefWindowProcW(hwnd, msg, wparam, lparam))
 
 
@@ -465,6 +499,7 @@ class CursorMask:
         self._active = False
         self._clip_owned = False
         self._clip_rect: Rect | None = None
+        self._cursor_hidden = False
 
     # -- 状态 -------------------------------------------------------------
     @property
@@ -490,6 +525,7 @@ class CursorMask:
             try:
                 self._create_windows()
                 self._active = True
+                self._hide_cursor()
                 if clip_rect is None:
                     if self._clip_owned:
                         self._apply_clip(None)
@@ -504,6 +540,7 @@ class CursorMask:
         with self._lock:
             if self._clip_owned:
                 self._apply_clip(None)
+            self._show_cursor()
             self._destroy_windows()
             self._active = False
 
@@ -521,6 +558,7 @@ class CursorMask:
             except Exception:
                 _log.exception("release: ClipCursor(None) 失败")
             finally:
+                self._show_cursor()
                 self._destroy_windows()
                 self._active = False
 
@@ -568,7 +606,28 @@ class CursorMask:
             self._clip_owned = False
             self._clip_rect = None
 
+    def _hide_cursor(self) -> None:
+        if self._cursor_hidden:
+            return
+        try:
+            self._api.set_cursor_hidden(True)
+            self._cursor_hidden = True
+        except Exception:
+            # 隐藏失败不阻断接管：遮罩 + ClipCursor 仍生效，只是可能看到 PC 光标。
+            _log.warning("隐藏系统光标失败", exc_info=True)
+
+    def _show_cursor(self) -> None:
+        if not self._cursor_hidden:
+            return
+        try:
+            self._api.set_cursor_hidden(False)
+        except Exception:
+            _log.warning("恢复系统光标失败", exc_info=True)
+        finally:
+            self._cursor_hidden = False
+
     def _cleanup_quietly(self, *, unclip: bool) -> None:
+        self._show_cursor()
         if unclip and self._clip_owned:
             try:
                 self._api.clip_cursor(None)

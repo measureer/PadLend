@@ -233,6 +233,22 @@ def test_overflow_counts_only_after_hit() -> None:
     assert rig.router._overflow == 0.0
 
 
+def test_entry_guard_blocks_immediate_return_until_inside() -> None:
+    # 6.5.4 可用性保护：从入口边直接反向滚动不能立刻穿回 PC。
+    rig = make_rig(config=FakeConfig(entry_guard_px=100))
+    capture_by_arm(rig)
+    rig.router.on_raw(raw(-30, 0))
+    assert rig.router.state is State.CAPTURED
+    assert rig.router._entry_depth_ok is False
+    # 先向平板内部移动，越过保护距离（feed 单次 clamp 到 127）。
+    rig.router.on_raw(raw(300, 0))
+    assert rig.router._entry_depth_ok is True
+    # 回到入口边并继续外推，此时才允许交还。
+    rig.router.on_raw(raw(-127, 0))
+    rig.router.on_raw(raw(-30, 0))
+    assert rig.router.state is State.RETURNING
+
+
 # ---------------------------------------------------------------------------
 # I1：非 CAPTURED 状态绝不发送位移
 # ---------------------------------------------------------------------------

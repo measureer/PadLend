@@ -2,6 +2,18 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.3] — 2026-11-03
+
+### 修复
+
+- **双指针**：接管期遮罩不再使用 `WS_EX_TRANSPARENT`，窗口过程处理 `WM_SETCURSOR` 并调用 `SetCursor(NULL)`；`CursorMask.show()` 同时通过 `ShowCursor(FALSE)` 隐藏系统光标，`hide()/release()` 对称恢复。以前只锁 `ClipCursor` 不藏光标，平板指针和 PC 光标会同时可见。
+- **过早穿回**：新增 `motion.entry_guard_px`（默认 160）。指针进入平板后必须先离开入口边至少 160px，才允许累计出口溢出；从入口边直接向上/下/左/右滑不会再立刻被误判成“穿回 PC”。设为 0 可关闭。
+- 遮罩不再点击穿透（接管期 PC 点击本来就不应生效）；光标隐藏失败只记 warning，不阻断截获。
+
+### 测试
+
+- 308 passed, 3 skipped；新增光标隐藏/恢复计数平衡、重复 `show()` 幂等、进入保护阻止立即穿回等回归测试。
+
 ## [0.2.2] — 2026-11-03
 
 ### 修复

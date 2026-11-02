@@ -123,6 +123,7 @@ motion:
   arm_px: 40
   arm_window_ms: 80
   exit_overflow_px: 24
+  entry_guard_px: 160     # 进入后先深入这么多像素，才允许穿回 PC
   debounce_ms: 250
   edge_band_px: 1
   boundary_inset_px: 0
