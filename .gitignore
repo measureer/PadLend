@@ -9,4 +9,5 @@ dist/
 .coverage
 pytest-of-*/
 .padlend/
+_MEI*/
 !PadLend.spec

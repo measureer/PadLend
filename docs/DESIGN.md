@@ -1708,7 +1708,7 @@ adb shell dumpsys input | grep -A2 "scrcpy"     # 可见 Classes: CURSOR
 | S6-2 | 诊断页 + 诊断包导出 | 可复现问题现场 |
 | S6-3 | i18n（zh_CN / en） | 切换生效 |
 | S6-4 | 三层崩溃兜底 | 强杀后无残留（A11） |
-| S6-5 | PyInstaller 打包（onedir） | 目标机双击可运行 |
+| S6-5 | PyInstaller 打包（onefile 单文件） | 目标机双击可运行 |
 | S6-6 | `TROUBLESHOOTING.md` / `CHANGELOG.md` | 覆盖已知限制 |
 
 ## 14.8 最短可用路径（Vertical Slice，约 2.5d）
@@ -1786,21 +1786,25 @@ python tools/probe.py         # 环境未被破坏
 |---|---|
 | 源码仓库 | 7.1 结构 |
 | `vendor/scrcpy-server-v5.0.1.jar` | 固定版本，附 sha256 |
-| 可执行目录 | PyInstaller onedir（含 PySide6 运行时） |
+| 可执行文件 | PyInstaller onefile `PadLend.exe`（单文件，内置 PySide6、scrcpy jar 与 adb） |
 | `README.md` | 安装/使用/常见问题 |
 | `docs/TROUBLESHOOTING.md` | 故障排查（含幽灵设备清理） |
 | 诊断包导出 | 脱敏后的诊断信息 zip |
 
 ## 16.2 打包
 
-```bash
-pyinstaller --noconfirm --windowed --name PadLend \
-  --add-data "vendor;vendor" --add-data "ui/theme;ui/theme" \
-  main.py
+```powershell
+python -m PyInstaller --noconfirm PadLend.spec
 ```
 
-- 采用 `onedir`（启动快、便于替换 jar）
-- 首次运行检测 `vendor/` 完整性，缺文件给出明确提示
+- 采用 `onefile`（单文件、免安装；2026-11-02 实施修正，原计划 onedir），输出
+  `dist/PadLend.exe`，约 51MB。
+- `PadLend.spec` 设 `runtime_tmpdir="."`：受限 Windows 上 `%TEMP%` 不可写时，
+  解包目录放在 exe 同目录。
+- frozen 时配置/日志/`exit.clean` 写 exe 同目录 `.padlend/`（`APP_DIR`），
+  只读资源从 `_MEIPASS`（`BUNDLE_DIR`）读取。
+- 内置 adb（`vendor/adb/platform-tools/`）与重打包后的 scrcpy jar，目标机无需
+  预装 Python/adb；首次运行检测 `vendor/` 完整性，缺文件给出明确提示。
 
 ## 16.3 版本与迁移
 

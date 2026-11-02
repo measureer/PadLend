@@ -89,9 +89,13 @@ adb devices -l
 | 项 | 命令 | 实际 | 结论 |
 |---|---|---|---|
 | 安装 PyInstaller | `python -m pip install pyinstaller` | PyInstaller 6.22.3 | ✅ |
-| onedir 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | Build complete（约 44s） | ✅ |
-| 版本冒烟 | `dist\PadLend\PadLend.exe --version` | `PadLend 0.1.0` | ✅ |
-| 无设备 headless | `dist\PadLend\PadLend.exe --headless --duration 1 --no-single-instance` | exit 0；E101 后 `fault -> idle (stop)`，无残留 | ✅ |
-| vendor 完整性 | `dist\PadLend\_internal\vendor\` | jar 2,316,791 B + SHA256SUMS + README | ✅ |
+| onefile 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | Build complete（约 56s） | ✅ |
+| 产物 | `dist\PadLend.exe` | 单文件约 51MB，含 PySide6/jar/adb/图标 | ✅ |
+| 版本冒烟 | `dist\PadLend.exe --version` | `PadLend 0.1.0` | ✅ |
+| 内置 adb | 去掉 PATH 后 `PadLend.exe --headless --duration 1` | exit 0；E101（说明用的是内置 adb，而非 PATH） | ✅ |
+| GUI 启动 | 双击 `dist\PadLend.exe` | 主窗/画布/设置/日志正常，标题 PadLend | ✅ |
+| 便携目录 | 运行后检查 `dist\.padlend\` | `config.yaml`、`logs\padlend.log`、`exit.clean` 持久化 | ✅ |
+| vendor 内置 | 解包/运行检查 | scrcpy jar（2,316,791 B）+ SHA256SUMS + `adb/platform-tools/` | ✅ |
 
-产物在 `dist/PadLend/`；`build/`、`dist/` 均已 gitignore。
+产物为 `dist/PadLend.exe`（单文件）；`build/`、`dist/` 均已 gitignore。
+本机 `%TEMP%` 对进程不可写，spec 用 `runtime_tmpdir="."` 将解包目录放在 exe 同目录。

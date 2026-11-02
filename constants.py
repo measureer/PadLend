@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -24,8 +25,16 @@ SINGLE_INSTANCE_MUTEX = r"Global\PadLend.SingleInstance"
 # 路径
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
-VENDOR_DIR = PROJECT_ROOT / "vendor"
-ASSETS_DIR = PROJECT_ROOT / "ui" / "theme"
+# 源码运行时两者相同；PyInstaller onefile 下 __file__ 指向临时解包目录
+# （_MEIPASS），而可执行文件所在目录才是用户可见、可写的应用目录。
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+else:
+    APP_DIR = PROJECT_ROOT
+    BUNDLE_DIR = PROJECT_ROOT
+VENDOR_DIR = BUNDLE_DIR / "vendor"
+ASSETS_DIR = BUNDLE_DIR / "ui" / "theme"
 ICONS_DIR = ASSETS_DIR / "icons"
 
 
@@ -61,10 +70,10 @@ def config_dir() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     if local:
         candidates.append(Path(local))
-    candidates.append(PROJECT_ROOT)
+    candidates.append(APP_DIR)
 
     for base in candidates:
-        name = ".padlend" if base == PROJECT_ROOT else APP_NAME
+        name = ".padlend" if base == APP_DIR else APP_NAME
         found = _writable_dir(base, name)
         if found is not None:
             return found

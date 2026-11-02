@@ -20,12 +20,17 @@
 |---|---|
 | PC | Windows 10/11 x64，Python 3.11+（开发用 3.13） |
 | 平板 | Android 8.0+（UHID 可用；本项目在 Honor MagicPad 3 / Android 17 上验证） |
-| 工具 | Android platform-tools（`adb` 在 PATH 或设置 `PADLEND_ADB`） |
+| 工具 | 打包版已内置 adb；源码运行需 Android platform-tools（`adb` 在 PATH 或设置 `PADLEND_ADB`） |
 | 连接 | USB 数据线（推荐）或无线 adb；平板已开启"USB 调试" |
 
 > UHID 需要平板的 `uhid` 组权限；主流厂商系统默认允许 `adb shell` 访问 `/dev/uhid`。若 `probe` 报告不可写，见故障排查。
 
 ## 安装
+
+普通用户：直接双击 `dist\PadLend.exe`，无需安装 Python、adb 或任何驱动。
+配置、日志与退出标记会写在该 exe 同目录的 `.padlend\` 中，可整体拷贝运行。
+
+源码开发：
 
 ```powershell
 git clone <repo> C:\Code\PadLend
@@ -39,6 +44,10 @@ python -m venv .venv
 
 ## 快速开始
 
+打包版：双击 `dist\PadLend.exe`，按向导选择平板、确认 USB 调试，然后把平板拖到屏幕边缘即可。
+
+源码运行：
+
 ```powershell
 # 1. 确认设备
 adb devices -l
@@ -49,11 +58,11 @@ adb devices -l
 # 3. 启动 GUI
 .\.venv\Scripts\python.exe -m padlend
 
-# 4. 无 GUI 模式（可选；连接后把鼠标位移 1:1 送到平板）
+# 4. 无 GUI 模式（开发/诊断用；连接后把鼠标位移 1:1 送到平板）
 .\.venv\Scripts\python.exe -m padlend --headless
 ```
 
-首次启动会显示向导：选择设备 → 确认 USB 调试 → 检查 UHID → 校验 jar → 在画布上把平板拖到屏幕边缘。之后配置保存在 `%APPDATA%\PadLend\config.yaml`。
+首次启动会显示向导：选择设备 → 确认 USB 调试 → 检查 UHID → 校验 jar → 在画布上把平板拖到屏幕边缘。源码运行配置默认在 `%APPDATA%\PadLend\config.yaml`（不可写时回退 `%LOCALAPPDATA%` 或项目 `.padlend\`）；打包版固定使用 exe 同目录 `.padlend\config.yaml`。
 
 ## 使用
 
@@ -152,7 +161,7 @@ PadLend/
 ├─ ui/                     # 主窗、画布、设置、日志、托盘、向导、诊断、主题
 ├─ tools/                  # probe / calibrate
 ├─ tests/                  # 单元 + 集成（fake 设备）
-└─ vendor/                 # scrcpy-server jar + SHA256SUMS
+└─ vendor/                 # scrcpy-server jar、内置 adb、SHA256SUMS
 ```
 
 线程模型：T1 GUI、T2 Raw Input、T3 键盘钩子、T4 Router、T5 发送、T6 监督；队列满时丢最老并计入 `drop_pct`。
@@ -160,14 +169,20 @@ PadLend/
 ## 打包
 
 ```powershell
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --windowed --name PadLend `
-  --add-data "vendor;vendor" --add-data "ui/theme;ui/theme" main.py
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm PadLend.spec
 ```
 
-输出 `dist/PadLend/`（onedir）。首次运行会校验 `vendor/` 完整性。
+输出单文件 `dist\PadLend.exe`（约 51MB，含 PySide6 运行时、`vendor/scrcpy-server-v5.0.1.jar`
+与内置 adb），双击即可运行，不依赖本机 Python/adb。
+
+- `PadLend.spec` 使用 `runtime_tmpdir="."`：受限 Windows 配置下 `%TEMP%` 不可写时，
+  单文件解包目录放在 exe 同目录。
+- 首次运行校验 `vendor/` 完整性；配置/日志/`exit.clean` 写在 exe 同目录 `.padlend\`。
 
 ## 已知限制
 
+- 单文件 exe 未做代码签名，Windows SmartScreen 可能提示“未知发布者”；选择“更多信息 → 仍要运行”即可。
 - 以管理员权限运行的窗口（UAC 提权程序）收不到本程序的钩子注入，这是 Windows 低级钩子的固有限制。
 - 多显示器 A4–A6 场景需要在双屏环境复验；逻辑已由 fixture 单测覆盖。
 - 平板系统若拦截边缘手势（MagicOS 等），可把 `boundary_inset_px` 调大 2–4px。

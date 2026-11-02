@@ -1,10 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller onedir spec for PadLend.
+"""PyInstaller onefile spec for PadLend.
 
 Build:
-    .\.venv\Scripts\python.exe -m PyInstaller --noconfirm PadLend.spec
+    .\\.venv\\Scripts\\python.exe -m PyInstaller --noconfirm PadLend.spec
 
-Output: dist/PadLend/PadLend.exe (onedir).
+Output: dist/PadLend.exe (single executable).
+
+The onefile bootloader extracts next to the exe (runtime_tmpdir=".") instead
+of %TEMP%; this keeps the portable app working in restricted Windows profiles
+where the system temp directory is not writable.
 """
 
 from pathlib import Path
@@ -34,27 +38,21 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="PadLend",
+    icon="assets/padlend.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=".",
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="PadLend",
 )
