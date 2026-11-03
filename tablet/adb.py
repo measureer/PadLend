@@ -66,13 +66,13 @@ class DeviceEntry:
         return self.state == STATE_DEVICE
 
     @property
-    def is_usb(self) -> bool:
-        """``192.168.68.10:46511`` 这类带冒号的是无线 adb（6.1.1）。"""
-        return ":" not in self.serial
+    def is_wireless(self) -> bool:
+        """无线 adb 有两种 serial：``ip:port`` 和 mDNS 的 ``adb-..._tcp``。"""
+        return ":" in self.serial or "_adb-tls-connect" in self.serial or ".tcp" in self.serial
 
     @property
-    def is_wireless(self) -> bool:
-        return not self.is_usb
+    def is_usb(self) -> bool:
+        return not self.is_wireless
 
 
 def _candidate_paths(explicit: str | Path | None) -> list[Path]:
@@ -278,15 +278,25 @@ class Adb:
             parts = line.split()
             if len(parts) < 2:
                 continue
-            serial = parts[0]
-            state = parts[1]
-            attr_start = 2
-            if state == "no" and len(parts) >= 4 and parts[2] == "permissions":
-                state = "no permissions"
-                attr_start = 4
-            if state not in self._KNOWN_STATES:
+            # serial 本身可能含空格：ADB 给重名 mDNS 服务加 " (2)" 后缀，
+            # 此时 ``adb devices -l`` 是
+            #   adb-xxx (2)._adb-tls-connect._tcp device product:...
+            # 不能把 parts[1] 直接当 state。这里找已知 state 的位置，它之前的
+            # 全部 token 拼回 serial（adb -s 接受带空格的 serial，已实测）。
+            state_idx = -1
+            state = ""
+            attr_start = 0
+            for i, token in enumerate(parts):
+                if token == "no" and i + 1 < len(parts) and parts[i + 1] == "permissions":
+                    state_idx, state, attr_start = i, "no permissions", i + 2
+                    break
+                if token in self._KNOWN_STATES and token != "no":
+                    state_idx, state, attr_start = i, token, i + 1
+                    break
+            if state_idx <= 0:
                 LOG.debug("忽略畸形 adb 设备行: %r", line)
                 continue
+            serial = " ".join(parts[:state_idx])
             if serial in seen:
                 continue
             seen.add(serial)
@@ -305,7 +315,25 @@ class Adb:
                     transport_id=attrs.get("transport_id", ""),
                 )
             )
-        return entries
+
+        # 同一台平板可能同时以 mDNS 串名和 ip:port 出现；优先保留无空格、
+        # 可直接用作 ``adb -s`` 的干净 serial，避免设备页出现两个相同型号。
+        clean = {
+            (e.model, e.device)
+            for e in entries
+            if e.online and " " not in e.serial and (e.model or e.device)
+        }
+        result: list[DeviceEntry] = []
+        for entry in entries:
+            if (
+                entry.online
+                and " " in entry.serial
+                and (entry.model, entry.device) in clean
+            ):
+                LOG.debug("忽略 mDNS 重复设备行: %r", entry.serial)
+                continue
+            result.append(entry)
+        return result
 
     def online_devices(self) -> list[DeviceEntry]:
         return [d for d in self.devices() if d.online]
@@ -313,6 +341,7 @@ class Adb:
     def select_device(self, serial: str | None = None, *, prefer_usb: bool = True) -> DeviceEntry:
         """按 6.1.1 选设备：指定 serial → USB → 无线。"""
         entries = self.devices()
+        online = [e for e in entries if e.online]
         if serial:
             for entry in entries:
                 if entry.serial == serial:
@@ -322,11 +351,15 @@ class Adb:
                         ErrorCode.DEVICE_OFFLINE,
                         f"设备 {serial} 状态为 {entry.state}（需在平板确认 USB 调试授权）",
                     )
+            # 无线调试重启后 mDNS 串名会带 " (2)" 后缀，配置里的旧 serial
+            # 就不存在了。只有一台在线设备时直接改用它，避免“明明连着却
+            # 一直 FAULT/检测不到”。
+            if len(online) == 1:
+                LOG.warning("配置设备 %s 不存在，改用唯一在线设备 %s", serial, online[0].serial)
+                return online[0]
             raise PadLendError(
                 ErrorCode.DEVICE_OFFLINE, f"找不到设备 {serial}（adb devices 为空？）"
             )
-
-        online = [e for e in entries if e.online]
         if not online:
             unauthorized = [e for e in entries if e.state == STATE_UNAUTHORIZED]
             if unauthorized:

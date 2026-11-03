@@ -54,3 +54,31 @@ B unauthorized usb:1-1 transport_id:5
         ("A", "offline"),
         ("B", "unauthorized"),
     ]
+
+
+ONLY_MDNS_OUTPUT = (
+    "List of devices attached\n"
+    "adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp device "
+    "product:CGA-W00 model:CGA_W00 device:HNCGA-Q transport_id:3\n"
+)
+
+
+def test_devices_keeps_mdns_serial_with_space_when_it_is_the_only_entry() -> None:
+    entries = _StubAdb(ONLY_MDNS_OUTPUT).devices()
+    assert len(entries) == 1
+    entry = entries[0]
+    # adb -s 接受带空格的 serial；不能因为 state 不是第二列就把设备丢掉。
+    assert entry.serial == "adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp"
+    assert entry.state == "device"
+    assert entry.online
+    assert entry.is_wireless and not entry.is_usb
+    assert entry.transport_id == "3"
+
+
+def test_select_device_falls_back_to_only_online_device() -> None:
+    output = """List of devices attached
+192.168.1.8:37495 device product:CGA-W00 model:CGA_W00 device:HNCGA-Q transport_id:15
+"""
+    entry = _StubAdb(output).select_device("adb-old-name._adb-tls-connect._tcp")
+    assert entry.serial == "192.168.1.8:37495"
+    assert entry.online

@@ -2,6 +2,19 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.4] — 2026-11-03
+
+### 修复
+
+- **无线调试已开但设备列表为空**：Android 17 的 ADB 在 mDNS 重名时会把 serial 打成 `adb-xxx (2)._adb-tls-connect._tcp`，第二列因此不是 `device`。旧解析直接丢弃该行，而界面只认在线设备，于是“adb 明明看得到、PadLend 却检测不到”。现在按已知 state 的位置回拼 serial（`adb -s` 接受带空格的 serial），不再误丢。
+- 同一台平板同时以 mDNS 串名和 `ip:port` 出现时，优先保留可直接使用的 `ip:port`，设备列表只显示一条；纯 mDNS 设备仍保留。
+- mDNS 形式的 `adb-..._adb-tls-connect._tcp` 现在正确识别为无线而非 USB。
+- 无线调试重启后 mDNS 串名会变化，配置里的旧 serial 可能失效；若此时只有一台在线设备，自动改用该设备，不再一直 `E101/FAULT`。
+
+### 测试
+
+- 310 passed, 3 skipped；新增“仅 mDNS 带空格串名仍保留”“旧 serial 回退到唯一在线设备”等回归测试。
+
 ## [0.2.3] — 2026-11-03
 
 ### 修复

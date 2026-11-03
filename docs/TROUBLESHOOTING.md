@@ -36,6 +36,29 @@ adb kill-server && adb start-server
 - 换数据线/换 USB 口（必须是数据线，不是充电线）；
 - 无线 adb：`adb connect 192.168.x.x:5555`，确认同一网段。
 
+#### 无线调试已开，但 PadLend 设备列表为空
+
+先在命令行确认 ADB 本身是否看得到：
+
+```bash
+adb devices -l
+adb mdns services
+```
+
+若出现形如 `adb-xxxx (2)._adb-tls-connect._tcp device ...` 的行，说明 Android 的
+mDNS 服务重名，ADB 给 serial 加了 ` (2)` 后缀，第二列不再是 `device`。
+0.2.4 之前会把这种行当畸形丢掉，于是“adb 检测得到、PadLend 检测不到”。
+
+0.2.4 已修复；仍为空时按顺序试：
+
+1. 平板“无线调试”关掉再打开，等 3–5 秒后点 PadLend 的“刷新设备”；
+2. `adb kill-server && adb start-server`（PadLend 与命令行共用同一个 adb server）；
+3. `adb mdns check` 必须返回 `mdns daemon version ...`；Windows 防火墙需允许 adb 的 mDNS（UDP 5353）；
+4. 确认 PC 与平板在同一子网（访客 Wi-Fi / AP 隔离会屏蔽 mDNS）；可改用
+   `adb connect <平板IP>:<无线调试端口>` 直连，成功后设备会以 `IP:端口` 出现；
+5. 无线调试每次重启端口会变；PadLend 现在会在只有一台在线设备时自动改用新 serial，
+   无需手动删配置。
+
 ### E102 `UHID_UNAVAILABLE` — UHID 不可写
 
 ```bash
