@@ -658,7 +658,13 @@ class Router:
             return
         now = self._clock()
         if now > self._arm_deadline:
-            self._arm_fail_locked("timeout")
+            # 没赶上 80ms 的快速甩动，但如果已经明显向外推了一段，
+            # 说明用户是慢慢把鼠标压到边上的，不应该判定失败。
+            if self._arm_accum >= C.ARM_SLOW_PX:
+                self._arm_accum = 0.0
+                self._enter_captured_locked("arm_slow")
+            else:
+                self._arm_fail_locked("timeout")
             return
         x, y = self._pc_cursor or self._default_cursor()
         segments = self._segments_at(x, y)

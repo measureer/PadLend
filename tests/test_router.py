@@ -172,6 +172,18 @@ def test_arm_timeout_returns_idle() -> None:
     assert (State.ARMING, State.IDLE, "arm:timeout") in rig.transitions
 
 
+def test_arm_slow_push_still_captures() -> None:
+    # 慢速把鼠标压到边缘：80ms 内没攒够 40px，但已经推出 12px 以上。
+    rig = make_rig()
+    arm(rig)
+    rig.router.on_raw(raw(10, 0))
+    rig.router.on_raw(raw(10, 0))
+    rig.clock.advance(0.09)
+    rig.router.on_raw(raw(10, 0))
+    assert rig.router.state is State.CAPTURED
+    assert (State.ARMING, State.CAPTURED, "arm_slow") in rig.transitions
+
+
 def test_arm_reverse_returns_idle() -> None:
     rig = make_rig()
     arm(rig)
