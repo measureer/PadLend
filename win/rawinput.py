@@ -794,7 +794,9 @@ class RawInputSource:
             batch = list(self._pending)
             self._pending.clear()
         for delta in batch:
-            self._last_event_monotonic = time.monotonic()
+            # 注意：不更新 _last_event_monotonic。该时间戳只表示“真实 Raw Input
+            # 是否还在投递”；若注入也刷新它，CursorWatch 会误以为 Raw Input 已恢复，
+            # 每 250ms 才补一次事件，ARMING 的 80ms 窗口必然超时。
             try:
                 self._on_event(delta)
             except Exception:

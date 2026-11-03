@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
 APP_ID = "PadLend"
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。

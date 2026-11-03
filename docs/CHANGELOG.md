@@ -2,6 +2,17 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.3] — 2026-11-03
+
+### 修复
+
+- **点击输入框后兜底接管失效（滑不进平板）**：0.3.2 把兜底事件注入 rawinput 线程时，同时刷新了“真实 Raw Input 最近事件时间”，导致 CursorWatch 误以为 Raw Input 已恢复，每 250ms 才补一帧；ARMING 的 80ms 窗口必然超时，表现为一直 `arm.fail timeout accum=0`。
+- 现在注入事件不再刷新该时间戳：Raw Input 静默期间兜底按 20ms 连续补帧，Raw Input 一恢复立即停止；新增回归测试。
+
+### 测试
+
+- 326 passed, 3 skipped（新增“注入不刷新 Raw Input 年龄”测试）。
+
 ## [0.3.2] — 2026-11-03
 
 ### 修复

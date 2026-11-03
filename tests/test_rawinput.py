@@ -470,6 +470,20 @@ def test_inject_after_stop_is_rejected() -> None:
     assert source.inject(ri.RawDelta(dx=1, dy=0)) is False
 
 
+def test_inject_does_not_refresh_raw_input_age() -> None:
+    backend = FakeBackend()
+    source = ri.RawInputSource(Collector(), backend=backend)
+    source.start()
+    try:
+        assert source.inject(ri.RawDelta(dx=1, dy=0)) is True
+        time.sleep(0.05)
+        # 注入事件不算真实 Raw Input；否则兜底会以 250ms 的间隔“自激”，
+        # 永远赶不上 ARMING 的 80ms 窗口。
+        assert source.last_event_age == float("inf")
+    finally:
+        source.stop()
+
+
 def test_inject_callback_runs_on_rawinput_thread() -> None:
     backend = FakeBackend()
     seen: list[int] = []
