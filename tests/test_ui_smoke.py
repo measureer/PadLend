@@ -134,7 +134,9 @@ def window(qapp: QApplication, router: FakeRouter, config_path: Path) -> Any:
     yield win
     win._force_quit = True
     win.close()
+    qapp.processEvents()
     win.deleteLater()
+    qapp.processEvents()
 
 
 # ---------------------------------------------------------------------------
