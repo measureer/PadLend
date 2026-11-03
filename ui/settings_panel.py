@@ -216,8 +216,15 @@ class SettingsPanel(QWidget):
         layout.setSpacing(8)
         return box, layout
 
-    def _labeled_row(self, title: str, widget: QWidget) -> QWidget:
-        row = QWidget(self)
+    def _labeled_row(
+        self, title: str, widget: QWidget, hint: str | None = None
+    ) -> QWidget:
+        container = QWidget(self)
+        box = QVBoxLayout(container)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(2)
+
+        row = QWidget(container)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -225,31 +232,75 @@ class SettingsPanel(QWidget):
         name.setFixedWidth(_KEY_WIDTH)
         layout.addWidget(name)
         layout.addWidget(widget, 1)
-        return row
+        box.addWidget(row)
+        if hint:
+            box.addWidget(self._hint(hint))
+        return container
+
+    def _hint(self, text: str, indent: int = _KEY_WIDTH + 8) -> QWidget:
+        """控件下方的一行说明：小字号、次要色、自动换行。"""
+        wrapper = QWidget(self)
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(indent, 0, 0, 0)
+        layout.setSpacing(0)
+        label = QLabel(text, wrapper)
+        label.setObjectName("fieldHint")
+        label.setWordWrap(True)
+        layout.addWidget(label, 1)
+        return wrapper
+
+    def _check_row(self, check: QCheckBox, hint: str) -> QWidget:
+        """复选框 + 说明，说明与复选框文字左对齐。"""
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(check)
+        layout.addWidget(self._hint(hint, 24))
+        return container
 
     def _build_placement_group(self) -> QGroupBox:
         box, layout = self._make_group("📍 平板位置")
 
         self.edge_combo = QComboBox(box)
         self.edge_combo.setToolTip("可吸附的虚拟桌面外轮廓边段")
-        layout.addWidget(self._labeled_row("吸附边", self.edge_combo))
+        layout.addWidget(
+            self._labeled_row(
+                "吸附边",
+                self.edge_combo,
+                "平板接在虚拟桌面的哪条外侧边上；只有红色外轮廓段可选。",
+            )
+        )
 
         self.align_combo = QComboBox(box)
         for text, value in ALIGN_LABELS:
             self.align_combo.addItem(text, value)
-        layout.addWidget(self._labeled_row("对齐", self.align_combo))
+        layout.addWidget(
+            self._labeled_row(
+                "对齐",
+                self.align_combo,
+                "入口与落点沿吸附边的分布方式；等比会铺满整段。",
+            )
+        )
 
         self.offset_row = SliderRow(
             "偏移", 0, 100, 50, lambda v: f"{v / 100:.2f}", box
         )
         self.offset_slider = self.offset_row.slider
         layout.addWidget(self.offset_row)
+        layout.addWidget(self._hint("平板在吸附边上的位置：0 在起点，1 在终点。"))
 
         self.corner_combo = QComboBox(box)
         for text, value in CORNER_LABELS:
             self.corner_combo.addItem(text, value)
         self.corner_combo.setToolTip("拖到角落时优先吸附的边（Shift 临时切换）")
-        layout.addWidget(self._labeled_row("角优先", self.corner_combo))
+        layout.addWidget(
+            self._labeled_row(
+                "角优先",
+                self.corner_combo,
+                "靠近两屏交界的角落时优先吸附的边；按住 Shift 可临时切换。",
+            )
+        )
 
         self._field_widgets["placement.edge"] = self.edge_combo
         self._field_widgets["placement.align"] = self.align_combo
@@ -263,26 +314,40 @@ class SettingsPanel(QWidget):
         self.gain_row = SliderRow("速度", 25, 300, 100, lambda v: f"{v / 100:.2f}×", box)
         self.gain_slider = self.gain_row.slider
         layout.addWidget(self.gain_row)
+        layout.addWidget(self._hint("平板指针相对 PC 鼠标的移动倍率；1.00× 为 1:1。"))
 
         self.hz_row = SliderRow("上报频率", C.MIN_REPORT_HZ, C.MAX_REPORT_HZ, 1000,
                                 lambda v: f"{v} Hz", box)
         self.hz_slider = self.hz_row.slider
         layout.addWidget(self.hz_row)
+        layout.addWidget(self._hint("每秒向平板发送的鼠标报文数；越高越跟手，也越占带宽。"))
 
         self.arm_row = SliderRow("触发阈值", 10, 200, C.ARM_PX, lambda v: f"{v} px", box)
         self.arm_slider = self.arm_row.slider
         layout.addWidget(self.arm_row)
+        layout.addWidget(self._hint("从 PC 边缘向外移动多少像素后正式接管；太小容易误触。"))
 
         self.exit_row = SliderRow(
             "穿回阈值", 4, 120, C.EXIT_OVERFLOW_PX, lambda v: f"{v} px", box
         )
         self.exit_slider = self.exit_row.slider
         layout.addWidget(self.exit_row)
+        layout.addWidget(self._hint("在平板边缘反向移动多少像素后交还 PC；越大越不容易误退。"))
+
+        self.guard_row = SliderRow(
+            "进入保护", 0, 300, C.ENTRY_GUARD_PX, lambda v: f"{v} px", box
+        )
+        self.guard_slider = self.guard_row.slider
+        layout.addWidget(self.guard_row)
+        layout.addWidget(
+            self._hint("进入平板后先向内移动多少像素才允许穿回；0 关闭，越大越不易误退。")
+        )
 
         self._field_widgets["motion.gain"] = self.gain_slider
         self._field_widgets["motion.report_hz"] = self.hz_slider
         self._field_widgets["motion.arm_px"] = self.arm_slider
         self._field_widgets["motion.exit_overflow_px"] = self.exit_slider
+        self._field_widgets["motion.entry_guard_px"] = self.guard_slider
         return box
 
     def _build_keyboard_group(self) -> QGroupBox:
@@ -294,9 +359,22 @@ class SettingsPanel(QWidget):
         for name in LAYOUTS:
             self.layout_combo.addItem(name.upper(), name)
 
-        layout.addWidget(self.forward_check)
-        layout.addWidget(self.suppress_check)
-        layout.addWidget(self._labeled_row("布局", self.layout_combo))
+        layout.addWidget(
+            self._check_row(self.forward_check, "接管期间把键盘按键转发为平板 HID 输入。")
+        )
+        layout.addWidget(
+            self._check_row(
+                self.suppress_check,
+                "接管期间阻止按键在本机生效，避免 PC 与平板同时响应。",
+            )
+        )
+        layout.addWidget(
+            self._labeled_row(
+                "布局",
+                self.layout_combo,
+                "平板端键盘布局；应与 Android 当前输入法的布局一致。",
+            )
+        )
 
         self._field_widgets["keyboard.layout"] = self.layout_combo
         return box
@@ -310,9 +388,27 @@ class SettingsPanel(QWidget):
         for edit in (self.toggle_edit, self.panic_edit, self.clipboard_edit):
             edit.setClearButtonEnabled(True)
 
-        layout.addWidget(self._labeled_row("接管/交还", self.toggle_edit))
-        layout.addWidget(self._labeled_row("急停", self.panic_edit))
-        layout.addWidget(self._labeled_row("剪贴板", self.clipboard_edit))
+        layout.addWidget(
+            self._labeled_row(
+                "接管/交还",
+                self.toggle_edit,
+                "手动进入或退出平板接管的全局快捷键。",
+            )
+        )
+        layout.addWidget(
+            self._labeled_row(
+                "急停",
+                self.panic_edit,
+                "任何状态下立即释放遮罩、清空按键并把光标交还 PC。",
+            )
+        )
+        layout.addWidget(
+            self._labeled_row(
+                "剪贴板",
+                self.clipboard_edit,
+                "把 PC 剪贴板文本发送到平板当前输入框。",
+            )
+        )
 
         self._field_widgets["hotkeys.toggle"] = self.toggle_edit
         self._field_widgets["hotkeys.panic"] = self.panic_edit
@@ -325,9 +421,27 @@ class SettingsPanel(QWidget):
         self.ghost_check = QCheckBox("显示指针幽灵", box)
         self.clipboard_check = QCheckBox("剪贴板同步", box)
         self.keepawake_check = QCheckBox("保持平板亮屏", box)
-        for check in (self.tray_check, self.ghost_check, self.clipboard_check,
-                      self.keepawake_check):
-            layout.addWidget(check)
+        left = QVBoxLayout()
+        left.setSpacing(4)
+        left.addWidget(
+            self._check_row(self.tray_check, "连接、断开或发生故障时在托盘弹出气泡提醒。")
+        )
+        left.addWidget(
+            self._check_row(self.ghost_check, "在 PC 屏幕边缘显示平板指针位置的半透明提示。")
+        )
+        right = QVBoxLayout()
+        right.setSpacing(4)
+        right.addWidget(
+            self._check_row(self.clipboard_check, "允许通过快捷键或进入接管时自动发送剪贴板文本。")
+        )
+        right.addWidget(
+            self._check_row(self.keepawake_check, "连接期间让平板保持亮屏，断开后恢复系统设置。")
+        )
+        columns = QHBoxLayout()
+        columns.setSpacing(18)
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        layout.addLayout(columns)
         return box
 
     def _connect(self) -> None:
@@ -335,7 +449,13 @@ class SettingsPanel(QWidget):
         self.align_combo.currentIndexChanged.connect(self._on_control_changed)
         self.corner_combo.currentIndexChanged.connect(self._on_control_changed)
         self.offset_slider.valueChanged.connect(self._on_control_changed)
-        for row in (self.gain_row, self.hz_row, self.arm_row, self.exit_row):
+        for row in (
+            self.gain_row,
+            self.hz_row,
+            self.arm_row,
+            self.exit_row,
+            self.guard_row,
+        ):
             row.slider.valueChanged.connect(self._on_control_changed)
         self.layout_combo.currentIndexChanged.connect(self._on_control_changed)
         for check in (self.forward_check, self.suppress_check, self.tray_check,
@@ -487,6 +607,7 @@ class SettingsPanel(QWidget):
         motion.report_hz = int(self.hz_slider.value())
         motion.arm_px = int(self.arm_slider.value())
         motion.exit_overflow_px = int(self.exit_slider.value())
+        motion.entry_guard_px = int(self.guard_slider.value())
 
         keyboard = cfg.keyboard
         keyboard.forward = self.forward_check.isChecked()
@@ -540,6 +661,7 @@ class SettingsPanel(QWidget):
         self.hz_slider.setValue(int(cfg.report_hz))
         self.arm_slider.setValue(int(cfg.arm_px))
         self.exit_slider.setValue(int(cfg.exit_overflow_px))
+        self.guard_slider.setValue(int(cfg.entry_guard_px))
 
     def _fill_keyboard(self) -> None:
         cfg = self._config.keyboard

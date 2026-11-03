@@ -527,3 +527,16 @@ def test_theme_toggle_persists_and_repaints(window: Any, qapp: QApplication) -> 
     assert tokens.current_theme() == "dark"
     assert Config.load(window._config_path).ui.theme == "dark"
 
+
+
+def test_settings_hints_and_entry_guard(window: Any) -> None:
+    """每个设置分组都有说明；进入保护可直接调整并落盘。"""
+    window._switch_page(2)
+    hints = window.settings.findChildren(QLabel, "fieldHint")
+    assert len(hints) >= 14
+    assert any("穿回" in hint.text() for hint in hints)
+    assert any("进入平板" in hint.text() for hint in hints)
+
+    window.settings.guard_slider.setValue(220)
+    assert window.settings.save() is True
+    assert window.settings._config.motion.entry_guard_px == 220

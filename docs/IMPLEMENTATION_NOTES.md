@@ -131,7 +131,7 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
 - `Router` 新增 `_device_suspended`：用户主动断开后 supervisor 不再自动重连；`connect_device()` 切换 `cfg.device.serial` 并清空旧 facts/estimator。
 - 未连接门控：`TabletItem` 默认 `connected=False`，只画“未连接设备 / 连接后显示实际尺寸”；`MainWindow.update_device(None)` 时设备页分辨率/方向为“—”，不出现任何型号默认尺寸。
 - 无设备时 Router 的 FAULT 不再直接显示为“故障”：`_present_state()` 在无 facts 时映射为“未连接”（连接中映射为“连接中”），避免误报。
-- 设置页放入 QScrollArea（最大宽 760），日志页保留 LogView + MetricsPanel 分栏。
+- 设置页由 SettingsPanel 自带滚动区直接铺满页面（0.2.5 去掉了外层重复滚动与 760px 限宽）；0.2.5 起为左右两列：平板位置/键盘 | 手感/快捷键，杂项跨两列。
 - 主题：新深色分层配色、12px 卡片圆角、QPainter 图标与渐变品牌标识；禁用态按钮补样式。
 
 ## 9. 0.2.1 白天/黑夜主题
@@ -142,7 +142,17 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
 - 画布图元 `color()` 每次绘制读取当前 `tokens.COLORS`（修复旧实现读取不存在的 `TOKENS`）；`win32` 标题栏明暗跟随主题。
 - 配置校验：`ui.theme` 仅接受 `dark`/`light`，非法值回退 `dark` 并记录 issue。
 
-## 10. 任务板
+## 10. 0.2.5–0.2.6 设置页说明与进入保护
+
+- 0.2.5：设置页改为两列等分布局，去掉外层重复滚动与 760px 限宽，保存按钮通栏。
+- 0.2.6：每个控件下方增加 `QLabel#fieldHint` 说明（小字号、`@text_secondary`、自动换行）；
+  `_labeled_row()` 接受 hint，`_check_row()` 负责“复选框 + 说明”的组合。
+- 新增“进入保护”滑杆，绑定 `config.motion.entry_guard_px`（0–300，默认 160），
+  与 Router 的 `_entry_depth_ok` 门槛一一对应；此前该参数只能手改 YAML。
+- 杂项改为两列，避免宽屏右侧空白；测试 `test_settings_hints_and_entry_guard`
+  断言说明存在、进入保护值能保存并写回 Config。
+
+## 11. 任务板
 
 每个实施者从 `team_task_list` 领取自己的任务，完成后 `team_task_update(action="complete")`
 并向 Lead 发送简报（完成项 / 测试命令与结果 / 未决风险）。写作用域见任务描述。

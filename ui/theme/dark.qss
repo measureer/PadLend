@@ -43,9 +43,14 @@ QMessageBox {
 #deviceText,
 #orientationText,
 #hintText,
-#mutedText {
+#mutedText,
+#fieldHint {
     color: @text_secondary;
     font-size: @fs_small;
+}
+
+#fieldHint {
+    padding-bottom: 2px;
 }
 
 #latencyText {

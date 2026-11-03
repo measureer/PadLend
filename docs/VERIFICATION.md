@@ -94,8 +94,9 @@ adb devices -l
 | 设备管理 Router | `test_connect_device_switches_serial_and_clears_old_facts`、`test_disconnect_device_suspends_auto_reconnect_until_user_connects` | 切换 serial、断开后 supervisor 不自动重连 | ✅ |
 | 主题切换 | `test_theme_toggle_persists_and_repaints`、`test_theme_repair_and_roundtrip` | 切换后 `tokens.current_theme()` 与 `config.ui.theme` 同步、重新加载仍生效 | ✅ |
 | 亮色原生渲染 | 原生窗口截图 `docs/screenshots/ui-light.png` | 浅色窗口/卡片/导航/设备页，中文正常 | ✅ |
+| 设置项说明 | `test_settings_hints_and_entry_guard` | 每个摆位/手感/键盘/快捷键/杂项控件均有中文说明；进入保护 220px 可保存 | ✅ |
 | 打包 GUI | `dist\PadLend.exe` 原生启动截图 | 无设备时顶栏/设备页显示中性“未连接”，不误报故障 | ✅ |
-| 全量回归 | `pytest -o addopts="" -q` | 310 passed, 3 skipped | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 311 passed, 3 skipped | ✅ |
 
 真机点击“连接此设备” → 画布出现真实尺寸 → 边缘穿越的交互链路，待平板重新连接后按 A1–A13 复验。
 
@@ -126,7 +127,7 @@ adb devices -l
 | 连接状态一致性 | 源码 GUI 实机启动截图（自动连接） | 顶栏“已连接”、设备页“已连接”，分辨率仅在 facts 到达后显示 | ✅ |
 | 进入边提示 | 同一截图底栏 | “横屏 3200×2136 · 从屏幕右侧边缘滑入平板” | ✅ |
 | 键盘看门狗 | 运行 >1min 并只移动鼠标 | 不再每 30s 出现 `kbd.watchdog.stalled`/重装 | ✅ |
-| 全量回归 | `pytest -o addopts="" -q` | 310 passed, 3 skipped | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 311 passed, 3 skipped | ✅ |
 | 静态检查 | `ruff check .` | All checks passed | ✅ |
 
 真实“把鼠标推过屏幕边缘 → 平板指针接管 → 划回交还”仍需用户在 0.2.2 exe 上完成一次目视确认。
