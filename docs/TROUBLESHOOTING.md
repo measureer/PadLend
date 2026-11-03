@@ -123,6 +123,11 @@ adb shell dumpsys input | grep -B1 -A3 "Classes: CURSOR"
 - 检查 `placement` 的边/offset 是否与实际吸附段一致；
 - 混合 DPI 屏：确认进程为 Per-Monitor V2（程序已设置），否则几何会按逻辑像素计算。
 
+### 点击 Windows 输入框后无法再滑入
+
+- 某些焦点/桌面切换会让 Raw Input 在最后一次鼠标事件后静默；0.3.1 起 `win/cursor_watch.py` 会在 Raw Input 超过 250ms 无事件时轮询绝对光标并合成位移，自动恢复边缘接管。
+- 日志出现 `cursorwatch.fallback` 即表示兜底已接管；若仍无法进入，请附上该段日志与 `tools/probe.py --json` 输出。
+
 ### 边缘手势抢鼠标
 
 - 平板系统手势区（左右边缘返回、底部上滑）会先于 UHID 指针响应；

@@ -211,6 +211,9 @@ class Runtime:
         # 低级钩子必须在 GUI 线程外独立线程；回调只把事件交给 Router，
         # 是否吞键完全由 Router 的状态机/白名单决定。
         self.keyboard_hook: KeyboardHook = KeyboardHook(self.router.on_key)
+        # 光标轮询兜底：Raw Input 在焦点/桌面切换后可能静默，但绝对光标仍在动；
+        # 仅在 Raw Input 长时间无事件时合成位移，恢复后让位。
+        self.cursor_watch: Any = None
         # 诊断模式：主线程计数由 Router 外的旁路 RawInput 读取，不影响接管。
         self.raw_debug: Any = None
         self.facts: DeviceFacts | None = None
@@ -223,9 +226,21 @@ class Runtime:
         except PadLendError as exc:
             # 无 Raw Input 时鼠标仍可用，只是无法触发边缘接管；不阻断 GUI。
             LOG.warning("Raw Input 不可用：%s", exc.user_message)
+        try:
+            from win.cursor_watch import CursorWatch
+
+            self.cursor_watch = CursorWatch(self.router, self.rawinput)
+            self.cursor_watch.start()
+        except Exception:
+            LOG.debug("cursor watch 启动失败", exc_info=True)
 
     def stop(self) -> None:
         try:
+            if self.cursor_watch is not None:
+                try:
+                    self.cursor_watch.stop()
+                finally:
+                    self.cursor_watch = None
             self.rawinput.stop()
         finally:
             try:

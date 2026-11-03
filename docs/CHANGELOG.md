@@ -2,6 +2,17 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.1] — 2026-11-03
+
+### 修复
+
+- **点击 Windows 输入框后无法再滑入平板**：部分焦点/桌面切换会让 Raw Input 在最后一次按键事件后静默（日志中不再有 `cap.start`/`arm.fail`，但系统光标仍在移动）。新增 `win/cursor_watch.py`：仅在 Raw Input 超过 250ms 没有事件时轮询绝对光标位置并合成 `RawDelta`，交给 Router 继续做边缘判定；Raw Input 恢复后立即让位，不重复计数。日志以 `cursorwatch.fallback` 记录兜底启用。
+- 按键位图由 `GetAsyncKeyState` 补齐，避免兜底期间丢失按住状态。
+
+### 测试
+
+- 322 passed, 3 skipped；新增 CursorWatch 的静态 Raw、Raw 正常、CAPTURED 跳过三组测试。
+
 ## [0.3.0] — 2026-11-03
 
 ### 修复

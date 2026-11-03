@@ -668,6 +668,7 @@ class RawInputSource:
         self._startup_error: BaseException | None = None
         self._last_error: BaseException | None = None
         self._healthy = False
+        self._last_event_monotonic = 0.0
 
     # -- 接口 -------------------------------------------------------------
     def start(self) -> None:
@@ -728,6 +729,14 @@ class RawInputSource:
         """最近一次线程级异常（诊断用）。"""
         return self._last_error
 
+    @property
+    def last_event_age(self) -> float:
+        """距最后一个已分发的 Raw Input 事件过去的秒数（无事件时为 inf）。"""
+        stamp = self._last_event_monotonic
+        if stamp <= 0.0:
+            return float("inf")
+        return max(0.0, time.monotonic() - stamp)
+
     # -- 线程 -------------------------------------------------------------
     def _thread_main(self) -> None:
         try:
@@ -763,6 +772,7 @@ class RawInputSource:
             return
         if delta is None:
             return
+        self._last_event_monotonic = time.monotonic()
         try:
             self._on_event(delta)
         except Exception:
