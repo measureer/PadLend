@@ -25,6 +25,7 @@ import logging
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -46,6 +47,7 @@ STOP_TIMEOUT_S = 2.0
 WM_DESTROY = 0x0002
 WM_INPUT = 0x00FF
 WM_QUIT = 0x0012
+WM_APP_WAKE = 0x8000 + 1
 
 HID_USAGE_PAGE_GENERIC = 0x01
 HID_USAGE_GENERIC_MOUSE = 0x02
@@ -444,7 +446,15 @@ class RawInputBackend(Protocol):
 
     def prepare(self) -> None: ...
 
-    def pump(self, on_packet: Callable[[MousePacket], None]) -> None: ...
+    def pump(
+        self,
+        on_packet: Callable[[MousePacket], None],
+        on_wake: Callable[[], None] | None = None,
+    ) -> None: ...
+
+    def wake(self) -> bool:
+        """唤醒 ``pump`` 线程处理注入事件；失败返回 False。"""
+        ...
 
     def request_stop(self) -> bool: ...
 
@@ -471,6 +481,7 @@ class Win32RawInputBackend:
         self._hwnd: int | None = None
         self._thread_id: int = 0
         self._on_packet: Callable[[MousePacket], None] | None = None
+        self._on_wake: Callable[[], None] | None = None
         self._prepared = False
 
     # -- 生命周期 ---------------------------------------------------------
@@ -523,9 +534,14 @@ class Win32RawInputBackend:
             )
         self._prepared = True
 
-    def pump(self, on_packet: Callable[[MousePacket], None]) -> None:
+    def pump(
+        self,
+        on_packet: Callable[[MousePacket], None],
+        on_wake: Callable[[], None] | None = None,
+    ) -> None:
         user32 = _user32()
         self._on_packet = on_packet
+        self._on_wake = on_wake
         message = _MSG()
         while True:
             result = int(user32.GetMessageW(ctypes.byref(message), None, 0, 0))
@@ -538,6 +554,16 @@ class Win32RawInputBackend:
                 )
             user32.TranslateMessage(ctypes.byref(message))
             user32.DispatchMessageW(ctypes.byref(message))
+
+    def wake(self) -> bool:
+        hwnd = self._hwnd
+        if not hwnd:
+            return False
+        try:
+            return bool(_user32().PostMessageW(hwnd, WM_APP_WAKE, 0, 0))
+        except Exception:
+            _log.debug("唤醒 Raw Input 线程失败", exc_info=True)
+            return False
 
     def request_stop(self) -> bool:
         if not self._thread_id:
@@ -583,6 +609,13 @@ class Win32RawInputBackend:
                 _log.exception("处理 WM_INPUT 失败")
             # 交回系统做 Raw Input 缓冲区清理。
             return int(user32.DefWindowProcW(hwnd, msg, wparam, lparam))
+        if msg == WM_APP_WAKE:
+            if self._on_wake is not None:
+                try:
+                    self._on_wake()
+                except Exception:
+                    _log.exception("处理注入事件失败")
+            return 0
         if msg == WM_DESTROY:
             user32.PostQuitMessage(0)
             return 0
@@ -669,6 +702,8 @@ class RawInputSource:
         self._last_error: BaseException | None = None
         self._healthy = False
         self._last_event_monotonic = 0.0
+        self._pending: deque[RawDelta] = deque()
+        self._pending_lock = threading.Lock()
 
     # -- 接口 -------------------------------------------------------------
     def start(self) -> None:
@@ -737,6 +772,34 @@ class RawInputSource:
             return float("inf")
         return max(0.0, time.monotonic() - stamp)
 
+    def inject(self, delta: RawDelta) -> bool:
+        """把兜底合成事件送回 rawinput 线程分发。
+
+        必须经 rawinput 线程执行 Router 回调：接管时创建的遮罩窗口归属该线程，
+        只有该线程有消息泵；若在轮询线程直接调用 Router，遮罩窗口会变成无响应
+        窗口，点击后表现为整个应用卡死。
+        """
+        if not self._healthy:
+            return False
+        with self._pending_lock:
+            self._pending.append(delta)
+        try:
+            return bool(self._backend.wake())
+        except Exception:
+            _log.debug("注入事件唤醒失败", exc_info=True)
+            return False
+
+    def _drain_pending(self) -> None:
+        with self._pending_lock:
+            batch = list(self._pending)
+            self._pending.clear()
+        for delta in batch:
+            self._last_event_monotonic = time.monotonic()
+            try:
+                self._on_event(delta)
+            except Exception:
+                _log.exception("Raw Input 注入回调异常")
+
     # -- 线程 -------------------------------------------------------------
     def _thread_main(self) -> None:
         try:
@@ -753,7 +816,7 @@ class RawInputSource:
         self._healthy = True
         self._ready.set()
         try:
-            self._backend.pump(self._dispatch)
+            self._backend.pump(self._dispatch, self._drain_pending)
         except Exception as exc:
             self._last_error = exc
             _log.exception("Raw Input 线程异常退出")

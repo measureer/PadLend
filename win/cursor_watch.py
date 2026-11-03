@@ -3,8 +3,12 @@
 Windows 在某些焦点/桌面切换后会停止向 ``RIDEV_INPUTSINK`` 窗口投递
 ``WM_INPUT``（日志中表现为最后一次按键事件后彻底静默，但 ``GetCursorPos``
 仍在变化）。这里以低频率轮询绝对光标位置，仅在 Raw Input 超过 ``stale_s``
-没有事件时合成 ``RawDelta`` 交给 Router，让边缘接管继续工作；Raw Input
-恢复后立即让位，避免重复计数。
+没有事件时合成 ``RawDelta``，**注入回 rawinput 线程**交由 Router 处理；Raw
+Input 恢复后立即让位，避免重复计数。
+
+注入必须走 rawinput 线程：接管时创建的遮罩窗口归属该线程，只有该线程有
+消息泵。若在轮询线程直接调用 Router，遮罩窗口会变成无响应窗口，点击后
+整个应用会挂起。
 """
 
 from __future__ import annotations
@@ -134,13 +138,13 @@ class CursorWatch:
         except Exception:
             buttons = 0
         try:
-            self._router.on_raw(  # type: ignore[attr-defined]
+            injected = self._rawinput.inject(  # type: ignore[attr-defined]
                 RawDelta(dx=dx, dy=dy, buttons=buttons, wheel=0, absolute=False, ts=time.time())
             )
         except Exception:
             LOG.debug("cursorwatch.router_failed", exc_info=True)
             return False
-        return True
+        return bool(injected)
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_s):

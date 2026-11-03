@@ -101,7 +101,11 @@ class FakeBackend:
         if self.prepare_error is not None:
             raise self.prepare_error
 
-    def pump(self, on_packet: Callable[[ri.MousePacket], None]) -> None:
+    def pump(
+        self,
+        on_packet: Callable[[ri.MousePacket], None],
+        on_wake: Callable[[], None] | None = None,
+    ) -> None:
         self.pump_calls += 1
         if self.pump_error is not None:
             raise self.pump_error
@@ -112,6 +116,12 @@ class FakeBackend:
                 batch, self._pending = self._pending, []
             for item in batch:
                 on_packet(item)
+            if on_wake is not None:
+                on_wake()
+
+    def wake(self) -> bool:
+        self._wake.set()
+        return True
 
     def request_stop(self) -> bool:
         self.stop_requests += 1
@@ -429,6 +439,53 @@ def test_source_stop_before_start_is_noop() -> None:
 
     assert backend.stop_requests == 0
     assert source.healthy is False
+
+
+# ---------------------------------------------------------------------------
+# 注入事件：必须回到 rawinput 线程分发（遮罩窗口归属该线程）
+# ---------------------------------------------------------------------------
+def test_inject_dispatches_on_rawinput_thread() -> None:
+    backend = FakeBackend()
+    collector = Collector()
+    source = ri.RawInputSource(collector, backend=backend)
+    source.start()
+    try:
+        delta = ri.RawDelta(dx=7, dy=-3, buttons=0x01)
+        assert source.inject(delta) is True
+        deadline = time.monotonic() + 1.0
+        while not collector.count() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        deltas = collector.snapshot()
+        assert len(deltas) == 1
+        assert (deltas[0].dx, deltas[0].dy, deltas[0].buttons) == (7, -3, 0x01)
+    finally:
+        source.stop()
+
+
+def test_inject_after_stop_is_rejected() -> None:
+    backend = FakeBackend()
+    source = ri.RawInputSource(Collector(), backend=backend)
+    source.start()
+    source.stop()
+    assert source.inject(ri.RawDelta(dx=1, dy=0)) is False
+
+
+def test_inject_callback_runs_on_rawinput_thread() -> None:
+    backend = FakeBackend()
+    seen: list[int] = []
+    source = ri.RawInputSource(
+        lambda ev: seen.append(threading.get_ident()), backend=backend
+    )
+    source.start()
+    try:
+        assert source.inject(ri.RawDelta(dx=2, dy=0)) is True
+        deadline = time.monotonic() + 1.0
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert seen
+        assert seen[0] != threading.get_ident()
+    finally:
+        source.stop()
 
 
 # ---------------------------------------------------------------------------
