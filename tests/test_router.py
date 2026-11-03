@@ -249,6 +249,89 @@ def test_entry_guard_blocks_immediate_return_until_inside() -> None:
     assert rig.router.state is State.RETURNING
 
 
+def test_mouse_buttons_block_exit_until_release() -> None:
+    # 拖动时指针常被推回入口边，不能因此把光标交还给 PC。
+    rig = make_rig(config=FakeConfig(entry_guard_px=0))
+    capture_manually(rig)
+    rig.router.on_raw(raw(300, 0))
+    rig.router.on_raw(raw(-300, 0, buttons=C.MOUSE_BTN_LEFT))
+    assert rig.router.state is State.CAPTURED
+    rig.router.on_raw(raw(-30, 0))
+    assert rig.router.state is State.RETURNING
+
+
+def test_wheel_detent_conversion_accumulates_remainder() -> None:
+    # Windows 一格滚轮是 120 单位；HID 一格是 1，不能把 120 当成 120 格。
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router._sender_frame()
+    rig.router._sender_frame()  # 首帧先清掉入口 warp burst
+
+    rig.router.on_raw(raw(0, 0, wheel=120))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][3] == 1
+
+    rig.router.on_raw(raw(0, 0, wheel=60))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][3] == 0
+    rig.router.on_raw(raw(0, 0, wheel=60))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][3] == 1
+
+    rig.router.on_raw(raw(0, 0, wheel=-120))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][3] == -1
+
+
+def test_keyboard_send_does_not_hold_router_lock() -> None:
+    # 钩子线程里的键盘发送若阻塞，不能把鼠标 Raw Input 一起卡住。
+    rig = make_rig()
+    capture_manually(rig)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_send(modifier: int, usages: tuple[int, ...]) -> None:
+        entered.set()
+        release.wait(timeout=2.0)
+
+    rig.session.send_key = blocking_send  # type: ignore[method-assign]
+    worker = threading.Thread(target=lambda: rig.router.on_key(key(0x41)), daemon=True)
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    started = time.monotonic()
+    rig.router.on_raw(raw(1, 0))
+    assert time.monotonic() - started < 0.5
+    release.set()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+
+
+def test_keyboard_refreshes_cursor_for_next_edge_entry() -> None:
+    # 用 PC 键盘后，下一次边缘判定必须基于真实绝对光标，而不是旧缓存。
+    rig = make_rig()
+    rig.desktop.cursor = (432, 123)
+    rig.router.on_key(key(0x41))
+    assert rig.router._pc_cursor == (432, 123)
+
+
+def test_button_state_is_forwarded_while_dragging() -> None:
+    # 左键按下/拖动/释放必须持续出现在 HID 报告里，否则平板上的拖拽会中断。
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router._sender_frame()
+    rig.router._sender_frame()
+
+    rig.router.on_raw(raw(0, 0, buttons=1))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][0] & 0x01
+    rig.router.on_raw(raw(3, -2, buttons=1))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][0] & 0x01
+    rig.router.on_raw(raw(0, 0, buttons=0))
+    rig.router._sender_frame()
+    assert not (rig.session.mouse_reports[-1][0] & 0x01)
+
+
 # ---------------------------------------------------------------------------
 # I1：非 CAPTURED 状态绝不发送位移
 # ---------------------------------------------------------------------------

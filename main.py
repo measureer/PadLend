@@ -262,9 +262,10 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     # 不经过边缘状态机（没有遮罩/ClipCursor），用于验证 1:1 指针链路。
     estimator: CursorEstimator | None = None
     estimator_key: tuple[int, int, float] | None = None
+    wheel_accum = 0
 
     def _on_raw(ev: Any) -> None:
-        nonlocal estimator, estimator_key
+        nonlocal estimator, estimator_key, wheel_accum
         if not runtime.session.started:
             return
         facts = runtime.session.facts
@@ -274,11 +275,16 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
         if key != estimator_key:
             estimator = CursorEstimator(facts.width, facts.height, facts.xscale)
             estimator_key = key
+            wheel_accum = 0
         if estimator is None:
             return
         cx, cy = estimator.feed(ev.dx, ev.dy, cfg.motion.gain)
+        wheel_accum += int(ev.wheel)
+        detents = int(wheel_accum / C.WHEEL_UNITS_PER_DETENT)
+        if detents:
+            wheel_accum -= detents * C.WHEEL_UNITS_PER_DETENT
         try:
-            runtime.session.send_mouse(ev.buttons, cx, cy, ev.wheel)
+            runtime.session.send_mouse(ev.buttons, cx, cy, detents)
         except PadLendError:
             # 断线期间丢弃；supervisor 会重连并重新发布 facts。
             return

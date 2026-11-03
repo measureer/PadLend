@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
 APP_ID = "PadLend"
-VERSION = "0.2.6"
+VERSION = "0.2.7"
 LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。
@@ -210,6 +210,10 @@ KEYBOARD_KRO = 6
 
 # 描述符 Logical Max = 127，单报文位移上限
 HID_CLAMP = 127
+
+# Windows 原始滚轮一格是 120 单位（WHEEL_DELTA）；HID 滚轮一格是 1。
+# Router 按 120 累计换算成 HID detent，余数留到下一次事件。
+WHEEL_UNITS_PER_DETENT = 120
 
 # 鼠标按键位图（9.3 报告字节 0）
 MOUSE_BTN_LEFT = 0x01

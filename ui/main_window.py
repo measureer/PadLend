@@ -1121,21 +1121,35 @@ class MainWindow(QMainWindow):
     def _apply_dwm_dark(self, dark: bool) -> None:
         if sys.platform != "win32":
             return
+        if QGuiApplication.platformName() == "offscreen":
+            # 离屏窗口没有真实 HWND，DWM 调用会崩。
+            return
         try:
             hwnd = int(self.winId())
+            if not hwnd:
+                return
             dwm = ctypes.windll.dwmapi  # type: ignore[attr-defined]
+            # 不声明 argtypes 时 ctypes 会把 64 位 HWND 截断成 32 位，
+            # 在某些窗口句柄上会让 DWM 解引用非法指针并崩溃。
+            dwm.DwmSetWindowAttribute.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.c_void_p,
+                ctypes.c_uint,
+            ]
+            dwm.DwmSetWindowAttribute.restype = ctypes.c_long
             value = ctypes.c_int(1 if dark else 0)
             dwm.DwmSetWindowAttribute(
-                hwnd,
+                ctypes.c_void_p(hwnd),
                 C.DWM_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(value),
+                ctypes.cast(ctypes.byref(value), ctypes.c_void_p),
                 ctypes.sizeof(value),
             )
             corner = ctypes.c_int(C.DWMWCP_ROUND)
             dwm.DwmSetWindowAttribute(
-                hwnd,
+                ctypes.c_void_p(hwnd),
                 C.DWM_WINDOW_CORNER_PREFERENCE,
-                ctypes.byref(corner),
+                ctypes.cast(ctypes.byref(corner), ctypes.c_void_p),
                 ctypes.sizeof(corner),
             )
         except Exception as exc:  # noqa: BLE001 - Win10 或无 dwmapi 时静默

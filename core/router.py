@@ -164,6 +164,8 @@ class Router:
         self._manual = False
         self._pc_cursor: tuple[int, int] | None = None
         self._buttons = 0
+        # Windows 滚轮是 120 单位/格，HID 是 1 detent/格；不足一格留到下次。
+        self._wheel_accum = 0
 
         # ARMING
         self._arm_deadline = 0.0
@@ -514,6 +516,11 @@ class Router:
         if state is State.RETURNING:
             if self._clock() >= self._return_deadline:
                 self._change_state(State.IDLE, "debounce")
+                # 交还后立刻对齐一次绝对光标，避免键盘/其它窗口操作让
+                # ``_pc_cursor`` 与真实位置长期不一致而无法再次接管。
+                position = self._query_cursor_pos()
+                if position is not None:
+                    self._pc_cursor = position
             return
         if state is State.IDLE:
             self._maybe_arm_locked(ev)
@@ -595,19 +602,39 @@ class Router:
     def _maybe_arm_locked(self, ev: RawDelta) -> None:
         placement = self._placement
         if placement is None:
+            log.debug("router.arm_skip placement=none")
             return
         x, y = self._pc_cursor or self._default_cursor()
         segments = self._segments_at(x, y)
         if not segments:
+            log.debug(
+                "router.arm_skip reason=no_segments x=%d y=%d edge=%s",
+                x,
+                y,
+                placement.segment.edge.value,
+            )
             return
         chosen = self._resolve_corner_locked(segments, (int(ev.dx), int(ev.dy)))
         if chosen is None or chosen.edge is not placement.segment.edge:
+            log.debug(
+                "router.arm_skip reason=edge_mismatch x=%d y=%d want=%s got=%s",
+                x,
+                y,
+                placement.segment.edge.value,
+                chosen.edge.value if chosen is not None else "none",
+            )
             return
         nx, ny = chosen.edge.outward_normal()
         if int(ev.dx) * nx + int(ev.dy) * ny <= 0:
             return
         along = y if chosen.edge.is_vertical else x
         if not placement.segment.contains_along(along):
+            log.debug(
+                "router.arm_skip reason=outside_span along=%d span=%d..%d",
+                along,
+                placement.segment.span_start,
+                placement.segment.span_end,
+            )
             return
         now = self._clock()
         self._arm_deadline = now + max(0, int(self._cfg.motion.arm_window_ms)) / 1000.0
@@ -768,6 +795,7 @@ class Router:
         self._overflow = 0.0
         self._overflow_edge = None
         self._entry_depth_ok = False
+        self._wheel_accum = 0
         self._hit_logged = False
         self._suppress_logged = False
         self._enqueue_burst_locked(reports)
@@ -832,7 +860,8 @@ class Router:
         gain = float(self._cfg.motion.gain)
         clamp = max(1, int(self._cfg.motion.hid_clamp))
         dx, dy = estimator.feed(int(ev.dx), int(ev.dy), gain, clamp=clamp)
-        self._queue_mouse_locked(self._buttons, dx, dy, int(ev.wheel))
+        wheel = self._take_wheel_locked(int(ev.wheel))
+        self._queue_mouse_locked(self._buttons, dx, dy, wheel)
         # 进入保护：指针必须先离开入口边足够远，才允许出口判定。否则从入口边
         # 直接反向滚动（例如从平板顶部的文字向上滑）会被误判成“穿回 PC”。
         if not self._entry_depth_ok:
@@ -852,6 +881,12 @@ class Router:
                 if depth >= guard:
                     self._entry_depth_ok = True
         if not self._entry_depth_ok:
+            self._overflow = 0.0
+            self._overflow_edge = None
+            return
+        # 按住鼠标键时不允许穿回：拖动/框选经常需要把指针推回入口边，
+        # 若此时交还 PC 会打断拖拽，用户表现为“拖到一半跳回电脑”。
+        if self._buttons:
             self._overflow = 0.0
             self._overflow_edge = None
             return
@@ -902,6 +937,7 @@ class Router:
         self._overflow = 0.0
         self._overflow_edge = None
         self._entry_depth_ok = False
+        self._wheel_accum = 0
         if not self._change_state(State.RETURNING, reason):
             return
         debounce_ms = max(0, int(self._cfg.motion.debounce_ms)) if debounce else 0
@@ -952,6 +988,15 @@ class Router:
             log.warning("SetCursorPos 失败", exc_info=True)
 
     # -- 发送队列 -----------------------------------------------------------
+    def _take_wheel_locked(self, units: int) -> int:
+        """把 Windows 的 120 单位/格滚轮换算成 HID detent，余数留到下次。"""
+        if units:
+            self._wheel_accum += int(units)
+        detents = int(self._wheel_accum / C.WHEEL_UNITS_PER_DETENT)
+        if detents:
+            self._wheel_accum -= detents * C.WHEEL_UNITS_PER_DETENT
+        return detents
+
     def _queue_mouse_locked(self, buttons: int, dx: int, dy: int, wheel: int) -> None:
         self._enqueue_send(_SendMsg(int(buttons), int(dx), int(dy), int(wheel)))
 
@@ -1489,8 +1534,29 @@ class Router:
         返回 ``True``；白名单键、保命热键、FAULT/IDLE/RETURNING 一律返回 ``False``。
         """
         try:
+            if ev.down:
+                # 键盘操作可能伴随窗口切换；趁 IDLE/RETURNING 时刷新一次
+                # 绝对光标，避免边缘判定一直用旧的 PC 坐标。
+                with self._lock:
+                    refresh = self._state is not State.CAPTURED
+                if refresh:
+                    position = self._query_cursor_pos()
+                    if position is not None:
+                        with self._lock:
+                            self._pc_cursor = position
             with self._lock:
-                return self._on_key_locked(ev)
+                suppress, report = self._prepare_key_locked(ev)
+            if report is None:
+                return suppress
+            modifier, usages = report
+            try:
+                self._session.send_key(int(modifier), tuple(int(usage) for usage in usages))
+            except Exception as exc:
+                # 发送放在 Router 锁外：socket 写阻塞绝不能拖住鼠标 Raw Input。
+                self._note_write_failure(exc)
+                return False
+            self._note_write_success()
+            return suppress
         except PadLendError as exc:
             log.warning("router.key_failed code=%s detail=%s", exc.code.value, exc.detail)
             self._fault(exc.code, f"键盘转发失败: {exc.detail}")
@@ -1500,37 +1566,33 @@ class Router:
             self._fault(wrapped.code, f"键盘转发失败: {wrapped.detail}")
         return False
 
-    def _on_key_locked(self, ev: KeyEvent) -> bool:
+    def _prepare_key_locked(
+        self, ev: KeyEvent
+    ) -> tuple[bool, tuple[int, tuple[int, ...]] | None]:
+        """在锁内完成状态判定与键位表更新，返回 ``(是否屏蔽, 待发报告)``。"""
         self._track_safety(ev)
         if self._is_passthrough(ev):
-            return False
+            return False, None
         if self._state is not State.CAPTURED:
-            return False
+            return False, None
         keyboard = self._cfg.keyboard
         if not bool(keyboard.forward):
-            return False
+            return False, None
         if ev.vk in _SAFETY_LETTERS and self._ctrl_sides and self._alt_sides:
             log.info("router.safety_hotkey vk=0x%02X", ev.vk)
-            return False
+            return False, None
         keymap = self._ensure_keymap_locked()
         if keymap is None:
-            return False
+            return False, None
         report = self._keymap_report(keymap, ev)
         if report is None:
-            return False
+            return False, None
         modifier, usages = report
-        try:
-            self._session.send_key(int(modifier), tuple(int(usage) for usage in usages))
-        except Exception as exc:
-            self._note_write_failure(exc)
-            return False
-        self._note_write_success()
-        if not bool(keyboard.suppress_pc):
-            return False
-        if not self._suppress_logged:
+        suppress = bool(keyboard.suppress_pc)
+        if suppress and not self._suppress_logged:
             self._suppress_logged = True
             log_event(log, C.EVENT_KBD_SUPPRESS_ON, layout=str(keyboard.layout))
-        return True
+        return suppress, (int(modifier), tuple(int(usage) for usage in usages))
 
     def _track_safety(self, ev: KeyEvent) -> None:
         if ev.vk in _CTRL_VKS:

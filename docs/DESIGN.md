@@ -714,6 +714,7 @@ arm_accum += |delta|
 
 # CAPTURED → RETURNING
 若尚未越过进入保护（指针距入口边 < entry_guard_px, 默认 160）→ 不评估出口
+若鼠标左/右/中键仍按下（拖动/框选）→ 不评估出口，清零溢出
 e = estimator.hit()
 若 e 非空 且 该方向累计溢出 >= exit_overflow_px(24)      → RETURNING
 
