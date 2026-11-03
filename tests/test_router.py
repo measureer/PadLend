@@ -201,6 +201,29 @@ def test_arm_leaving_edge_band_returns_idle() -> None:
     assert (State.ARMING, State.IDLE, "arm:left_edge") in rig.transitions
 
 
+def test_arm_adopts_matching_edge_on_other_monitor() -> None:
+    # 配置里摆在 DISPLAY1 底部，用户实际在主屏（DISPLAY2）底部向下推：
+    # 同一朝向的边应自动接管，而不是静默无反应。
+    first = MonitorInfo(1, r"\\.\DISPLAY1", Rect(0, 0, 1920, 1080), 96, True)
+    second = MonitorInfo(2, r"\\.\DISPLAY2", Rect(1920, 0, 3840, 1080), 96, False)
+    first_bottom = EdgeSegment(1, Edge.BOTTOM, 0, 1920)
+    second_bottom = EdgeSegment(2, Edge.BOTTOM, 1920, 3840)
+    desktop = FakeDesktop([first, second], segments=[first_bottom, second_bottom])
+    session, mask, clock = FakeSession(), FakeMask(), FakeClock()
+    router = Router(FakeConfig(), session, desktop, mask, clock=clock, keymap=FakeKeymap())
+    router.set_placement(Placement(first_bottom, 0.5, Align.PROPORTIONAL, None))
+    desktop.cursor = (2500, 1080)
+    router.on_raw(raw(0, 10))
+    assert router.state is State.ARMING
+    assert router.placement is not None
+    assert router.placement.segment == second_bottom
+    for _ in range(4):
+        clock.advance_ms(10)
+        router.on_raw(raw(0, 10))
+    assert router.state is State.CAPTURED
+    router.stop()
+
+
 def test_corner_priority_selects_right_edge() -> None:
     rig = make_rig(edges=(Edge.RIGHT, Edge.TOP))
     rig.desktop.cursor = (1919, 0)

@@ -627,6 +627,12 @@ class Router:
                 chosen.edge.value if chosen is not None else "none",
             )
             return
+        # 同一朝向的另一块显示器边缘（例如主屏底部而不是配置里的副屏底部）
+        # 也当成同一条边：平板只有一块，用户不会记得自己上次摆在哪块屏。
+        if self._segment_differs(chosen, placement.segment):
+            self._adopt_segment_locked(chosen, placement)
+            placement = self._placement
+            assert placement is not None
         nx, ny = chosen.edge.outward_normal()
         if int(ev.dx) * nx + int(ev.dy) * ny <= 0:
             return
@@ -650,6 +656,29 @@ class Router:
                 along,
                 self._cfg.motion.arm_window_ms,
             )
+
+    @staticmethod
+    def _segment_differs(left: Any, right: Any) -> bool:
+        return (
+            int(getattr(left, "monitor_handle", -1)) != int(getattr(right, "monitor_handle", -2))
+            or int(getattr(left, "span_start", -1)) != int(getattr(right, "span_start", -2))
+            or int(getattr(left, "span_end", -1)) != int(getattr(right, "span_end", -2))
+        )
+
+    def _adopt_segment_locked(self, segment: Any, old: Placement) -> None:
+        self._placement = Placement(
+            segment=segment,
+            offset=old.offset,
+            align=old.align,
+            corner_priority=old.corner_priority,
+        )
+        log_event(
+            log,
+            "router.placement_adopt",
+            edge=str(getattr(segment, "edge", "")),
+            span_start=int(getattr(segment, "span_start", 0)),
+            span_end=int(getattr(segment, "span_end", 0)),
+        )
 
     def _update_arm_locked(self, ev: RawDelta) -> None:
         placement = self._placement
