@@ -249,6 +249,21 @@ def test_entry_guard_blocks_immediate_return_until_inside() -> None:
     assert rig.router.state is State.RETURNING
 
 
+def test_heartbeat_preserves_held_buttons() -> None:
+    # 空格子里的心跳不能把按住的左键冲掉，否则 Android 会在拖拽中途松开。
+    rig = make_rig()
+    capture_manually(rig)
+    for _ in range(10):
+        rig.router._sender_frame()  # 排空入口 warp burst
+    rig.session.mouse_reports.clear()
+    rig.router.on_raw(raw(0, 0, buttons=C.MOUSE_BTN_LEFT))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][0] == C.MOUSE_BTN_LEFT
+    rig.session.mouse_reports.clear()
+    rig.router._sender_frame()  # 队列为空 → 心跳
+    assert rig.session.mouse_reports[-1] == (C.MOUSE_BTN_LEFT, 0, 0, 0)
+
+
 def test_mouse_buttons_block_exit_until_release() -> None:
     # 拖动时指针常被推回入口边，不能因此把光标交还给 PC。
     rig = make_rig(config=FakeConfig(entry_guard_px=0))

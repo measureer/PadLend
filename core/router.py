@@ -508,7 +508,10 @@ class Router:
             self._fault(wrapped.code, f"处理鼠标输入失败: {wrapped.detail}")
 
     def _on_raw_locked(self, ev: RawDelta) -> None:
+        previous_buttons = self._buttons
         self._buttons = int(ev.buttons)
+        if self._buttons != previous_buttons:
+            log_event(log, "cap.btn", buttons=f"0x{self._buttons:02x}")
         self._track_pc_cursor(ev)
         state = self._state
         if state is State.FAULT:
@@ -805,6 +808,7 @@ class Router:
             edge=placement.segment.edge.value,
             manual=reason == "manual",
             reports=len(reports),
+            buttons=f"0x{self._buttons:02x}",
         )
 
     def _entry_point_locked(
@@ -942,7 +946,13 @@ class Router:
             return
         debounce_ms = max(0, int(self._cfg.motion.debounce_ms)) if debounce else 0
         self._return_deadline = self._clock() + debounce_ms / 1000.0
-        log_event(log, C.EVENT_CAP_END, reason=reason, debounce_ms=debounce_ms)
+        log_event(
+            log,
+            C.EVENT_CAP_END,
+            reason=reason,
+            debounce_ms=debounce_ms,
+            buttons=f"0x{self._buttons:02x}",
+        )
 
     def _exit_position_locked(
         self,
@@ -1080,7 +1090,10 @@ class Router:
         return out
 
     def _send_heartbeat(self) -> None:
-        self._send_mouse_message(_SendMsg(0, 0, 0, 0))
+        # 心跳必须带上当前按键状态。若发全零报告，Android 会把按住左键
+        # 的拖拽当成“按键已松开”，拖到一半就被打断。
+        buttons = self._buttons if self._state is State.CAPTURED else 0
+        self._send_mouse_message(_SendMsg(buttons, 0, 0, 0))
 
     def _send_mouse_message(self, message: _SendMsg) -> None:
         try:
