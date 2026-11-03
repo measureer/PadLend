@@ -152,14 +152,30 @@ class SettingsPanel(QWidget):
         hint.setObjectName("hintText")
         hint.setWordWrap(True)
 
+        # 设置页很宽：左右两列等分铺开，避免所有控件挤在左侧、右侧大片留白。
+        # 左：平板位置 / 键盘    右：手感 / 快捷键    底：杂项（跨两列）
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 8, 0)
-        content_layout.setSpacing(4)
-        content_layout.addWidget(self._build_placement_group())
-        content_layout.addWidget(self._build_motion_group())
-        content_layout.addWidget(self._build_keyboard_group())
-        content_layout.addWidget(self._build_hotkey_group())
+        content_layout.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setSpacing(12)
+        left.addWidget(self._build_placement_group())
+        left.addWidget(self._build_keyboard_group())
+        left.addStretch(1)
+
+        right = QVBoxLayout()
+        right.setSpacing(12)
+        right.addWidget(self._build_motion_group())
+        right.addWidget(self._build_hotkey_group())
+        right.addStretch(1)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(14)
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        content_layout.addLayout(columns)
         content_layout.addWidget(self._build_misc_group())
         content_layout.addStretch(1)
 
@@ -187,7 +203,8 @@ class SettingsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-        layout.addWidget(self.title_label)
+        # 页面本身已经有“设置”标题，这里不再重复。
+        self.title_label.setVisible(False)
         layout.addWidget(hint)
         layout.addWidget(self.scroll, 1)
         layout.addLayout(footer)

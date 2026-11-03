@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -424,18 +423,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(hint)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.settings.setMaximumWidth(760)
-        holder = QWidget()
-        holder_layout = QHBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 4, 0, 0)
-        holder_layout.addWidget(self.settings)
-        holder_layout.addStretch(1)
-        scroll.setWidget(holder)
-        layout.addWidget(scroll, 1)
-        self.settings_scroll = scroll
+        # SettingsPanel 自带滚动区；直接铺满页面，不要套第二层滚动/限宽。
+        layout.addWidget(self.settings, 1)
         return page
 
     def _build_logs_page(self) -> QWidget:
