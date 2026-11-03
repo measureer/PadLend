@@ -96,7 +96,7 @@ adb devices -l
 | 亮色原生渲染 | 原生窗口截图 `docs/screenshots/ui-light.png` | 浅色窗口/卡片/导航/设备页，中文正常 | ✅ |
 | 设置项说明 | `test_settings_hints_and_entry_guard` | 每个摆位/手感/键盘/快捷键/杂项控件均有中文说明；进入保护 220px 可保存 | ✅ |
 | 打包 GUI | `dist\PadLend.exe` 原生启动截图 | 无设备时顶栏/设备页显示中性“未连接”，不误报故障 | ✅ |
-| 全量回归 | `pytest -o addopts="" -q` | 326 passed, 3 skipped | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 328 passed, 3 skipped | ✅ |
 
 真机点击“连接此设备” → 画布出现真实尺寸 → 边缘穿越的交互链路，待平板重新连接后按 A1–A13 复验。
 
@@ -127,7 +127,21 @@ adb devices -l
 | 连接状态一致性 | 源码 GUI 实机启动截图（自动连接） | 顶栏“已连接”、设备页“已连接”，分辨率仅在 facts 到达后显示 | ✅ |
 | 进入边提示 | 同一截图底栏 | “横屏 3200×2136 · 从屏幕右侧边缘滑入平板” | ✅ |
 | 键盘看门狗 | 运行 >1min 并只移动鼠标 | 不再每 30s 出现 `kbd.watchdog.stalled`/重装 | ✅ |
-| 全量回归 | `pytest -o addopts="" -q` | 326 passed, 3 skipped | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 328 passed, 3 skipped | ✅ |
 | 静态检查 | `ruff check .` | All checks passed | ✅ |
 
 真实“把鼠标推过屏幕边缘 → 平板指针接管 → 划回交还”仍需用户在 0.2.2 exe 上完成一次目视确认。
+
+## 9. 0.3.4 系统光标隐藏修复（2026-11-03）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 不使用 ShowCursor | 单测 `test_set_cursor_hidden_never_touches_show_cursor` | 只调用 `SetCursor(None)` / `LoadCursorW(IDC_ARROW)` / `SetCursor(箭头)` | ✅ |
+| 跨线程释放 | 单测 `test_cross_thread_release_posts_close_instead_of_destroy` | GUI 线程 release 时对 rawinput 线程创建的窗口只发 `WM_CLOSE` | ✅ |
+| 真实遮罩显示/恢复 | `_diag_mask.py`：`CursorMask.show(None)` → 泵消息 → `GetCursorInfo.flags`；`hide()` 后复测 | before 1 → masked 0 → after 1 | ✅ |
+| 跨线程真实释放 | 工作线程 show + 消息泵，主线程 release；`GetCursorInfo.flags` | masked 0 → after release 1，工作线程正常退出 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 328 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.4 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 52,715,929 B，sha256 `78c6d4c84cb0873b3ea711e0888645301c4d31e74111d6a2012a6187d64f436c`，`--version` 0.3.4 | ✅ |
+
+仍需用户复验：正常接管/返回后 Windows 光标可见；异常退出（关进程）后光标也能恢复。

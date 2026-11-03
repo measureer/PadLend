@@ -10,8 +10,11 @@
   把系统光标置空；此时 PC 点击本就应被忽略，不会影响平板输入；
 - 永远不调用 ``SetForegroundWindow``。
 
-隐藏光标是双保险：创建遮罩窗口后调用 ``ShowCursor(FALSE)`` + ``SetCursor(NULL)``，
-并在窗口过程里处理 ``WM_SETCURSOR`` 返回 1；``hide()/release()`` 对称恢复。
+光标隐藏只依赖遮罩窗口：窗口过程处理 ``WM_SETCURSOR`` → ``SetCursor(NULL)`` 并
+返回 1。**绝不使用进程级 ``ShowCursor`` 计数**——计数跨线程不平衡时会把光标永久
+压成隐藏；遮罩窗口若因跨线程 ``DestroyWindow`` 失败而泄漏，也会一直盖住光标
+（只有开始菜单等更高层窗口能显示自己的光标）。跨线程释放改为向窗口所属线程
+``PostMessageW(WM_CLOSE)``，由窗口过程销毁自己。
 
 **`ClipCursor` 泄漏是灾难级故障**（6.6 的教训）：用户光标会被锁死在 1px 条里。
 因此 `release()` 幂等、无异常、``ClipCursor(None)`` 走无条件路径，并在首次
@@ -42,6 +45,7 @@ WS_EX_TOOLWINDOW = 0x00000080
 _MASK_EX_STYLE = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
 
 WM_SETCURSOR = 0x0020
+WM_CLOSE = 0x0010
 IDC_ARROW = 32512
 
 WS_POPUP = 0x80000000
@@ -210,8 +214,13 @@ def _user32() -> ctypes.WinDLL:
         lib.GetSystemMetrics.restype = ctypes.c_int
         lib.SetCursor.argtypes = [ctypes.c_void_p]
         lib.SetCursor.restype = ctypes.c_void_p
-        lib.ShowCursor.argtypes = [ctypes.c_int]
-        lib.ShowCursor.restype = ctypes.c_int
+        lib.PostMessageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
+        lib.PostMessageW.restype = ctypes.c_int
         lib.LoadCursorW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         lib.LoadCursorW.restype = ctypes.c_void_p
         _user32_lib = lib
@@ -259,6 +268,8 @@ class MaskApi(Protocol):
     def clip_rect(self) -> Rect | None: ...
 
     def set_cursor_hidden(self, hidden: bool) -> None: ...
+
+    def post_close_window(self, hwnd: int) -> bool: ...
 
 
 class Win32MaskApi:
@@ -343,19 +354,20 @@ class Win32MaskApi:
         return Rect(native.left, native.top, native.right, native.bottom)
 
     def set_cursor_hidden(self, hidden: bool) -> None:
-        """隐藏/恢复系统光标（幂等由 CursorMask 的生命周期保证）。"""
+        """把当前线程的光标设为空/箭头。
+
+        真正的隐藏发生在遮罩窗口的 ``WM_SETCURSOR``；这里**不碰 ShowCursor**，
+        避免进程级计数跨线程失衡后光标永久消失。
+        """
         user32 = _user32()
         if hidden:
-            # ShowCursor 是计数式 API：向负值方向压到 <0，确保一定隐藏。
-            for _ in range(16):
-                if user32.ShowCursor(0) < 0:
-                    break
             user32.SetCursor(None)
         else:
-            for _ in range(16):
-                if user32.ShowCursor(1) >= 0:
-                    break
             user32.SetCursor(user32.LoadCursorW(None, ctypes.c_void_p(IDC_ARROW)))
+
+    def post_close_window(self, hwnd: int) -> bool:
+        """请求窗口所属线程关闭并销毁窗口（``DestroyWindow`` 必须同线程）。"""
+        return bool(_user32().PostMessageW(ctypes.c_void_p(hwnd), WM_CLOSE, 0, 0))
 
 
 def _mask_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
@@ -363,6 +375,10 @@ def _mask_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         # 光标移到遮罩上时立即置空；返回 1 阻止 DefWindowProc 重新设置箭头。
         _user32().SetCursor(None)
         return 1
+    if msg == WM_CLOSE:
+        # 跨线程释放只能 PostMessage(WM_CLOSE)；DestroyWindow 必须由本线程执行。
+        _user32().DestroyWindow(ctypes.c_void_p(hwnd))
+        return 0
     return int(_user32().DefWindowProcW(hwnd, msg, wparam, lparam))
 
 
@@ -500,6 +516,7 @@ class CursorMask:
         self._clip_owned = False
         self._clip_rect: Rect | None = None
         self._cursor_hidden = False
+        self._owner_thread: int | None = None
 
     # -- 状态 -------------------------------------------------------------
     @property
@@ -578,14 +595,22 @@ class CursorMask:
                     _log.exception("回滚遮罩窗口失败 hwnd=%s", hwnd)
             raise
         self._windows.extend(created)
+        self._owner_thread = threading.get_ident()
 
     def _destroy_windows(self) -> None:
         windows, self._windows = self._windows, []
+        same_thread = self._owner_thread == threading.get_ident()
+        post = getattr(self._api, "post_close_window", None)
         for hwnd in windows:
             try:
-                self._api.destroy_window(hwnd)
+                if not same_thread and callable(post):
+                    if not post(hwnd):
+                        _log.warning("PostMessage(WM_CLOSE) 失败 hwnd=%s", hwnd)
+                else:
+                    self._api.destroy_window(hwnd)
             except Exception:
                 _log.exception("销毁遮罩窗口失败 hwnd=%s", hwnd)
+        self._owner_thread = None
 
     def _apply_clip(self, rect: Rect | None) -> None:
         try:

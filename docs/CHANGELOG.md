@@ -2,6 +2,19 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.4] — 2026-11-03
+
+### 修复
+
+- **系统光标被永久隐藏（只有开始菜单能看到）**：0.3.3 用进程级 `ShowCursor(FALSE)` 计数隐藏光标，遮罩窗口又可能因为跨线程 `DestroyWindow` 失败而泄漏；任一计数/窗口失衡都会让整个桌面看不到光标，只有开始菜单等更高层窗口能绘制自己的光标。
+- 现在彻底移除 `ShowCursor`：光标只由遮罩窗口的 `WM_SETCURSOR` → `SetCursor(NULL)` 隐藏，遮罩销毁即恢复。
+- 跨线程释放改为 `PostMessageW(WM_CLOSE)`，由创建窗口的线程执行 `DestroyWindow`；`Runtime.stop()` 调整为先释放遮罩、再停 Raw Input 线程，保证窗口所属线程仍能处理关闭消息。
+- 新增回归测试：`set_cursor_hidden` 不再触碰 `ShowCursor`；跨线程 release 使用 `WM_CLOSE`；真实遮罩 show/hide 后 `GetCursorInfo.flags` 从 0 恢复为 1。
+
+### 测试
+
+- 328 passed, 3 skipped；`ruff check .` 全绿。
+
 ## [0.3.3] — 2026-11-03
 
 ### 修复

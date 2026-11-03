@@ -235,28 +235,31 @@ class Runtime:
             LOG.debug("cursor watch 启动失败", exc_info=True)
 
     def stop(self) -> None:
+        # 关键顺序：遮罩窗口由 rawinput 线程创建，必须在 rawinput 线程仍运行、
+        # 还能处理 WM_CLOSE 时先让 router.stop() 释放遮罩；否则跨线程销毁只能
+        # 排队到线程退出，期间遮罩会一直盖住屏幕并把系统光标“藏”掉。
         try:
-            if self.cursor_watch is not None:
-                try:
-                    self.cursor_watch.stop()
-                finally:
-                    self.cursor_watch = None
-            self.rawinput.stop()
-        finally:
             try:
                 self.keyboard_hook.uninstall()
             finally:
                 try:
                     self.router.stop()
                 finally:
-                    try:
-                        self.session.stop()
-                    finally:
+                    if self.cursor_watch is not None:
                         try:
-                            self.mask.release()
+                            self.cursor_watch.stop()
                         finally:
-                            if self.raw_debug is not None:
-                                self.raw_debug.stop()
+                            self.cursor_watch = None
+                    self.rawinput.stop()
+        finally:
+            try:
+                self.session.stop()
+            finally:
+                try:
+                    self.mask.release()
+                finally:
+                    if self.raw_debug is not None:
+                        self.raw_debug.stop()
 
 
 # ---------------------------------------------------------------------------

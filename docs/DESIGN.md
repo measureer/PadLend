@@ -747,7 +747,7 @@ class CursorMask:
 |---|---|---|
 | 覆盖范围 | 每显示器独立一个遮罩（推荐） | 错位/L 形桌面时单一包围盒会盖住不存在区域 |
 | 视觉 | `SetLayeredWindowAttributes(alpha=1)` 近乎全透明 | 用户不应看到任何遮挡 |
-| 隐藏光标 | 遮罩窗口处理 `WM_SETCURSOR`→`SetCursor(NULL)`；`show()` 同时 `ShowCursor(FALSE)`+`SetCursor(NULL)`，`hide()/release()` 对称恢复 | 仅靠 `ClipCursor` 不会隐藏系统光标，会出现 PC 与平板双指针（0.2.3 实测修复） |
+| 隐藏光标 | 只由遮罩窗口处理 `WM_SETCURSOR`→`SetCursor(NULL)`；**禁止使用**进程级 `ShowCursor` 计数 | `ShowCursor` 计数跨线程失衡会让整个桌面光标永久消失；遮罩销毁即恢复（0.3.4 实测修复） |
 | 释放 | `ClipCursor(None)` **必须在 finally** | 泄漏后果 = 用户光标被锁死在 1px 条里，系统不可用 |
 | 崩溃兜底 | 三层（12.3） | 同上 |
 

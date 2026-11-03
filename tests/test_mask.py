@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
+import threading
 from collections.abc import Sequence
 
 import pytest
@@ -50,6 +52,7 @@ class FakeMaskApi:
         self.clip_ok = clip_ok
         self.created: list[Rect] = []
         self.destroyed: list[int] = []
+        self.close_posted: list[int] = []
         self.clip_calls: list[Rect | None] = []
         self.cursor_hidden_calls: list[bool] = []
         self._next_handle = 100
@@ -84,6 +87,10 @@ class FakeMaskApi:
 
     def set_cursor_hidden(self, hidden: bool) -> None:
         self.cursor_hidden_calls.append(hidden)
+
+    def post_close_window(self, hwnd: int) -> bool:
+        self.close_posted.append(hwnd)
+        return True
 
 
 def make_mask(api: FakeMaskApi) -> CursorMask:
@@ -370,7 +377,7 @@ def test_cursor_hidden_while_mask_active_and_restored() -> None:
     api = FakeMaskApi([MON_A])
     mask = make_mask(api)
     mask.show(None)
-    mask.show(None)  # 重复 show 不能重复压 ShowCursor 计数
+    mask.show(None)  # 重复 show 只隐藏一次，hide 只恢复一次
     assert api.cursor_hidden_calls == [True]
     mask.hide()
     assert api.cursor_hidden_calls == [True, False]
@@ -384,3 +391,40 @@ def test_release_restores_cursor() -> None:
     mask.show(BAND_LEFT)
     mask.release()
     assert api.cursor_hidden_calls == [True, False]
+
+
+def test_set_cursor_hidden_never_touches_show_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ShowCursor 是进程级计数；任何一次跨线程失衡都会让光标永久消失。"""
+    calls: list[object] = []
+
+    class _FakeUser32:
+        def SetCursor(self, handle: object) -> None:
+            calls.append(handle)
+
+        def LoadCursorW(self, instance: object, name: object) -> int:
+            calls.append(name)
+            return 123
+
+    monkeypatch.setattr(mask_module, "_user32", lambda: _FakeUser32())
+    api = Win32MaskApi()
+    api.set_cursor_hidden(True)
+    api.set_cursor_hidden(False)
+
+    assert calls[0] is None
+    assert isinstance(calls[1], ctypes.c_void_p) and calls[1].value == 32512
+    assert calls[2] == 123
+
+
+def test_cross_thread_release_posts_close_instead_of_destroy() -> None:
+    """遮罩窗口由 rawinput 线程创建；GUI 线程释放时必须 PostMessage(WM_CLOSE)。"""
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+    mask.show(None)
+
+    worker = threading.Thread(target=mask.release)
+    worker.start()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert api.close_posted == [100]
+    assert api.destroyed == []
