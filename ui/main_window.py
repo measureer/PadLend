@@ -770,9 +770,10 @@ class MainWindow(QMainWindow):
         if reason:
             text = f"{text} {reason}"
         self.log_view.append_event("STATE", text)
-        if new_value == "captured" and old_value != "captured":
-            # 接管瞬间同步一次剪贴板（6.8）；实际读取必须回 GUI 线程。
-            self.clipboardSyncRequested.emit()
+        # 接管瞬间**不**自动发剪贴板（6.8 改为仅热键）。INJECT_TEXT 在服务端
+        # 会被 KeyCharacterMap 变成真实按键事件，直接打进平板当前 App：抖音里
+        # 敲到 R 就是「不感兴趣」，也会让输入法/提示闪一下。只在用户按
+        # Ctrl+Alt+V 时同步（main.py 把热键接到 clipboardSyncRequested）。
 
     def sync_clipboard(self) -> None:
         """把 PC 剪贴板文本发给平板（6.8，SHOULD）。

@@ -2,6 +2,17 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.10] — 2026-11-05
+
+### 修复
+
+- **进接管时平板被“敲”了一下（抖音里命中 R = 不感兴趣）**：`misc.clipboard_sync` 默认打开，而每次进入接管都会把 PC 剪贴板整段 `INJECT_TEXT` 过去；服务端把文本用 `KeyCharacterMap.getEvents()` 翻成**真实按键事件**打进当前焦点窗口，于是刷抖音时剪贴板里的 `` R `` 就成了快捷键，输入法/提示条也跟着闪一下。现在**接管瞬间不再发送**，剪贴板只在用户显式按 `Ctrl+Alt+V` 时发送（`docs/DESIGN.md` 6.8 同步更新）。
+
+### 测试
+
+- `tools/acceptance.py` 新增「进入接管不会向平板打字」：断言假平板既没收到 `texts` 也没收到 `keys`。
+- `tests/test_ui_smoke.py` 新增 `test_entering_capture_does_not_push_the_clipboard`：`IDLE → CAPTURED` 不得触发 `clipboardSyncRequested`。
+
 ## [0.3.9] — 2026-11-04
 
 ### 修复

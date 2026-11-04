@@ -238,6 +238,22 @@ def test_bridge_forwards_state_and_metrics(
     assert "captured" in window.log_view.text()
 
 
+def test_entering_capture_does_not_push_the_clipboard(
+    window: Any, router: FakeRouter, qapp: QApplication
+) -> None:
+    """进接管不能自动发剪贴板（0.3.10）。
+
+    ``INJECT_TEXT`` 会被服务端翻成真实按键事件：接管瞬间发送等于把剪贴板
+    当键盘输入打进平板前台 App（抖音里命中 R 就是「不感兴趣」）。
+    """
+    fired: list[None] = []
+    window.clipboardSyncRequested.connect(lambda: fired.append(None))
+    router.on_state_changed(State.IDLE, State.CAPTURED, "smoke")
+    qapp.processEvents()
+    assert window._state == "captured"
+    assert fired == []
+
+
 def test_bridge_detach_restores_callbacks(window: Any, router: FakeRouter) -> None:
     original = router.on_state_changed
     window.bridge.detach()

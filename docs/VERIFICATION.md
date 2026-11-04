@@ -243,4 +243,21 @@ adb devices -l
 仍需真机确认：指针是否在到达平板边沿之后才穿回电脑（入口那一下可能看到指针被吸到边上，
 这是镜面与真实位置对齐的过程）。
 
+## 15. 0.3.10 接管不再自动发剪贴板（2026-11-05）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 进入接管不发文本 | 验收「进入接管不会向平板打字」 | 假平板 `texts=[] keys=[]`，32 项 0 失败 3 跳过 | ✅ |
+| GUI 层不再触发 | 单测 `test_entering_capture_does_not_push_the_clipboard` | `IDLE → CAPTURED` 后 `clipboardSyncRequested` 未发出 | ✅ |
+| 热键路径仍在 | `main.py:461` `HotkeyManager(..., window.clipboardSyncRequested.emit)` | `Ctrl+Alt+V` 直接走同一信号 → `sync_clipboard()` | ✅ |
+| 设计文档同步 | `docs/DESIGN.md` 6.8 | 触发改为「仅热键」，并写明 `INJECT_TEXT` 是真实按键 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 369 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.10 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,267,515 B，sha256 `744f380e50cee18a13c0997b44fa696b50d0f1fff813a5c9d9bf99e30aa7ab06`，`--version` → `PadLend 0.3.10` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate`，`ps-close-check.ps1 -Hwnd 9112762 -ProcId 80652` | 顶栏 `RTT —`、底部 `v0.3.10`；`WM_CLOSE` 后进程归零，日志 `已退出`，全程 0 条 `clipboard_sent` | ✅ |
+
+仍需真机确认：进接管时平板是否还会闪一下；若仍出现，看日志里是否还有
+`router.clipboard_sent`（有 → 热键或别的路径在发），没有则说明来源不是我们。
+
 

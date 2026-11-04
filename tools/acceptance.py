@@ -294,6 +294,13 @@ def main(argv: list[str] | None = None) -> int:
             "进入时把指针顶到入口边（镜面与真实位置对齐）",
             f"sweep={sweep} need={need:.0f} on_edge={on_edge}",
         )
+        # 0.3.10：INJECT_TEXT 会变成真实按键事件打进平板前台 App（抖音里 R =
+        # 不感兴趣），所以进入接管时绝不能自动发剪贴板文本，也不能发键盘报告。
+        report.check(
+            not sim.texts and not sim.keys,
+            "进入接管不会向平板打字（剪贴板只在 Ctrl+Alt+V 时发）",
+            f"texts={sim.texts!r} keys={sim.keys!r}",
+        )
 
         # -- 单击（用户报的 bug 场景）---------------------------------------
         sim.clear()
