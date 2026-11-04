@@ -38,6 +38,8 @@ class DeviceCfg:
     prefer_usb: bool = True
     auto_connect: bool = True
     server_port: int = C.DEFAULT_SERVER_PORT
+    # 最近连接过的设备（新的在前，最多 8 条）：设备页用它在离线时也列出来。
+    known: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -195,6 +197,7 @@ class Config:
                 "prefer_usb": bool,
                 "auto_connect": bool,
                 "server_port": int,
+                "known": list,
             },
         )
         cfg.placement = _section(

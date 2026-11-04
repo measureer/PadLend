@@ -148,3 +148,27 @@ def test_motion_defaults_are_sane():
     assert 0.25 <= m.gain <= 3.0
     assert 1 <= m.hid_clamp <= 127
     assert m.arm_px >= 1 and m.exit_overflow_px >= 1
+
+
+def test_known_devices_roundtrip(tmp_path):
+    """记住的设备要能存盘、能读回，且顺序（新的在前）不变。"""
+    path = tmp_path / "config.yaml"
+    cfg = Config()
+    cfg.device.serial = "192.168.1.9:5555"
+    cfg.device.known = ["192.168.1.9:5555", "ABC123"]
+    cfg.save(path)
+
+    again = Config.load(path)
+    assert again.device.known == ["192.168.1.9:5555", "ABC123"]
+    assert again.device.serial == "192.168.1.9:5555"
+    assert again.validate() == []
+
+
+def test_known_devices_default_empty_and_coerced(tmp_path):
+    """缺省是空列表；配置文件里写了怪类型也不能炸。"""
+    assert DeviceCfg().known == []
+
+    path = tmp_path / "config.yaml"
+    path.write_text("version: 1\ndevice:\n  known: [7, XYZ]\n", encoding="utf-8")
+    cfg = Config.load(path)
+    assert cfg.device.known == ["7", "XYZ"]

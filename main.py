@@ -434,6 +434,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
         adb=runtime.adb,
     )
     window.show()
+    window.center_on_screen()  # 每次启动都摆在屏幕正中间（0.3.11）
 
     hotkeys = None
     if sys.platform == "win32":

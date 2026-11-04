@@ -169,11 +169,14 @@ misc:
 真机流程（进边缘 → 穿透 → 点击/拖动 → 交还）可以完全在没有平板、也不用鼠标的机器上跑：
 
 ```powershell
-# 端到端验收：假平板 + 真实遮罩/ClipCursor/状态机，24 项断言，退出码即结论
+# 端到端验收：假平板 + 真实遮罩/ClipCursor/状态机，32 项断言，退出码即结论
 .\.venv\Scripts\python.exe tools\acceptance.py
 
 # 想自己看界面：用假平板启动 GUI（设备页会列出 Simulated Tablet）
 .\.venv\Scripts\python.exe main.py --simulate
+
+# 改了品牌图标后重新生成 exe 用的 .ico（与运行时同一份画法）
+.\.venv\Scripts\python.exe tools\make_icon.py
 ```
 
 `acceptance.py` 只驱动真实代码路径，不 mock 被测逻辑：进入接管后检查遮罩窗口确实吞掉

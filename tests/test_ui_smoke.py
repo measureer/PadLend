@@ -595,3 +595,96 @@ def test_add_device_dialog_prompts_and_button_label(qapp: QApplication) -> None:
         assert dialog.connect_button.text() == "连接"
     finally:
         dialog.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# 0.3.11：设备记忆、启动居中、打包图标
+# ---------------------------------------------------------------------------
+def test_device_page_lists_remembered_devices(qapp: QApplication) -> None:
+    """扫不到的设备也要出现一行“上次连接的设备”，但不能和真扫到的重复。"""
+    from PySide6.QtCore import Qt
+
+    from tablet.adb import DeviceEntry
+    from ui.device_page import DevicePage
+
+    page = DevicePage(None, None)
+    page.set_known(["192.168.1.9:5555", "ABC123"])
+    page._show_entries([], "")  # noqa: SLF001 - 直接验证渲染
+    qapp.processEvents()
+    assert page.device_list.count() == 2
+    serials = [
+        page.device_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(2)
+    ]
+    assert serials == ["192.168.1.9:5555", "ABC123"]
+    assert "已记住" in page.scan_hint.text()
+
+    entry = DeviceEntry(serial="192.168.1.9:5555", state="device", model="Pad")
+    page._show_entries([entry], "")  # noqa: SLF001
+    qapp.processEvents()
+    assert page.device_list.count() == 2, "真设备与记忆行不能重复"
+    assert page.scan_hint.text() == "1 台设备"
+    page.deleteLater()
+    qapp.processEvents()
+
+
+def test_window_remembers_the_last_device(window: Any) -> None:
+    window.config.device.serial = ""
+    window.config.device.known = []
+    window._remember_device("192.168.1.9:5555")  # noqa: SLF001
+    window._remember_device("ABC123")  # noqa: SLF001
+    assert window.config.device.known == ["ABC123", "192.168.1.9:5555"]
+    assert window.config.device.serial == "ABC123"
+    assert window._known_devices() == ["ABC123", "192.168.1.9:5555"]  # noqa: SLF001
+
+    window._remember_device("192.168.1.9:5555")  # noqa: SLF001
+    assert window.config.device.known[0] == "192.168.1.9:5555"
+    assert window.config.device.known.count("192.168.1.9:5555") == 1
+    assert len(window.config.device.known) <= 8
+
+
+def test_center_on_screen_puts_the_window_in_the_middle(window: Any, qapp: QApplication) -> None:
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    assert screen is not None
+    area = screen.availableGeometry()
+    window.resize(600, 400)
+    window.show()
+    qapp.processEvents()
+    window.center_on_screen()
+    qapp.processEvents()
+    center = window.frameGeometry().center()
+    assert abs(center.x() - area.center().x()) <= 2
+    assert abs(center.y() - area.center().y()) <= 2
+
+
+def test_packaged_icon_matches_the_runtime_brand() -> None:
+    """assets/padlend.ico 必须是 brand_pixmap 渲染的同一套尺寸，别再是旧图标。
+
+    16…128 用 BMP/DIB 条目（资源管理器读小尺寸只认这个），256 用 PNG；
+    全 PNG 的 ICO 在部分 Windows 版本里会被显示成旧图标或空白。
+    """
+    import struct
+
+    path = Path(__file__).resolve().parents[1] / "assets" / "padlend.ico"
+    data = path.read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind) == (0, 1)
+    assert count == 10
+    sizes = []
+    for index in range(count):
+        offset = 6 + 16 * index
+        width = data[offset] or 256
+        size_bytes, image_offset = struct.unpack("<II", data[offset + 8 : offset + 16])
+        assert image_offset + size_bytes <= len(data)
+        blob = data[image_offset : image_offset + size_bytes]
+        if width >= 256:
+            assert blob[:4] == bytes.fromhex("89504e47"), "256 档用 PNG"
+        else:
+            header_size, dib_w, dib_h = struct.unpack("<Iii", blob[:12])
+            assert header_size == 40, "小尺寸必须是 BITMAPINFOHEADER 条目"
+            assert (dib_w, dib_h) == (width, width * 2)
+            mask_row = ((width + 31) // 32) * 4
+            assert len(blob) == 40 + width * width * 4 + mask_row * width
+        sizes.append(width)
+    assert sizes == [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]

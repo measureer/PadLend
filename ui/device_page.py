@@ -131,6 +131,9 @@ class DevicePage(QWidget):
         self._adb = adb
         self._router = router
         self._entries: list[Any] = []
+        # 记住的设备（上次连过的，离线也列出来）
+        self._known: list[str] = []
+        self._error = ""
         self._scan_thread: _ScanThread | None = None
         self._facts: Any | None = None
         self._busy = False
@@ -362,10 +365,24 @@ class DevicePage(QWidget):
     def _on_scan_done(self, entries: object, error: str) -> None:
         self._show_entries(list(entries or []), error)
 
+    def set_known(self, serials: list[str]) -> None:
+        """记住的设备（最近连过的）；离线时也在列表里露一行（0.3.11）。"""
+        known = [str(s) for s in serials if str(s)]
+        if known == self._known:
+            return
+        self._known = known
+        self._render()
+
     def _show_entries(self, entries: list[Any], error: str) -> None:
         self._entries = entries
+        self._error = error
         if not error:
             self._clear_error()
+        self._render()
+
+    def _render(self) -> None:
+        entries = self._entries
+        error = self._error
         current = self.device_list.currentItem()
         selected_serial = ""
         if current is not None:
@@ -390,7 +407,27 @@ class DevicePage(QWidget):
             if serial == selected_serial:
                 self.device_list.setCurrentItem(item)
 
-        has_entries = bool(entries)
+        # 记住的设备：当前扫不到的也列出来，省得每次重开软件都要重新输地址。
+        present = {str(getattr(entry, "serial", "") or "") for entry in entries}
+        remembered = 0
+        for serial in self._known:
+            if not serial or serial in present:
+                continue
+            transport = "无线" if ":" in serial else "USB"
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, serial)
+            item.setData(Qt.ItemDataRole.UserRole + 1, True)  # 标记：记忆行
+            item.setSizeHint(QSize(0, 62))
+            item.setToolTip(f"{serial}（上次连接，当前未接入）")
+            self.device_list.addItem(item)
+            self.device_list.setItemWidget(
+                item, _DeviceRow(serial, f"上次连接的设备 · {transport}")
+            )
+            if serial == selected_serial:
+                self.device_list.setCurrentItem(item)
+            remembered += 1
+
+        has_entries = bool(entries) or remembered > 0
         self.device_list.setVisible(has_entries)
         self.empty_box.setVisible(not has_entries)
         if error:
@@ -405,7 +442,13 @@ class DevicePage(QWidget):
         if has_entries and self.device_list.currentItem() is None:
             self.device_list.setCurrentRow(0)
         self._on_selection()
-        self._set_scan_hint(f"{len(entries)} 台设备" if has_entries else "")
+        if entries:
+            hint = f"{len(entries)} 台设备"
+        elif remembered:
+            hint = f"{remembered} 台已记住"
+        else:
+            hint = ""
+        self._set_scan_hint(hint)
 
     def _set_scan_hint(self, text: str) -> None:
         self.scan_hint.setText(text)

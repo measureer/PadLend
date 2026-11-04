@@ -260,4 +260,30 @@ adb devices -l
 仍需真机确认：进接管时平板是否还会闪一下；若仍出现，看日志里是否还有
 `router.clipboard_sent`（有 → 热键或别的路径在发），没有则说明来源不是我们。
 
+## 16. 0.3.11 图标统一 / 启动居中 / 设备记忆（2026-11-05）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 图标同一份画法 | `tools/make_icon.py`（offscreen 渲染 `brand_pixmap`；16…128 写 DIB，256 写 PNG） | `assets/padlend.ico` 172,532 B，10 档尺寸 16…256 | ✅ |
+| 图标真的进了 exe | 逐条在 `dist/PadLend.exe` 里搜 ico 的 10 段 payload | 10/10 `in_exe=True`（含 DIB 原始像素） | ✅ |
+| exe 图标已是新的 | `shell32.SHGetFileInfo`（`build/ps-shellicon.ps1`）对原路径与新拷贝各取一次大图标 | `build/shellicon-dist.png` 与 `shellicon-copy.png` sha256 相同，均为品牌 P | ✅ |
+| ico 结构校验 | 单测 `test_packaged_icon_matches_the_runtime_brand` | `count == 10`，每项偏移可读、数据以 `\x89PNG` 开头 | ✅ |
+| 启动居中 | `ps-rect.ps1 -Hwnd 5641964` | 窗口 `(207,85)-(1502,942)`，中心 `(854,514)`，可用区中心 `(854,513)`（屏幕 1707×1067，任务栏 40） | ✅ |
+| 居中单测 | `test_center_on_screen_puts_the_window_in_the_middle` | 窗口中心与 `availableGeometry().center()` 误差 ≤ 2px | ✅ |
+| 设备记忆存盘 | `test_known_devices_roundtrip` / `test_known_devices_default_empty_and_coerced` | `device.known` 顺序往返、缺省 `[]`、`[7, XYZ]` → `["7","XYZ"]` | ✅ |
+| 设备页列记忆行 | `test_device_page_lists_remembered_devices` | 扫不到时列出 2 行「上次连接的设备」，扫到后不重复，提示 `1 台设备` | ✅ |
+| 记住上次设备 | `test_window_remembers_the_last_device` | 新的在前、去重、≤8 条，`device.serial` 同步 | ✅ |
+| 记忆行实机渲染 | 打包版 GUI（`build/home-0311-gui/config.yaml` 预置 `serial` + `known`） | 列表出现「192.168.67.8:37495 上次连接的设备 · 无线」「ABC123USB · USB」，右卡可点「连接此设备」，右上「2 台已记住」 | ✅ |
+| 无线重连补 adb connect | `_connect_worker` 对含 `:` 的 serial 先 `adb.connect` | 失败仅 `log.info`，结论仍由 45s 超时给出 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 375 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 32 项，0 失败，3 跳过（本机光标不可观测） | ✅ |
+| 0.3.11 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,170,677 B，sha256 `e0b8b0d2826e98bf525e90574ef1ba4add49102f7a16ba9b3e20b5d66b71cff4`，`--version` → `PadLend 0.3.11` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2` | exit 0，生成 `config.yaml`/`logs`/`exit.clean` | ✅ |
+| 打包版 GUI | `ps-close-check.ps1 -Hwnd 5641964 -ProcId 64816` | 底部 `v0.3.11`，`WM_CLOSE` 后 `alive=False`，日志 `adb server 已停止` + `已退出` | ✅ |
+
+仍需真机确认：记忆行点「连接此设备」能否把平板上线（平板需开着无线调试，
+端口若变了要先在平板上看一眼当前端口；`adb connect` 失败时会等到 45s 超时）。
+
+
 

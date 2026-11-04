@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self.device_page.connectRequested.connect(self._on_device_connect_requested)
         self.device_page.disconnectRequested.connect(self._on_device_disconnect_requested)
         self.device_page.addRequested.connect(self._on_add_device_requested)
+        self.device_page.set_known(self._known_devices())
 
         self.log_view = LogView(self)
         self.metrics_panel = MetricsPanel(self)
@@ -1132,6 +1133,7 @@ class MainWindow(QMainWindow):
             return
         address = self._last_wireless_address
         self.log_view.append_event("DEVICE", f"无线连接成功：{address}")
+        self._remember_device(address)
         # 列表里出现该设备后，沿用普通设备页的连接流程（router.connect_device）。
         self.device_page.refresh()
         if address:
@@ -1164,6 +1166,16 @@ class MainWindow(QMainWindow):
         connect = getattr(self.router, "connect_device", None)
         if not callable(connect):
             return False, "当前 Router 不支持设备切换"
+        # 记忆里的无线地址端口可能变了（平板重启后 adb 端口会换），先补一次
+        # adb connect 让设备重新出现在 devices 里；失败不急着报错，交给下面的
+        # 超时兜底给结论（USB 设备走不到这里）。
+        if self._adb is not None and ":" in serial:
+            adb_connect = getattr(self._adb, "connect", None)
+            if callable(adb_connect):
+                try:
+                    adb_connect(serial)
+                except Exception as exc:  # noqa: BLE001 - 连接失败由超时兜底
+                    log.info("adb connect %s failed: %r", serial, exc)
         try:
             connect(serial)
         except Exception as exc:  # noqa: BLE001 - 回报给 GUI 线程
@@ -1203,8 +1215,8 @@ class MainWindow(QMainWindow):
             facts = getattr(self.router, "facts", None)
             self.update_device(facts)
             if facts is not None:
-                self._save_config()
                 serial = str(getattr(facts, "serial", "") or "")
+                self._remember_device(serial)
                 self.log_view.append_event("DEVICE", f"已连接 {serial}".strip())
             else:
                 self.log_view.append_event("DEVICE", "已断开")
@@ -1212,6 +1224,43 @@ class MainWindow(QMainWindow):
             self.log_view.append_event("DEVICE", f"操作失败：{message or '未知错误'}")
             self.device_page.show_error(message or "操作失败")
 
+
+    # -------------------------------------------------------------- 设备记忆
+    def _known_devices(self) -> list[str]:
+        """最近连过的设备，新的在前；当前配置里的 serial 永远排第一。"""
+        known: list[str] = []
+        current = str(getattr(self.config.device, "serial", "") or "")
+        stored = list(getattr(self.config.device, "known", []) or [])
+        for serial in [current, *stored]:
+            text = str(serial or "").strip()
+            if text and text not in known:
+                known.append(text)
+        return known
+
+    def _remember_device(self, serial: str) -> None:
+        """把设备写进 known（去重、新的在前、最多 8 条）并落盘。"""
+        text = str(serial or "").strip()
+        if not text:
+            return
+        known = [text, *(s for s in self._known_devices() if s != text)]
+        self.config.device.known = known[:8]
+        if str(getattr(self.config.device, "serial", "") or "") != text:
+            self.config.device.serial = text
+        self.device_page.set_known(self._known_devices())
+        self._save_config()
+
+    # ------------------------------------------------------------------ 几何
+    def center_on_screen(self) -> None:
+        """把窗口摆到所在屏幕可用区域的中间（0.3.11：每次启动都居中）。"""
+        screen = QGuiApplication.screenAt(self.frameGeometry().center())
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        frame = self.frameGeometry()
+        frame.moveCenter(area.center())
+        self.move(frame.topLeft())
 
     def _save_config(self) -> bool:
         problems = list(self.config.validate())

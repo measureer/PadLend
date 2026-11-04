@@ -2,6 +2,24 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.11] — 2026-11-05
+
+### 新增
+
+- **设备记忆**：连接过的设备会记进 `device.known`（新的在前，最多 8 条），设备页在它当前扫不到时也列一行「上次连接的设备」，点「连接此设备」即可重连。无线设备重连前会先补一次 `adb connect`，平板重启换了端口也不会干等到超时。
+- **记住上次设备**：启动时即使 adb 看不到它，列表里也还留着那一行，不再“一开软件上次的设备就没了”。
+
+### 修复
+
+- **启动位置**：每次打开都摆到当前屏幕可用区域的正中间（`MainWindow.center_on_screen()`，`main.py` 在 `show()` 后调用）。
+- **图标不统一**：`assets/padlend.ico` 重新用运行时那套 `brand_pixmap` 画法渲染（`tools/make_icon.py`，10 档尺寸），exe 图标与窗口/任务栏图标现在是同一枚。小尺寸写 BMP/DIB 条目、只有 256 用 PNG——全 PNG 的 ICO 在资源管理器里可能沿用旧缓存或显示空白；资源管理器仍显示旧图标时，删掉图标缓存或把 exe 改名/换目录即可。
+
+### 测试
+
+- `tests/test_config.py`：`device.known` 存盘往返、缺省为空、怪类型能被强转成字符串。
+- `tests/test_ui_smoke.py`：设备页记忆行渲染且不与扫描结果重复、`_remember_device` 去重/上限/排序、`center_on_screen` 落在屏幕中心、`assets/padlend.ico` 结构与尺寸校验。
+- `tools/acceptance.py` 32 项 0 失败。
+
 ## [0.3.10] — 2026-11-05
 
 ### 修复
