@@ -838,9 +838,10 @@ def test_metrics_reset_clears_windows() -> None:
     assert snapshot["send_hz"] == 0.0
     assert snapshot["backlog"] == 0
     assert snapshot["drop_pct"] == 0.0
-    assert snapshot["rtt_ms"] == 0.0
-    assert snapshot["p50_ms"] == 0.0
-    assert snapshot["p95_ms"] == 0.0
+    # 没有采样就不报延迟：报 0 会被界面当成"RTT 0ms"显示出来。
+    assert "rtt_ms" not in snapshot
+    assert "p50_ms" not in snapshot
+    assert "p95_ms" not in snapshot
 
 
 def test_metrics_thread_safe() -> None:
@@ -866,15 +867,47 @@ def test_router_metrics_callback() -> None:
         "raw_hz",
         "send_hz",
         "backlog",
-        "rtt_ms",
-        "p50_ms",
-        "p95_ms",
         "drop_pct",
         "cpu_pct",
         "mem_mb",
     }
+    # 空闲时没有延迟样本，rtt/p50/p95 整个键都不出现。
     assert set(collected[0]) == expected
     assert rig.router.metrics_snapshot()["backlog"] == 0
+
+
+def test_sent_report_records_latency_sample() -> None:
+    rig = make_rig()
+    capture_manually(rig)
+    rig.clock.advance_ms(3)
+    rig.router.on_raw(raw(2, 0))
+    rig.router._sender_frame()
+    snapshot = rig.router.metrics_snapshot()
+    assert abs(snapshot["rtt_ms"] - 3.0) < 0.01
+    assert abs(snapshot["p95_ms"] - 3.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# 交还控制时必须补一条"全松"鼠标报告
+# ---------------------------------------------------------------------------
+def test_return_sends_mouse_release_report() -> None:
+    """退出接管要松开平板上的鼠标键，否则下次穿屏会变成一次拖拽点击。"""
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router.on_raw(raw(6, 0, buttons=1))
+    rig.router._sender_frame()
+    rig.session.mouse_reports.clear()
+    rig.router.toggle_manual()  # 退出接管
+    assert rig.router.state is State.RETURNING
+    assert (0, 0, 0, 0) in rig.session.mouse_reports
+
+
+def test_abort_capture_sends_mouse_release_report() -> None:
+    rig = make_rig()
+    capture_manually(rig)
+    rig.session.mouse_reports.clear()
+    rig.router.stop()
+    assert (0, 0, 0, 0) in rig.session.mouse_reports
 
 
 # ---------------------------------------------------------------------------
@@ -964,3 +997,25 @@ def test_arm_uses_absolute_cursor_from_real_desktop_map():
 
     assert router.state is State.CAPTURED
     assert mask.active
+
+
+def test_press_in_captured_logs_cursor_diagnose(caplog) -> None:
+    """点击是“电脑上冒出鼠标”的现场：按下/抬起要在 CAPTURED 里留下遮罩诊断。
+
+    真实故障只在用户点按时出现，日志里有 ``cap.cursor`` 才能判断是遮罩被拆、
+    锁被系统收回，还是外部程序把光标显示回来。
+    """
+    import logging
+
+    rig = make_rig()
+    capture_manually(rig)
+    assert rig.router.state is State.CAPTURED
+
+    with caplog.at_level(logging.INFO, logger="router"):
+        rig.router.on_raw(raw(0, 0, buttons=1))
+        rig.router.on_raw(raw(0, 0, buttons=0))
+
+    lines = [r.getMessage() for r in caplog.records if "cap.cursor" in r.getMessage()]
+    assert len(lines) == 2, lines
+    assert "windows=1" in lines[0]
+    assert rig.router.state is State.CAPTURED

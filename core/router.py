@@ -126,6 +126,8 @@ class _SendMsg:
     wheel: int
     burst: bool = False
     heartbeat: bool = False
+    #: 入队时刻（``clock()``）；写出成功后用它算 7.4 的 rtt_ms。
+    stamp: float = 0.0
 
     def is_heartbeat(self) -> bool:
         return self.heartbeat
@@ -416,6 +418,7 @@ class Router:
                     self._change_state(State.IDLE, "panic")
                 self._release_mask("panic")
                 self._send_keyboard_zero()
+                self._send_mouse_release()
                 self._reset_keymap_locked()
                 self._arm_accum = 0.0
                 self._overflow = 0.0
@@ -945,8 +948,10 @@ class Router:
 
         # 出口只有三个条件：回到入口边、没有正在平板拖拽、连续向外推够阈值。
         # 直接进入后立即反向推也应该能返回，不再要求先深入平板固定距离。
+        # 这里看物理按键（self._buttons）而不是平板看到的按键：守卫期内平板
+        # 看不到按下，但我们仍不该在用户按着键时把他推出去。
         entry = self._entry_edge
-        if buttons or entry is None or not self._at_edge(estimator, entry):
+        if self._buttons or entry is None or not self._at_edge(estimator, entry):
             self._overflow = 0.0
             return
         nx, ny = entry.outward_normal()
@@ -1005,6 +1010,7 @@ class Router:
         self._overflow = 0.0
         self._neutral_until_release = False
         self._wheel_accum = 0
+        self._send_mouse_release()
         if not self._change_state(State.RETURNING, reason):
             return
         debounce_ms = max(0, int(self._cfg.motion.debounce_ms)) if debounce else 0
@@ -1071,10 +1077,16 @@ class Router:
         return detents
 
     def _queue_mouse_locked(self, buttons: int, dx: int, dy: int, wheel: int) -> None:
-        self._enqueue_send(_SendMsg(int(buttons), int(dx), int(dy), int(wheel)))
+        self._enqueue_send(
+            _SendMsg(int(buttons), int(dx), int(dy), int(wheel), stamp=self._clock())
+        )
 
     def _enqueue_burst_locked(self, reports: Iterable[tuple[int, int]]) -> None:
-        items = [_SendMsg(0, int(dx), int(dy), 0, burst=True) for dx, dy in reports]
+        stamp = self._clock()
+        items = [
+            _SendMsg(0, int(dx), int(dy), 0, burst=True, stamp=stamp)
+            for dx, dy in reports
+        ]
         with self._send_lock:
             for item in items:
                 self._append_send_locked(item)
@@ -1176,12 +1188,17 @@ class Router:
         except Exception as exc:
             self._note_write_failure(exc)
         else:
-            self._note_write_success()
+            self._note_write_success(message)
 
-    def _note_write_success(self) -> None:
+    def _note_write_success(self, message: _SendMsg | None = None) -> None:
         with self._lock:
             self._write_failures = 0
         self._metrics.record_send()
+        # 7.4 的 rtt_ms：设备端没有 ack，所以量的是"输入进队 → HID 写入成功"，
+        # 也就是我们能观测到的那一段链路延迟。心跳不是输入，跳过。
+        if message is not None and message.stamp and not message.heartbeat:
+            elapsed_ms = (self._clock() - message.stamp) * 1000.0
+            self._metrics.record_latency(max(0.0, elapsed_ms))
 
     def _note_write_failure(self, exc: Exception) -> None:
         with self._lock:
@@ -1571,6 +1588,7 @@ class Router:
                 self._release_mask("fault")
                 if was_captured:
                     self._send_keyboard_zero()
+                    self._send_mouse_release()
                     self._reset_keymap_locked()
                 self._reconnect_attempt = 0
                 self._write_failures = 0
@@ -1816,6 +1834,20 @@ class Router:
         except Exception:
             log.warning("router.keyboard_zero_failed", exc_info=True)
 
+    def _send_mouse_release(self) -> None:
+        """交还控制时补一条"全松"报告。
+
+        不补的话，用户在平板上按住拖动时退出/断连，平板会一直以为左键按着；
+        下次穿屏的位移就被当成一次拖拽，松开时正好落在入口处的控件上 ——
+        表现就是"鼠标刚穿过去就点了一下平板上的按钮"。
+        """
+        try:
+            self._session.send_mouse(0, 0, 0, 0)
+        except PadLendError as exc:
+            log.debug("router.mouse_release_skipped code=%s detail=%s", exc.code, exc.detail)
+        except Exception:
+            log.warning("router.mouse_release_failed", exc_info=True)
+
     # -- 状态迁移 / 设备 ----------------------------------------------------
     def _change_state(self, dst: State, reason: str) -> bool:
         """唯一状态写入口；非法迁移记日志并转 FAULT（I4）。"""
@@ -1919,6 +1951,7 @@ class Router:
             self._change_state(State.IDLE, reason)
         self._release_mask(reason)
         self._send_keyboard_zero()
+        self._send_mouse_release()
         self._reset_keymap_locked()
         self._arm_accum = 0.0
         self._overflow = 0.0

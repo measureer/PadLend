@@ -143,22 +143,28 @@ class Metrics:
             dropped = self._dropped
             received = self._raw_total
             backlog = self._backlog
-        rtt_ms = latencies[-1] if latencies else 0.0
-        p50_ms = _percentile(latencies, 0.50)
-        p95_ms = _percentile(latencies, 0.95)
+        rtt_ms = latencies[-1] if latencies else None
+        p50_ms = _percentile(latencies, 0.50) if latencies else None
+        p95_ms = _percentile(latencies, 0.95) if latencies else None
         attempted = dropped + received
         drop_pct = (dropped / attempted * 100.0) if attempted else 0.0
-        return {
+        snapshot = {
             "raw_hz": round(raw_hz, 1),
             "send_hz": round(send_hz, 1),
             "backlog": int(backlog),
-            "rtt_ms": round(rtt_ms, 1),
-            "p50_ms": round(p50_ms, 1),
-            "p95_ms": round(p95_ms, 1),
             "drop_pct": round(drop_pct, 2),
             "cpu_pct": round(cpu_pct, 1),
             "mem_mb": round(mem_mb, 1),
         }
+        # 没有采样就**不报** rtt（GUI 会显示「RTT —」）。报 0 会被当成真实值，
+        # 用户看到的就是"右上角 RTT 一直是 0ms"。
+        if rtt_ms is not None:
+            snapshot["rtt_ms"] = round(rtt_ms, 1)
+        if p50_ms is not None:
+            snapshot["p50_ms"] = round(p50_ms, 1)
+        if p95_ms is not None:
+            snapshot["p95_ms"] = round(p95_ms, 1)
+        return snapshot
 
     def reset(self) -> None:
         """清空所有滑窗与累计计数（配置重载 / 重连后调用）。"""

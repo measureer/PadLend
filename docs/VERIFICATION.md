@@ -167,3 +167,49 @@ adb devices -l
 | 打包 GUI | `PADLEND_HOME=…build/home-pkg2`，UIA 截图 + `WM_CLOSE` | v0.3.5 界面正常；关闭后进程归零 | ✅ |
 
 仍需真机确认：「添加设备」对真实平板（无线调试已开）能列出并连接；配对码首次配对流程。
+
+## 11. 0.3.6 无硬件验收与点击期光标取证（2026-11-04）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 假平板可跑全链路 | `main.py --simulate`（源码实例）+ 截图 | 设备页列出 `Simulated Tablet`（`sim:5555 无线 · device`），连接后顶栏/详情显示 1707×1067 竖屏 | ✅ |
+| 端到端验收工具 | `python tools/acceptance.py` | 24 项、失败 0、跳过 3（本机光标不可观测） | ✅ |
+| 遮盖机制自证 | 验收项 | 接管后 `len(mask._windows)=2`，对每个遮罩窗发 `WM_SETCURSOR` 窗口过程均返回 1 | ✅ |
+| 光标锁自证 | 验收项 | `GetClipCursor=(1706,0,1707,1067)`，即主屏右边缘 1px 条，非整屏 | ✅ |
+| 点击不踢出接管 | 验收项（单击/连点 3/双击） | 三种点击后仍 `state=captured`、`transitions=[]`，遮罩与裁剪区保持 | ✅ |
+| 点击送达平板 | 验收项 | 单击 `clicks=1`、连点 `clicks=3`、双击 `clicks=2`；报告里同时出现按下与抬起 | ✅ |
+| 拖动持续上报 | 验收项（按下 + 8 段 dx=6,dy=4 + 抬起） | `held_reports=171`、`dx=48 dy=32`、仍 CAPTURED | ✅ |
+| 交还清理 | 验收项 | `state=idle`、`windows=0`、`GetClipCursor` 恢复整桌面 `(-1707,-132,1706,1067)` | ✅ |
+| 点击期现场日志 | 单测 `test_press_in_captured_logs_cursor_diagnose` | 按下/抬起各写一条 `cap.cursor visible=… clip=… windows=…` | ✅ |
+| 设备行不再截断 | `--simulate` 截图 | 两行：「Simulated Tablet」+「sim:5555 无线 · device」，序列号可见 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 361 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.6 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,264,524 B，sha256 `b306f5b4b9d2691e86201040080553e29b275cc85d757435657ef7463f5a7acf`，`--version` → `PadLend 0.3.6` | ✅ |
+| 打包 `--simulate` 无头 | `PADLEND_HOME=…build/home-pkg6 --simulate --headless --duration 2` | exit 0；`[device] sim:5555 1707x1067 orientation=0 xscale=2.0` | ✅ |
+| 打包 `--simulate` GUI | `PADLEND_HOME=…build/home-pkg7 --simulate`，UIA 截图 | 设备页两行行：`Simulated Tablet` / `sim:5555 无线 · device`，底部 `v0.3.6`；`WM_CLOSE` 后 `alive=False`、PadLend.exe 计数 0 | ✅ |
+
+环境限制（影响结论口径）：本机为远程会话，`SendInput`/`SetCursorPos` 都不改变真实光标，
+`SetCursor(None)` 后 `GetCursorInfo` 仍报 `CURSOR_SHOWING`。因此三项「光标可见性」断言只能 SKIP，
+其余断言全部真实执行 —— 遮罩、`ClipCursor`、状态机、平板端收包都不是 mock。
+
+仍需真机确认：用户报的「穿透时点一下，鼠标可能同时出现在平板和电脑上」需要在真机上复现一次；
+0.3.6 起接管期每次按下/抬起都会写 `cap.cursor`，用日志区分「遮罩被拆 / 锁被系统收回 / 外部程序
+把光标显示回来」三种成因。
+
+## 12. 0.3.7 RTT 与穿屏误触（2026-11-04）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 延迟样本真的在记 | 单测 `test_sent_report_records_latency_sample` | 入队→写出成功 3ms，`rtt_ms=3.0`、`p95_ms=3.0` | ✅ |
+| 空闲不报 0 | 单测 `test_metrics_reset_clears_windows` | 无样本时 `rtt_ms/p50_ms/p95_ms` 键不存在 | ✅ |
+| 界面显示「RTT —」 | `--simulate` GUI 截图 | 顶栏右侧显示 `RTT —`（不再是 `RTT 0ms`） | ✅ |
+| 验收工具里的 RTT | `tools/acceptance.py` | 「指标里有真实 RTT 样本」→ `rtt_ms=2.0` | ✅ |
+| 交还时补全松报告 | 单测 `test_return_sends_mouse_release_report` / `test_abort_capture_sends_mouse_release_report` | `session.mouse_reports` 里出现 `(0,0,0,0)` | ✅ |
+| 按住离开不残留拖拽 | 验收项 | 按住离开后 0 条带按下位的位移报告 | ✅ |
+| 重新进入无残留按下 | 验收项 | 重新穿入后前 3 条报告 `buttons=0x0` | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 364 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.7 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 见下 | ✅ |
+
+仍需真机确认：RTT 数值是否符合实际手感（设备端没有 ack，量的是「输入进队 → HID 写入成功」），
+以及「穿屏瞬间点一下平板按钮」在真机上是否消失。
