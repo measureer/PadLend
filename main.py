@@ -260,6 +260,11 @@ class Runtime:
                 finally:
                     if self.raw_debug is not None:
                         self.raw_debug.stop()
+                    # adb fork-server 默认常驻；退出时主动关掉它，避免“关了界面还在跑后台”。
+                    try:
+                        self.adb.kill_server()
+                    except Exception as exc:  # noqa: BLE001 - 清理失败不阻断退出
+                        LOG.debug("adb kill-server failed: %r", exc)
 
 
 # ---------------------------------------------------------------------------

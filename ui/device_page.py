@@ -92,6 +92,7 @@ class DevicePage(QWidget):
 
     connectRequested = Signal(str)
     disconnectRequested = Signal()
+    addRequested = Signal()
 
     def __init__(
         self,
@@ -133,14 +134,32 @@ class DevicePage(QWidget):
         self.refresh_button.setIcon(make_icon("refresh", tokens.COLORS["text_primary"], 16))
         self.refresh_button.setIconSize(QSize(16, 16))
         self.refresh_button.clicked.connect(self.refresh)
+
+        self.add_button = QPushButton("添加设备")
+        self.add_button.setObjectName("ghostButton")
+        self.add_button.setIcon(make_icon("wifi", tokens.COLORS["text_primary"], 16))
+        self.add_button.setIconSize(QSize(16, 16))
+        self.add_button.setToolTip("用无线调试添加平板：输入平板上的 IP 地址与端口")
+        self.add_button.clicked.connect(self._request_add)
+
         self.scan_hint = QLabel("")
         self.scan_hint.setObjectName("cardHint")
 
         top = QHBoxLayout()
         top.addLayout(heading, 1)
         top.addWidget(self.scan_hint, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.add_button, 0, Qt.AlignmentFlag.AlignVCenter)
         top.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(top)
+
+        # 长错误单独占一行：塞在标题右边会把「添加设备」挤出可视区。
+        self.error_strip = QLabel("")
+        self.error_strip.setObjectName("errorStrip")
+        self.error_strip.setWordWrap(True)
+        # Ignored：让标签宽度跟随页面而不是被长文本撑开。
+        self.error_strip.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.error_strip.setVisible(False)
+        layout.addWidget(self.error_strip)
 
         content = QHBoxLayout()
         content.setSpacing(18)
@@ -178,7 +197,10 @@ class DevicePage(QWidget):
         self.empty_title = QLabel("未检测到设备")
         self.empty_title.setObjectName("emptyTitle")
         self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_hint = QLabel("用 USB 连接平板并开启「USB 调试」，或先在平板上开启无线调试。")
+        self.empty_hint = QLabel(
+            "USB 连接：插上数据线并在平板上允许「USB 调试」。\n"
+            "无线连接：点右上角「添加设备」，填平板「无线调试」里的 IP 与端口。"
+        )
         self.empty_hint.setObjectName("emptyHint")
         self.empty_hint.setWordWrap(True)
         self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -292,6 +314,7 @@ class DevicePage(QWidget):
         if not callable(scan):
             self._set_scan_hint("adb 接口不可用")
             return
+        self._clear_error()
         self._set_scan_hint("正在扫描…")
         self.refresh_button.setEnabled(False)
         thread = _ScanThread(scan, self)
@@ -312,6 +335,8 @@ class DevicePage(QWidget):
 
     def _show_entries(self, entries: list[Any], error: str) -> None:
         self._entries = entries
+        if not error:
+            self._clear_error()
         current = self.device_list.currentItem()
         selected_serial = ""
         if current is not None:
@@ -341,7 +366,8 @@ class DevicePage(QWidget):
         else:
             self.empty_title.setText("未检测到设备")
             self.empty_hint.setText(
-                "用 USB 连接平板并开启「USB 调试」，或先在平板上开启无线调试。"
+                "USB 连接：插上数据线并在平板上允许「USB 调试」。\n"
+                "无线连接：点右上角「添加设备」，填平板「无线调试」里的 IP 与端口。"
             )
         if has_entries and self.device_list.currentItem() is None:
             self.device_list.setCurrentRow(0)
@@ -372,19 +398,30 @@ class DevicePage(QWidget):
         self.set_busy(True)
         self.disconnectRequested.emit()
 
+    def _request_add(self) -> None:
+        """请求主窗打开「添加无线设备」对话框（本页不直接弹窗）。"""
+        if self._busy:
+            return
+        self.addRequested.emit()
+
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.refresh_button.setEnabled(not busy)
+        self.add_button.setEnabled(not busy)
         self.connect_button.setEnabled(not busy and self.device_list.currentItem() is not None)
         self.disconnect_button.setEnabled(not busy and self._facts is not None)
         if busy:
             self._set_scan_hint("正在连接…")
 
     def show_error(self, text: str) -> None:
-        """在列表下方显示一行可恢复的错误，不弹模态框。"""
-        self._set_scan_hint(text or "操作失败")
-        self.scan_hint.setProperty("error", True)
-        repolish(self.scan_hint)
+        """在列表上方显示可恢复的错误，不弹模态框、不挤压标题行。"""
+        self.error_strip.setText(text or "操作失败")
+        self.error_strip.setVisible(True)
+        self._set_scan_hint("")
+
+    def _clear_error(self) -> None:
+        self.error_strip.clear()
+        self.error_strip.setVisible(False)
 
     # ------------------------------------------------------------------ 状态
     def set_state(self, state: str) -> None:
@@ -399,20 +436,15 @@ class DevicePage(QWidget):
             "fault": ("连接异常", tokens.COLORS["err"]),
         }.get(state, ("未连接", tokens.COLORS["disconnected"]))
         self.pill_text.setText(label)
-        self.pill_dot.setStyleSheet(
-            f"background-color: {color}; border-radius: 3px;"
-        )
+        self.pill_dot.setStyleSheet(f"background-color: {color}; border-radius: 3px;")
         self.state_pill.setProperty("state", state)
         repolish(self.state_pill)
 
     def refresh_theme(self) -> None:
         """主题切换后刷新自绘制颜色与按钮图标。"""
-        self.refresh_button.setIcon(
-            make_icon("refresh", tokens.COLORS["text_primary"], 16)
-        )
-        self.connect_button.setIcon(
-            make_icon("link", tokens.COLORS["text_on_accent"], 16)
-        )
+        self.refresh_button.setIcon(make_icon("refresh", tokens.COLORS["text_primary"], 16))
+        self.add_button.setIcon(make_icon("wifi", tokens.COLORS["text_primary"], 16))
+        self.connect_button.setIcon(make_icon("link", tokens.COLORS["text_on_accent"], 16))
         self.disconnect_button.setIcon(make_icon("unlink", tokens.COLORS["err"], 16))
         self._divider.setStyleSheet(f"color: {tokens.COLORS['border']};")
         self.set_state(self._state)
@@ -444,9 +476,7 @@ class DevicePage(QWidget):
         self._values["resolution"].setText(f"{width} × {height}" if width and height else "—")
         self._values["orientation"].setText("横屏" if orientation & 1 else "竖屏")
         self._values["xscale"].setText(f"{xscale:.3f}")
-        self._values["pointer_speed"].setText(
-            "—" if pointer_speed is None else str(pointer_speed)
-        )
+        self._values["pointer_speed"].setText("—" if pointer_speed is None else str(pointer_speed))
         self.disconnect_button.setEnabled(not self._busy)
         if self._state in ("", "fault"):
             self.set_state("idle")

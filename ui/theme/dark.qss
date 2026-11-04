@@ -643,6 +643,15 @@ QPushButton#navButton:checked, QToolButton#navButton:checked {
     font-size: 11px;
 }
 
+#errorStrip {
+    color: @err;
+    background-color: rgba(255, 107, 107, 0.10);
+    border: 1px solid rgba(255, 107, 107, 0.35);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+}
+
 #statusPill {
     background-color: @bg_raised;
     border: 1px solid @border;

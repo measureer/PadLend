@@ -71,6 +71,16 @@ def _draw(name: str, painter: QPainter, color: str) -> None:
         path.lineTo(20.4, 7.6)
         path.lineTo(15.9, 7.9)
         painter.drawPath(path)
+    elif name == "plus":
+        painter.drawLine(QPointF(12.0, 5.6), QPointF(12.0, 18.4))
+        painter.drawLine(QPointF(5.6, 12.0), QPointF(18.4, 12.0))
+    elif name == "wifi":
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for radius in (8.6, 5.6, 2.6):
+            rect = QRectF(12.0 - radius, 17.8 - radius, radius * 2, radius * 2)
+            painter.drawArc(rect, 35 * 16, 110 * 16)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(QPointF(12.0, 17.8), 1.4, 1.4)
     elif name == "link":
         painter.drawArc(QRectF(2.8, 8.2, 9.6, 7.6), 90 * 16, 180 * 16)
         painter.drawArc(QRectF(11.6, 8.2, 9.6, 7.6), -90 * 16, 180 * 16)
@@ -142,7 +152,7 @@ def make_icon(name: str, color: str | None = None, size: int = 20) -> QIcon:
 
 
 def brand_pixmap(size: int = 34) -> QPixmap:
-    """品牌标记：深色圆角底 + 渐变折线，用于顶栏/向导。"""
+    """品牌标记：深色圆角底 + 渐变折线，用于顶栏/向导/任务栏图标。"""
     scale = 2
     pixmap = QPixmap(size * scale, size * scale)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -174,3 +184,11 @@ def brand_pixmap(size: int = 34) -> QPixmap:
     painter.end()
     pixmap.setDevicePixelRatio(scale)
     return pixmap
+
+
+def brand_icon() -> QIcon:
+    """窗口/任务栏图标：多尺寸品牌标（标题栏不要再用状态色圆点）。"""
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(brand_pixmap(size))
+    return icon

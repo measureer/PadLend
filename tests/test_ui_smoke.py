@@ -155,18 +155,20 @@ def test_window_shell_builds_offscreen(window: Any, qapp: QApplication) -> None:
         "latency_text",
         "menu_button",
         "settings_button",
-        "minimize_button",
-        "close_button",
+        "theme_button",
         "canvas",
         "settings",
         "log_view",
         "metrics_panel",
     ):
         assert hasattr(window, name), name
+    # 方案 A：保留系统标题栏，顶栏不再重复放「—」「×」。
+    assert not hasattr(window, "minimize_button")
+    assert not hasattr(window, "close_button")
     assert window.canvas_mode in {"native", "placeholder"}
     assert isinstance(window.canvas, mw.QWidget)
     assert window.minimumSize().width() >= tokens.WINDOW_MIN_SIZE[0]
-    assert window.close_button.size() == QSize(28, 28)
+    assert window.settings_button.size() == QSize(28, 28)
     window.show()
     qapp.processEvents()
     assert window.isVisible() is True
@@ -531,14 +533,49 @@ def test_theme_toggle_persists_and_repaints(window: Any, qapp: QApplication) -> 
 
 
 
-def test_settings_hints_and_entry_guard(window: Any) -> None:
-    """每个设置分组都有说明；进入保护可直接调整并落盘。"""
+def test_settings_hints_and_exit_threshold(window: Any) -> None:
+    """每个设置分组都有说明；出口阈值可直接调整并落盘。"""
     window._switch_page(2)
     hints = window.settings.findChildren(QLabel, "fieldHint")
-    assert len(hints) >= 14
-    assert any("穿回" in hint.text() for hint in hints)
-    assert any("进入平板" in hint.text() for hint in hints)
+    assert len(hints) >= 13
+    assert any("交还 PC" in hint.text() for hint in hints)
+    assert any("反向移动" in hint.text() for hint in hints)
 
-    window.settings.guard_slider.setValue(220)
+    window.settings.exit_slider.setValue(36)
     assert window.settings.save() is True
-    assert window.settings._config.motion.entry_guard_px == 220
+    assert window.settings._config.motion.exit_overflow_px == 36
+
+
+# ---------------------------------------------------------------------------
+# 添加无线设备对话框
+# ---------------------------------------------------------------------------
+def test_add_device_validation_helpers() -> None:
+    from ui.add_device_dialog import validate_address, validate_pairing_code
+
+    assert validate_address("192.168.1.8:5555") == ("192.168.1.8:5555", "")
+    assert validate_address("192.168.1.8") == ("192.168.1.8:5555", "")
+    assert validate_address("")[1]
+    assert validate_address("1.2.3.4:99999")[1]
+    assert validate_pairing_code("") == ("", "")
+    assert validate_pairing_code("12345")[1]
+    assert validate_pairing_code("123456") == ("123456", "")
+
+
+def test_add_device_dialog_prompts_and_button_label(qapp: QApplication) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from ui.add_device_dialog import AddDeviceDialog
+
+    dialog = AddDeviceDialog(prefill="192.168.1.8")
+    try:
+        assert dialog.address_edit.text() == "192.168.1.8"
+        # 说明文字必须是真换行，不能出现字面量 "\n"。
+        for label in dialog.findChildren(QLabel):
+            assert (chr(92) + "n") not in label.text()
+        assert dialog.connect_button.text() == "连接"
+        dialog.code_edit.setText("123456")
+        assert dialog.connect_button.text() == "配对并连接"
+        dialog.code_edit.setText("")
+        assert dialog.connect_button.text() == "连接"
+    finally:
+        dialog.deleteLater()

@@ -143,5 +143,27 @@ adb devices -l
 | 全量回归 | `pytest -o addopts="" -q` | 328 passed, 3 skipped | ✅ |
 | 静态检查 | `ruff check .` | All checks passed | ✅ |
 | 0.3.4 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 52,715,929 B，sha256 `78c6d4c84cb0873b3ea711e0888645301c4d31e74111d6a2012a6187d64f436c`，`--version` 0.3.4 | ✅ |
+| 0.3.4 出口修复后重建（2026-11-04） | `pytest -o addopts="" -q` → `ruff check .` → `python -m PyInstaller --noconfirm PadLend.spec` | 334 passed, 3 skipped；ruff 全绿；`dist/PadLend.exe` 53,242,550 B，sha256 `8cbd78fc6068fe38e7e4ddd48b1b82f034d043e8cd4be6cb246a45cd9cff04d8`；`--version` → `PadLend 0.3.4`；`--headless --duration 1` exit 0（无设备 → E101，config/logs/`exit.clean` 正常生成） | ✅ |
 
 仍需用户复验：正常接管/返回后 Windows 光标可见；异常退出（关进程）后光标也能恢复。
+
+## 10. 0.3.5 设备添加与退出清理（2026-11-04）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 无线地址容错 | 单测 `test_normalize_address_*`（`adb connect 1.2.3.4:5555 already connected`、缺端口、非法端口、mDNS 名…） | 归一化为 `host:port`，非法返回空串 | ✅ |
+| 连接/配对失败文案 | 单测 + 真机失败冒烟（`127.0.0.1:1`） | 设备页错误条显示 `E101 … cannot connect to 127.0.0.1:1 … (10061)`，附带排查提示 | ✅ |
+| 添加设备对话框 | GUI 实测（UIA） | 标题「添加无线设备」；地址/配对码校验；配对码非空时按钮变「配对并连接」 | ✅ |
+| 空状态可操作 | GUI 实测 | “未检测到设备”下方分两行给出 USB / 无线（右上角「添加设备」）两条路径 | ✅ |
+| 长错误不挤压按钮 | `build/check_error_strip.py`（离屏）+ 真实窗口 | 1400 宽下 `strip w=1344 h=42`、`add_button_visible=True`；错误条横跨页面自动折行 | ✅ |
+| 顶栏与标题栏去重 | GUI 实测（UIA + 截图） | 顶栏只剩 ☰/⚙/☀（托盘可用时隐藏 ☰），系统标题栏保留 ─ □ ×；窗口图标换品牌 P | ✅ |
+| 模态对话框下关闭 | 打开「添加设备」后给主窗发 `WM_CLOSE` | 原生事件过滤器接管 → 先 `reject()` 模态框再退出，`alive=False` | ✅ |
+| 退出后不留 PadLend | 打包版 GUI 关闭 → `tasklist` | PadLend.exe 计数归零，日志 `adb server 已停止` + `已退出` | ✅ |
+| adb server 清理 | 隔离端口 `ADB_SERVER_SOCKET=tcp:127.0.0.1:5055` 跑 headless | 5055 上无残留 server（5037 上被外部程序重新拉起，与本程序无关） | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 355 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.5 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,256,401 B，sha256 `d092782ce1f573c86cab3b3723821a9b0188f70ac8bded3e6188a7beb3a41d00`，`--version` → `PadLend 0.3.5` | ✅ |
+| 打包 headless | `PADLEND_HOME=…build/home-pkg --headless --duration 2 --no-wizard` | exit 0；`adb server 已停止`；config/logs/`exit.clean` 正常生成 | ✅ |
+| 打包 GUI | `PADLEND_HOME=…build/home-pkg2`，UIA 截图 + `WM_CLOSE` | v0.3.5 界面正常；关闭后进程归零 | ✅ |
+
+仍需真机确认：「添加设备」对真实平板（无线调试已开）能列出并连接；配对码首次配对流程。

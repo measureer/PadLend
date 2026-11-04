@@ -12,3 +12,6 @@ pytest-of-*/
 _MEI*/
 !PadLend.spec
 .mnemon/
+
+# WorkBuddy IDE workspace
+.workbuddy/

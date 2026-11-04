@@ -49,6 +49,31 @@ _VENDOR_ADB_CANDIDATES = (
 )
 
 
+def normalize_address(address: str | None) -> str:
+    """把用户输入的无线调试地址整成 ``host:port``。
+
+    允许粘贴 ``adb connect 192.168.1.8:5555`` 整行、带 ``adb://`` 前缀，
+    或只给 IP（补默认端口 5555）。无法解析时返回空串，由调用方报错。
+    """
+    text = str(address or "").strip().strip("'\"")
+    if not text:
+        return ""
+    for prefix in ("adb://", "tcp://", "adb connect ", "adb pair "):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix) :].strip()
+    # 用户可能粘了整行 "adb connect 1.2.3.4:5555  1.2.3.4:5555"；取第一个 token。
+    text = text.split()[0] if text.split() else ""
+    text = text.rstrip("/")
+    if not text or " " in text:
+        return ""
+    host, sep, port = text.partition(":")
+    if not host:
+        return ""
+    if not sep:
+        return f"{text}:{C.WIRELESS_DEFAULT_PORT}"
+    return text if port.isdigit() else ""
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceEntry:
     """``adb devices -l`` 的一行。"""
@@ -403,6 +428,100 @@ class Adb:
                 time.sleep(C.INITIAL_RETRY_INTERVAL_S)
         assert last is not None
         raise last
+
+    # -- 无线调试 ----------------------------------------------------------
+    def mdns_services(self) -> list[str]:
+        """``adb mdns services`` 的原始行（不含表头）。
+
+        Windows 上的 mDNS 经常完全为空（Bonjour 未运行、多网卡/VPN 都会干扰），
+        所以它只能作为「顺便发现」的加分项，不能用它替代手动添加地址。
+        """
+        try:
+            out = self._text(
+                ["mdns", "services"], timeout=C.ADB_SHELL_TIMEOUT, check=False
+            )
+        except PadLendError as exc:
+            LOG.debug("adb mdns services 失败（忽略）: %s", exc.detail)
+            return []
+        lines: list[str] = []
+        for raw in out.splitlines():
+            line = raw.strip()
+            if not line or line.lower().startswith("list of discovered mdns services"):
+                continue
+            lines.append(line)
+        return lines
+
+    def connect(self, address: str, *, timeout: float = C.ADB_CONNECT_TIMEOUT) -> str:
+        """``adb connect host:port``（无线调试）。
+
+        成功返回 adb 的提示行（``connected to ...`` / ``already connected ...``），
+        失败抛 ``E101``。调用方应在后台线程执行：TCP 探测最坏要等满超时。
+        """
+        target = normalize_address(address)
+        if not target:
+            raise PadLendError(ErrorCode.DEVICE_OFFLINE, "请填写平板上的 IP 地址与端口")
+        LOG.info("adb connect %s", target)
+        proc = self._run(["connect", target], timeout=timeout, check=False)
+        text = (self._decode(proc.stdout) + self._decode(proc.stderr)).strip()
+        lowered = text.lower()
+        _FAIL_MARKERS = (
+            "failed to connect",
+            "cannot connect",
+            "unable to connect",
+            "no route to host",
+        )
+        if any(marker in lowered for marker in _FAIL_MARKERS) or not text:
+            detail = text.splitlines()[-1] if text else f"exit {proc.returncode}"
+            raise PadLendError(
+                ErrorCode.DEVICE_OFFLINE,
+                f"连接 {target} 失败：{detail}（确认平板与电脑在同一 Wi-Fi、且已开启无线调试）",
+            )
+        return text
+
+    def pair(self, address: str, code: str, *, timeout: float = C.ADB_PAIR_TIMEOUT) -> str:
+        """``adb pair host:port code``（Android 11+ 无线调试配对）。"""
+        target = normalize_address(address)
+        pairing = str(code or "").strip()
+        if not target or not pairing:
+            raise PadLendError(ErrorCode.DEVICE_OFFLINE, "配对需要同时填写地址与 6 位配对码")
+        LOG.info("adb pair %s", target)
+        proc = self._run(["pair", target, pairing], timeout=timeout, check=False)
+        text = (self._decode(proc.stdout) + self._decode(proc.stderr)).strip()
+        if "successfully paired" not in text.lower():
+            detail = text.splitlines()[-1] if text else f"exit {proc.returncode}"
+            raise PadLendError(
+                ErrorCode.DEVICE_OFFLINE,
+                f"配对 {target} 失败：{detail}（配对端口与连接端口不同，"
+                "请填「使用配对码配对设备」窗口里的地址）",
+            )
+        return text
+
+    def disconnect(
+        self, address: str | None = None, *, timeout: float = C.ADB_CONNECT_TIMEOUT
+    ) -> str:
+        """``adb disconnect [host:port]``；断开失败不抛（退出清理用）。"""
+        args = ["disconnect"]
+        target = normalize_address(address) if address else ""
+        if target:
+            args.append(target)
+        try:
+            proc = self._run(args, timeout=timeout, check=False)
+        except PadLendError as exc:
+            LOG.debug("adb disconnect 失败（忽略）: %s", exc.detail)
+            return ""
+        return (self._decode(proc.stdout) + self._decode(proc.stderr)).strip()
+
+    def kill_server(self, *, timeout: float = C.ADB_SERVER_TIMEOUT) -> None:
+        """停掉 adb server（退出时清理，避免 adb.exe 留在后台）。
+
+        绝不抛：退出路径上失败只记日志。若别的工具也在用同一个 adb，它们会
+        在下次命令时自动重新拉起 server。
+        """
+        try:
+            self._run(["kill-server"], timeout=timeout, check=False)
+            LOG.info("adb server 已停止")
+        except PadLendError as exc:
+            LOG.debug("adb kill-server 失败（忽略）: %s", exc.detail)
 
     # -- shell -------------------------------------------------------------
     def shell(self, *args: str, timeout: float = C.ADB_SHELL_TIMEOUT) -> str:

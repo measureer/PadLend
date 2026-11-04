@@ -3,7 +3,7 @@
 结构::
 
     ┌──────────────────────────── 顶栏 ────────────────────────────┐
-    │ PadLend ● 状态  设备 · 朝向 · 延迟        [⚙] [—] [×]        │
+    │ PadLend ● 状态  设备 · 朝向 · 延迟         [☰] [⚙] [☀]        │
     ├───────────────┬──────────────────────────────────────────────┤
     │               │  设置面板                                    │
     │   桌面画布     │  （位置/手感/键盘/快捷键/杂项）                │
@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -38,6 +38,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -51,15 +52,16 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
+from ui.add_device_dialog import AddDeviceDialog
 from ui.bridge import RouterBridge, state_value
 from ui.device_page import DevicePage
 from ui.diagnostics import DiagnosticsDialog, static_summary
-from ui.icons import brand_pixmap, make_icon
+from ui.icons import brand_icon, brand_pixmap, make_icon
 from ui.log_view import LogView
 from ui.settings_panel import SettingsPanel
 from ui.style import apply_theme, repolish
 from ui.theme import tokens
-from ui.tray import TrayController, status_icon
+from ui.tray import TrayController
 from ui.wizard import SetupWizard
 
 if TYPE_CHECKING:
@@ -147,6 +149,55 @@ class MetricsPanel(QFrame):
         )
 
 
+class _CloseMessage(ctypes.Structure):
+    """``MSG`` 的最小映射，只为读取 WM_CLOSE 的窗口句柄。"""
+
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", ctypes.c_uint),
+        ("wParam", ctypes.c_size_t),
+        ("lParam", ctypes.c_ssize_t),
+        ("time", ctypes.c_uint),
+        ("pt_x", ctypes.c_long),
+        ("pt_y", ctypes.c_long),
+    ]
+
+
+WM_CLOSE = 0x0010
+
+
+class _NativeCloseFilter(QAbstractNativeEventFilter):
+    """在原生消息层截获 WM_CLOSE，绕过模态对话框对关闭的阻断。
+
+    Qt 在应用级模态窗口（``QDialog.exec()``）打开时会拒绝普通窗口的关闭
+    请求：``QWidget::close()`` 直接返回 false，``closeEvent`` 根本不触发，
+    于是点 X 毫无反应、进程连 adb 一起留在后台。这里把 WM_CLOSE 拦下来
+    自己走退出流程，行为与直接点 X 一致。
+    """
+
+    def __init__(self, window: MainWindow) -> None:
+        super().__init__()
+        self._window = window
+
+    def nativeEventFilter(self, event_type, message) -> bool:  # noqa: N802
+        if event_type != b"windows_generic_MSG":
+            return False
+        try:
+            msg = ctypes.cast(int(message), ctypes.POINTER(_CloseMessage)).contents
+        except (TypeError, ValueError):
+            return False
+        if msg.message != WM_CLOSE:
+            return False
+        window = self._window
+        try:
+            if int(msg.hwnd or 0) != int(window.winId()):
+                return False
+        except RuntimeError:  # 窗口已销毁
+            return False
+        window.request_quit()
+        return True
+
+
 class MainWindow(QMainWindow):
     """PadLend 主窗；只做外壳与接线，业务在 Router/DesktopMap。"""
 
@@ -156,6 +207,8 @@ class MainWindow(QMainWindow):
     clipboardSyncRequested = Signal()
     # 设备连接/断开在后台线程执行，完成后经队列信号回到 GUI 线程。
     deviceActionFinished = Signal(bool, str)
+    # 「添加无线设备」：adb connect/pair 也在后台线程跑。
+    addDeviceFinished = Signal(bool, str)
 
     def __init__(
         self,
@@ -170,9 +223,15 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.setObjectName("mainWindow")
         self.setWindowTitle(C.APP_NAME)
-        self.setWindowIcon(status_icon("idle"))
+        # 标题栏图标用品牌标（原来的状态圆点会和顶栏状态胶囊重复）。
+        self.setWindowIcon(brand_icon())
         self.resize(*tokens.WINDOW_DEFAULT_SIZE)
         self.setMinimumSize(*tokens.WINDOW_MIN_SIZE)
+        # 应用级模态对话框会阻断 Qt 的关闭请求，这里自己接 WM_CLOSE。
+        self._close_filter = _NativeCloseFilter(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installNativeEventFilter(self._close_filter)
 
         self.config = config
         self.router = router
@@ -190,12 +249,15 @@ class MainWindow(QMainWindow):
         self._diagnostics: DiagnosticsDialog | None = None
         self._facts: Any | None = None
         self._connecting = False
+        self._last_wireless_address = ""
+        self._shutdown_done = False
 
         self._build_ui()
         self._build_tray()
         self._build_bridge()
         self.clipboardSyncRequested.connect(self.sync_clipboard, Qt.ConnectionType.QueuedConnection)
         self.deviceActionFinished.connect(self._on_device_action_finished)
+        self.addDeviceFinished.connect(self._on_add_device_finished)
         self._build_shortcuts()
         self._build_actions()
         self._connect_canvas()
@@ -222,6 +284,7 @@ class MainWindow(QMainWindow):
         self.device_page = DevicePage(self._adb, self.router, self)
         self.device_page.connectRequested.connect(self._on_device_connect_requested)
         self.device_page.disconnectRequested.connect(self._on_device_disconnect_requested)
+        self.device_page.addRequested.connect(self._on_add_device_requested)
 
         self.log_view = LogView(self)
         self.metrics_panel = MetricsPanel(self)
@@ -294,22 +357,16 @@ class MainWindow(QMainWindow):
         self.menu_button = QPushButton(header)
         self.settings_button = QPushButton(header)
         self.theme_button = QPushButton(header)
-        self.minimize_button = QPushButton(header)
-        self.close_button = QPushButton(header)
         self._header_icon_names: list[tuple[QPushButton, str]] = [
             (self.menu_button, "dots"),
             (self.settings_button, "settings"),
-            (self.minimize_button, "minimize"),
-            (self.close_button, "close"),
         ]
         for button, icon_name, tooltip in (
             (self.menu_button, "dots", "菜单"),
             (self.settings_button, "settings", "设置 (Ctrl+,)"),
             (self.theme_button, "sun", "切换到白天模式"),
-            (self.minimize_button, "minimize", "最小化"),
-            (self.close_button, "close", "关闭到托盘"),
         ):
-            button.setObjectName("closeButton" if button is self.close_button else "iconButton")
+            button.setObjectName("iconButton")
             button.setFixedSize(QSize(28, 28))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setIcon(make_icon(icon_name, icon_color, 18))
@@ -318,8 +375,6 @@ class MainWindow(QMainWindow):
 
         self.settings_button.clicked.connect(self.open_settings)
         self.theme_button.clicked.connect(self.toggle_theme)
-        self.minimize_button.clicked.connect(self.showMinimized)
-        self.close_button.clicked.connect(self.close)
         self.menu_button.clicked.connect(self._popup_menu)
 
         layout = QHBoxLayout(header)
@@ -340,8 +395,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.menu_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.theme_button)
-        layout.addWidget(self.minimize_button)
-        layout.addWidget(self.close_button)
         self.header = header
         return header
 
@@ -920,21 +973,40 @@ class MainWindow(QMainWindow):
         return wizard
 
     def quit_app(self) -> None:
+        self.request_quit()
+
+    def request_quit(self) -> None:
+        """优雅退出入口：无论窗口是否被模态对话框挡住都能走完清理。
+
+        顺序很关键：先隐藏窗口（用户立刻看到“已退出”），再关掉模态对话框
+        （让它们的 ``exec()`` 嵌套循环返回），然后做幂等清理，最后交给事件
+        循环 ``quit()``。
+        """
+        if self._shutdown_done:
+            return
         self._force_quit = True
+        self.hide()
+        self._close_modal_dialogs()
         self._shutdown()
-        self.close()
         app = QApplication.instance()
         if app is not None:
-            app.quit()
+            QTimer.singleShot(0, app.quit)
 
     def _shutdown(self) -> None:
-        try:
-            self.bridge.detach()
-        except Exception as exc:
-            log.warning("bridge.detach failed: %r", exc)
-        self.tray.dispose()
-        if self._wizard is not None:
-            self._wizard.stop_all()
+        """幂等清理：桥、托盘、向导、设备页扫描线程。"""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        for step in (
+            lambda: self.bridge.detach(),
+            lambda: self.tray.dispose(),
+            lambda: self._wizard.stop_all() if self._wizard is not None else None,
+            lambda: self.device_page.stop(),
+        ):
+            try:
+                step()
+            except Exception as exc:  # noqa: BLE001 - 退出清理绝不阻断
+                log.warning("shutdown step failed: %r", exc)
 
     def _popup_menu(self) -> None:
         position = self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft())
@@ -1010,6 +1082,67 @@ class MainWindow(QMainWindow):
         if label:
             return f"{base} · 从屏幕{label}边缘滑入平板"
         return f"{base} · 在“布局”页把平板拖到屏幕边缘"
+
+    def _on_add_device_requested(self) -> None:
+        """「添加设备」：输入无线调试地址（需要时先配对），成功后直接连接。"""
+        prefill = self._last_wireless_address or str(
+            getattr(getattr(self.config, "device", None), "serial", "") or ""
+        )
+        dialog = AddDeviceDialog(self, prefill=prefill)
+        # Accepted=1 / Rejected=0；点右上角关闭也是 0。
+        if not dialog.exec():
+            return
+        address = dialog.address
+        code = dialog.pairing_code
+        if not address:
+            return
+        self._last_wireless_address = address
+        self.device_page.set_busy(True)
+        self._set_scan_hint_safe(f"正在连接 {address}…")
+        self.log_view.append_event(
+            "DEVICE", f"添加无线设备：{address}" + ("（含配对）" if code else "")
+        )
+        threading.Thread(
+            target=self._add_device_worker,
+            args=(address, code),
+            name="padlend-add-device",
+            daemon=True,
+        ).start()
+
+    def _add_device_worker(self, address: str, code: str) -> None:
+        ok, message = True, ""
+        adb = self._adb
+        try:
+            if adb is None:
+                ok, message = False, "adb 不可用（打包版应内置）"
+            else:
+                if code:
+                    adb.pair(address, code)
+                adb.connect(address)
+        except Exception as exc:  # noqa: BLE001 - 结果回报给 GUI 线程
+            ok, message = False, str(exc)
+        self.addDeviceFinished.emit(bool(ok), str(message or ""))
+
+    def _on_add_device_finished(self, ok: bool, message: str) -> None:
+        if not ok:
+            self.device_page.set_busy(False)
+            self.device_page.show_error(message or "添加设备失败")
+            self.log_view.append_event("DEVICE", f"添加失败：{message or '未知错误'}")
+            return
+        address = self._last_wireless_address
+        self.log_view.append_event("DEVICE", f"无线连接成功：{address}")
+        # 列表里出现该设备后，沿用普通设备页的连接流程（router.connect_device）。
+        self.device_page.refresh()
+        if address:
+            self._on_device_connect_requested(address)
+        else:
+            self.device_page.set_busy(False)
+
+    def _set_scan_hint_safe(self, text: str) -> None:
+        """设备页的扫描提示是私有的，这里只做存在性检查后写入。"""
+        hint = getattr(self.device_page, "_set_scan_hint", None)  # noqa: SLF001
+        if callable(hint):
+            hint(text)
 
     def _on_device_connect_requested(self, serial: str) -> None:
         serial = str(serial or "").strip()
@@ -1156,19 +1289,19 @@ class MainWindow(QMainWindow):
             log.debug("DWM attributes unavailable: %r", exc)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self._force_quit:
-            self._shutdown()
-            event.accept()
-            return
-        if self.tray.available:
-            event.ignore()
-            self.hide()
-            if not self._hidden_notice_shown:
-                self._hidden_notice_shown = True
-                self.tray.notify(C.APP_NAME, "已最小化到托盘；退出请用托盘菜单。")
-            return
-        self._shutdown()
+        # 关闭窗口 = 退出应用：不再藏到托盘常驻（旧行为会让用户以为“退不干净”）。
+        # 原生标题栏的 X 由 _NativeCloseFilter 先接住；这里覆盖程序化 close()。
+        self.request_quit()
         event.accept()
+
+    def _close_modal_dialogs(self) -> None:
         app = QApplication.instance()
-        if app is not None:
-            app.quit()
+        if app is None:
+            return
+        for widget in app.topLevelWidgets():
+            if widget is self or not isinstance(widget, QDialog):
+                continue
+            try:
+                widget.reject()
+            except Exception as exc:  # noqa: BLE001 - 对话框可能已销毁
+                log.debug("dialog reject failed: %r", exc)

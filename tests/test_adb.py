@@ -82,3 +82,99 @@ def test_select_device_falls_back_to_only_online_device() -> None:
     entry = _StubAdb(output).select_device("adb-old-name._adb-tls-connect._tcp")
     assert entry.serial == "192.168.1.8:37495"
     assert entry.online
+
+
+# ---------------------------------------------------------------------------
+# 无线调试：地址归一化与 connect/pair 的成败判定
+# ---------------------------------------------------------------------------
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+from core.errors import ErrorCode, PadLendError  # noqa: E402
+from tablet.adb import normalize_address  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("192.168.1.8:37495", "192.168.1.8:37495"),
+        ("  192.168.1.8  ", "192.168.1.8:5555"),
+        ("adb connect 192.168.1.8:5555", "192.168.1.8:5555"),
+        ("adb pair 192.168.1.8:37001", "192.168.1.8:37001"),
+        ("tcp://192.168.1.8:5555", "192.168.1.8:5555"),
+        ('"192.168.1.8:5555"', "192.168.1.8:5555"),
+        ("adb connect 1.2.3.4:5555 already connected", "1.2.3.4:5555"),
+        ("", ""),
+        ("   ", ""),
+        ("192.168.1.8:abc", ""),
+        (":5555", ""),
+        ("tablet.local", "tablet.local:5555"),
+    ],
+)
+def test_normalize_address(raw: str, expected: str) -> None:
+    assert normalize_address(raw) == expected
+
+
+class _RunStub(Adb):
+    """用固定 stdout/returncode 替代真实 subprocess。"""
+
+    def __init__(self, output: str, returncode: int = 0) -> None:
+        super().__init__()
+        self._output = output
+        self._returncode = returncode
+        self.calls: list[list[str]] = []
+
+    def _run(self, args, *, timeout, code=ErrorCode.ADB_NOT_FOUND, check=True):  # noqa: ANN001, ANN003
+        self.calls.append(list(args))
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=self._returncode,
+            stdout=self._output.encode("utf-8"),
+            stderr=b"",
+        )
+
+
+def test_connect_returns_adb_hint_on_success() -> None:
+    adb = _RunStub("connected to 192.168.1.8:37495\n")
+    assert "connected to" in adb.connect("192.168.1.8:37495")
+    assert adb.calls[0][-2:] == ["connect", "192.168.1.8:37495"]
+
+
+def test_connect_raises_e101_on_failure_output() -> None:
+    adb = _RunStub("failed to connect to '192.168.1.8:37495': No route to host\n", 1)
+    with pytest.raises(PadLendError) as info:
+        adb.connect("192.168.1.8:37495")
+    assert info.value.code is ErrorCode.DEVICE_OFFLINE
+    assert "同一 Wi-Fi" in info.value.user_message
+
+
+def test_connect_raises_when_adb_says_nothing() -> None:
+    with pytest.raises(PadLendError):
+        _RunStub("", 1).connect("192.168.1.8:37495")
+
+
+def test_connect_rejects_blank_address() -> None:
+    with pytest.raises(PadLendError):
+        _RunStub("").connect("   ")
+
+
+def test_pair_requires_success_line() -> None:
+    ok = _RunStub("Successfully paired to 192.168.1.8:37001 [guid=adb-x]\n")
+    assert "paired" in ok.pair("192.168.1.8:37001", "123456").lower()
+
+    bad = _RunStub("Failed: Wrong password\n", 1)
+    with pytest.raises(PadLendError) as info:
+        bad.pair("192.168.1.8:37001", "000000")
+    assert "配对端口与连接端口不同" in info.value.user_message
+
+
+def test_pair_rejects_missing_code() -> None:
+    with pytest.raises(PadLendError):
+        _RunStub("").pair("192.168.1.8:37001", "")
+
+
+def test_kill_server_never_raises() -> None:
+    adb = _RunStub("", 1)
+    adb.kill_server()
+    assert adb.calls[-1] == ["kill-server"]
