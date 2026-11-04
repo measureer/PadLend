@@ -118,16 +118,17 @@ def _timer_end(period_ms: int) -> None:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
 class _SendMsg:
-    """一条鼠标 HID 报告；``burst=True`` 表示属于 warp 连发批次。"""
+    """一条鼠标 HID 报告；全零的真实松键报告与空闲心跳必须区分。"""
 
     buttons: int
     dx: int
     dy: int
     wheel: int
     burst: bool = False
+    heartbeat: bool = False
 
     def is_heartbeat(self) -> bool:
-        return self.buttons == 0 and self.dx == 0 and self.dy == 0 and self.wheel == 0
+        return self.heartbeat
 
 
 class Router:
@@ -150,7 +151,9 @@ class Router:
 
         self._lock = threading.RLock()
         self._send_lock = threading.Lock()
-        self._send_queue: deque[_SendMsg] = deque(maxlen=C.SEND_QUEUE_MAXLEN)
+        # SEND_QUEUE_MAXLEN 是背压软阈值，不是硬上限：真实报告（尤其松键）不能
+        # 因 deque(maxlen=...) 的隐式逐出而丢失。
+        self._send_queue: deque[_SendMsg] = deque()
         self._stop_event = threading.Event()
         self._sender_thread: threading.Thread | None = None
         self._supervisor_thread: threading.Thread | None = None
@@ -174,8 +177,8 @@ class Router:
         # CAPTURED / RETURNING
         self._entry_edge: Edge | None = None
         self._overflow = 0.0
-        self._overflow_edge: Edge | None = None
-        self._entry_depth_ok = False
+        # 穿屏前已经按住的键不在平板上重新开始一次按下；等物理松键后再恢复。
+        self._neutral_until_release = False
         self._hit_logged = False
         self._return_deadline = 0.0
 
@@ -416,7 +419,6 @@ class Router:
                 self._reset_keymap_locked()
                 self._arm_accum = 0.0
                 self._overflow = 0.0
-                self._overflow_edge = None
         except Exception:  # pragma: no cover - 急停必须尽力而为
             log.exception("router.emergency_stop_failed")
             self._release_mask("panic")
@@ -831,8 +833,7 @@ class Router:
             return
         self._entry_edge = placement.segment.edge.opposite
         self._overflow = 0.0
-        self._overflow_edge = None
-        self._entry_depth_ok = False
+        self._neutral_until_release = self._buttons != 0
         self._wheel_accum = 0
         self._hit_logged = False
         self._suppress_logged = False
@@ -870,9 +871,38 @@ class Router:
     def _clip_rect(self, placement: Placement) -> Rect | None:
         """边缘 1px 条（6.6）；返回 ``None`` 时 mask 仍显示但不锁光标。"""
         segment = placement.segment
-        monitor = self._monitor_for_handle(segment.monitor_handle)
-        if monitor is None:
+        x, y = self._pc_cursor if self._pc_cursor is not None else (0, 0)
+        along = y if segment.edge.is_vertical else x
+        fallback = self._monitor_for_handle(segment.monitor_handle)
+        if fallback is None:
             return None
+        edge = segment.edge
+        expected_line = (
+            fallback.rect.right if edge is Edge.RIGHT
+            else fallback.rect.left if edge is Edge.LEFT
+            else fallback.rect.top if edge is Edge.TOP
+            else fallback.rect.bottom
+        )
+        monitor = None
+        for candidate in self._desktop.monitors:
+            rect = candidate.rect
+            candidate_line = (
+                rect.right if edge is Edge.RIGHT
+                else rect.left if edge is Edge.LEFT
+                else rect.top if edge is Edge.TOP
+                else rect.bottom
+            )
+            if candidate_line != expected_line:
+                continue
+            if edge.is_vertical and rect.top <= along < rect.bottom:
+                monitor = candidate
+                break
+            if not edge.is_vertical and rect.left <= along < rect.right:
+                monitor = candidate
+                break
+        # 合并边只保留首台显示器 handle，需按实际穿越位置选择锁定条所在屏。
+        if monitor is None:
+            monitor = fallback
         rect = monitor.rect
         if segment.edge.is_vertical:
             left = rect.right - 1 if segment.edge is Edge.RIGHT else rect.left
@@ -896,57 +926,48 @@ class Router:
         estimator = self._estimator
         if estimator is None:
             raise PadLendError(ErrorCode.UNEXPECTED, "CAPTURED 状态缺少 estimator")
+        if not self._buttons:
+            self._neutral_until_release = False
+        buttons = self._effective_buttons_locked()
         gain = float(self._cfg.motion.gain)
         clamp = max(1, int(self._cfg.motion.hid_clamp))
         dx, dy = estimator.feed(int(ev.dx), int(ev.dy), gain, clamp=clamp)
         wheel = self._take_wheel_locked(int(ev.wheel))
-        self._queue_mouse_locked(self._buttons, dx, dy, wheel)
-        # 进入保护：指针必须先离开入口边足够远，才允许出口判定。否则从入口边
-        # 直接反向滚动（例如从平板顶部的文字向上滑）会被误判成“穿回 PC”。
-        if not self._entry_depth_ok:
-            guard = int(getattr(self._cfg.motion, "entry_guard_px", 0))
-            if guard <= 0:
-                self._entry_depth_ok = True
-            else:
-                entry = self._entry_edge
-                if entry is Edge.TOP:
-                    depth = estimator.y
-                elif entry is Edge.BOTTOM:
-                    depth = (estimator.height - 1) - estimator.y
-                elif entry is Edge.LEFT:
-                    depth = estimator.x
-                else:
-                    depth = (estimator.width - 1) - estimator.x
-                if depth >= guard:
-                    self._entry_depth_ok = True
-        if not self._entry_depth_ok:
+        self._queue_mouse_locked(buttons, dx, dy, wheel)
+
+        # 出口只有三个条件：回到入口边、没有正在平板拖拽、连续向外推够阈值。
+        # 直接进入后立即反向推也应该能返回，不再要求先深入平板固定距离。
+        entry = self._entry_edge
+        if buttons or entry is None or not self._at_edge(estimator, entry):
             self._overflow = 0.0
-            self._overflow_edge = None
             return
-        # 按住鼠标键时不允许穿回：拖动/框选经常需要把指针推回入口边，
-        # 若此时交还 PC 会打断拖拽，用户表现为“拖到一半跳回电脑”。
-        if self._buttons:
-            self._overflow = 0.0
-            self._overflow_edge = None
-            return
-        hit = estimator.hit()
-        if hit is None or hit is not self._entry_edge:
-            self._overflow = 0.0
-            self._overflow_edge = None
-            return
-        nx, ny = hit.outward_normal()
+        nx, ny = entry.outward_normal()
         push = int(ev.dx) * nx + int(ev.dy) * ny
         if push <= 0:
+            self._overflow = 0.0
             return
         if not self._hit_logged:
             self._hit_logged = True
-            log_event(log, C.EVENT_CAP_HIT, edge=hit.value)
-        if self._overflow == 0.0:
-            self._overflow_edge = hit
+            log_event(log, C.EVENT_CAP_HIT, edge=entry.value)
         self._overflow += push
         if self._overflow >= max(1, int(self._cfg.motion.exit_overflow_px)):
             log.debug("router.exit overflow=%.1f", self._overflow)
             self._begin_return_locked("exit")
+
+    def _effective_buttons_locked(self) -> int:
+        """返回平板应看到的按键；穿屏前遗留的按下状态不跨设备延续。"""
+        return 0 if self._neutral_until_release else self._buttons
+
+    @staticmethod
+    def _at_edge(estimator: CursorEstimator, edge: Edge) -> bool:
+        """直接检查指定边，避免角落处被 hit() 的单边优先级遮住入口边。"""
+        if edge is Edge.LEFT:
+            return estimator.x <= 0.0
+        if edge is Edge.RIGHT:
+            return estimator.x >= estimator.width - 1
+        if edge is Edge.TOP:
+            return estimator.y <= 0.0
+        return estimator.y >= estimator.height - 1
 
     def _begin_return_locked(self, reason: str, *, debounce: bool = True) -> None:
         if self._state is not State.CAPTURED:
@@ -974,8 +995,7 @@ class Router:
             self._send_keyboard_zero()
             self._reset_keymap_locked()
         self._overflow = 0.0
-        self._overflow_edge = None
-        self._entry_depth_ok = False
+        self._neutral_until_release = False
         self._wheel_accum = 0
         if not self._change_state(State.RETURNING, reason):
             return
@@ -1049,14 +1069,14 @@ class Router:
         items = [_SendMsg(0, int(dx), int(dy), 0, burst=True) for dx, dy in reports]
         with self._send_lock:
             for item in items:
-                self._append_or_merge_locked(item)
+                self._append_send_locked(item)
 
     def _enqueue_send(self, message: _SendMsg) -> None:
         with self._send_lock:
-            self._append_or_merge_locked(message)
+            self._append_send_locked(message)
 
-    def _append_or_merge_locked(self, message: _SendMsg) -> None:
-        """队列满时优先挤掉零位移心跳；真实位移绝不静默丢失。"""
+    def _append_send_locked(self, message: _SendMsg) -> None:
+        """超过软阈值时丢弃心跳；真实报告始终保留且保持原始顺序。"""
         queue = self._send_queue
         if len(queue) >= C.SEND_QUEUE_MAXLEN:
             if message.is_heartbeat():
@@ -1066,8 +1086,6 @@ class Router:
                 if existing.is_heartbeat():
                     del queue[index]
                     break
-            else:
-                self._metrics.record_drop()
         queue.append(message)
 
     # -- sender 线程 --------------------------------------------------------
@@ -1095,6 +1113,14 @@ class Router:
             log.debug("sender.stop")
 
     def _sender_frame(self) -> None:
+        with self._lock:
+            inactive = self._stopped or self._device_suspended
+        if inactive:
+            # 主动断开后没有接收方；继续发心跳只会制造写失败和状态抖动。
+            with self._send_lock:
+                self._send_queue.clear()
+            self._metrics.set_backlog(0)
+            return
         messages = self._drain()
         if messages:
             for message in messages:
@@ -1125,10 +1151,11 @@ class Router:
         return out
 
     def _send_heartbeat(self) -> None:
-        # 心跳必须带上当前按键状态。若发全零报告，Android 会把按住左键
-        # 的拖拽当成“按键已松开”，拖到一半就被打断。
-        buttons = self._buttons if self._state is State.CAPTURED else 0
-        self._send_mouse_message(_SendMsg(buttons, 0, 0, 0))
+        # 心跳必须带上当前按键状态，但穿屏前遗留的按下不能在平板上重新开始。
+        with self._lock:
+            captured = self._state is State.CAPTURED
+            buttons = self._effective_buttons_locked() if captured else 0
+        self._send_mouse_message(_SendMsg(buttons, 0, 0, 0, heartbeat=True))
 
     def _send_mouse_message(self, message: _SendMsg) -> None:
         try:
@@ -1341,7 +1368,6 @@ class Router:
         self._estimator = estimator
         self._facts = facts
         self._overflow = 0.0
-        self._overflow_edge = None
         log.info(
             "router.rotation width=%d height=%d orientation=%d",
             int(facts.width),
@@ -1534,7 +1560,6 @@ class Router:
                     self._change_state(State.FAULT, f"fault:{code.value}")
                 self._arm_accum = 0.0
                 self._overflow = 0.0
-                self._overflow_edge = None
                 self._release_mask("fault")
                 if was_captured:
                     self._send_keyboard_zero()
@@ -1889,7 +1914,6 @@ class Router:
         self._reset_keymap_locked()
         self._arm_accum = 0.0
         self._overflow = 0.0
-        self._overflow_edge = None
 
     def _release_mask(self, reason: str) -> None:
         releaser = getattr(self._mask, "release", None)

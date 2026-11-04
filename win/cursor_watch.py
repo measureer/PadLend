@@ -73,6 +73,7 @@ class CursorWatch:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last: tuple[int, int] | None = None
+        self._last_buttons: int | None = None
         self._last_log = 0.0
 
     @property
@@ -84,6 +85,7 @@ class CursorWatch:
             return
         self._stop.clear()
         self._last = None
+        self._last_buttons = None
         self._thread = threading.Thread(
             target=self._run, name="padlend-cursorwatch", daemon=True
         )
@@ -96,24 +98,38 @@ class CursorWatch:
             thread.join(timeout=1.5)
         self._thread = None
         self._last = None
+        self._last_buttons = None
 
     def poll_once(self, now: float | None = None) -> bool:
-        """执行一次判定；返回是否合成了位移（便于测试）。"""
+        """执行一次判定；返回是否合成了输入事件（便于测试）。"""
         if now is None:
             now = time.monotonic()
         try:
-            if self._router.state is State.CAPTURED:  # type: ignore[attr-defined]
-                self._last = None
-                return False
+            captured = self._router.state is State.CAPTURED  # type: ignore[attr-defined]
         except Exception:
-            pass
+            captured = False
         try:
             age = float(self._rawinput.last_event_age)  # type: ignore[attr-defined]
         except Exception:
             age = float("inf")
         if age < self._stale_s:
             self._last = None
+            self._last_buttons = None
             return False
+
+        # CAPTURED 时 PC 光标被 ClipCursor 钉住，不能从绝对坐标伪造位移；但系统
+        # 按键状态仍可用于补齐 Raw Input 漏掉的松键，避免出口被永久禁用。
+        if captured:
+            self._last = None
+            try:
+                buttons = int(self._get_buttons())
+            except Exception:
+                return False
+            if buttons == self._last_buttons:
+                return False
+            self._last_buttons = buttons
+            return self._inject(RawDelta(dx=0, dy=0, buttons=buttons, ts=time.time()))
+
         position = self._get_cursor()
         if position is None:
             return False
@@ -137,14 +153,17 @@ class CursorWatch:
             buttons = int(self._get_buttons())
         except Exception:
             buttons = 0
+        self._last_buttons = buttons
+        return self._inject(
+            RawDelta(dx=dx, dy=dy, buttons=buttons, wheel=0, absolute=False, ts=time.time())
+        )
+
+    def _inject(self, delta: RawDelta) -> bool:
         try:
-            injected = self._rawinput.inject(  # type: ignore[attr-defined]
-                RawDelta(dx=dx, dy=dy, buttons=buttons, wheel=0, absolute=False, ts=time.time())
-            )
+            return bool(self._rawinput.inject(delta))  # type: ignore[attr-defined]
         except Exception:
             LOG.debug("cursorwatch.router_failed", exc_info=True)
             return False
-        return bool(injected)
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_s):

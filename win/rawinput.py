@@ -360,6 +360,13 @@ def _user32() -> ctypes.WinDLL:
             ctypes.c_ssize_t,
         ]
         lib.PostThreadMessageW.restype = ctypes.c_int
+        lib.PostMessageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
+        lib.PostMessageW.restype = ctypes.c_int
         lib.RegisterRawInputDevices.argtypes = [
             ctypes.POINTER(_RAWINPUTDEVICE),
             ctypes.c_uint32,
@@ -794,6 +801,9 @@ class RawInputSource:
             batch = list(self._pending)
             self._pending.clear()
         for delta in batch:
+            # 注入事件携带系统实时按键状态，也要同步解释器；否则 Raw Input 恢复后
+            # 下一条移动包会把已经补发的松键重新覆盖成陈旧的按下状态。
+            self._state.buttons = delta.buttons & 0xFF
             # 注意：不更新 _last_event_monotonic。该时间戳只表示“真实 Raw Input
             # 是否还在投递”；若注入也刷新它，CursorWatch 会误以为 Raw Input 已恢复，
             # 每 250ms 才补一次事件，ARMING 的 80ms 窗口必然超时。

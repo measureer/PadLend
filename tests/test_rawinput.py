@@ -441,6 +441,18 @@ def test_source_stop_before_start_is_noop() -> None:
     assert source.healthy is False
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 函数签名")
+def test_post_message_w_uses_pointer_sized_handle() -> None:
+    lib = ri._user32()
+    assert lib.PostMessageW.argtypes == [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+    ]
+    assert lib.PostMessageW.restype == ctypes.c_int
+
+
 # ---------------------------------------------------------------------------
 # 注入事件：必须回到 rawinput 线程分发（遮罩窗口归属该线程）
 # ---------------------------------------------------------------------------
@@ -458,6 +470,14 @@ def test_inject_dispatches_on_rawinput_thread() -> None:
         deltas = collector.snapshot()
         assert len(deltas) == 1
         assert (deltas[0].dx, deltas[0].dy, deltas[0].buttons) == (7, -3, 0x01)
+        assert source._state.buttons == 0x01
+
+        assert source.inject(ri.RawDelta(dx=0, dy=0, buttons=0)) is True
+        wait_until(lambda: collector.count() == 2)
+        backend.push(packet(x=1))
+        wait_until(lambda: collector.count() == 3)
+        # 注入的松键同步到解释器，真实输入恢复后不能重新粘回左键。
+        assert collector.snapshot()[-1].buttons == 0
     finally:
         source.stop()
 

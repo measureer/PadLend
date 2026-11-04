@@ -57,14 +57,21 @@ def test_fresh_raw_yields_no_synthetic_event() -> None:
     assert raw.injected == []
 
 
-def test_captured_state_skips_fallback() -> None:
+def test_captured_state_reconciles_buttons_without_motion() -> None:
     router = _Router(State.CAPTURED)
     raw = _Raw(5.0)
+    buttons = iter((0x01, 0x01, 0x00))
     watch = CursorWatch(
         router,
         raw,
         get_cursor=lambda: (100, 200),
+        get_buttons=lambda: next(buttons),
         stale_s=0.25,
     )
-    assert watch.poll_once(now=1.0) is False
-    assert raw.injected == []
+    assert watch.poll_once(now=1.0) is True
+    assert watch.poll_once(now=1.1) is False  # 状态未变，不重复注入
+    assert watch.poll_once(now=1.2) is True   # Raw Input 漏掉的松键由系统状态补齐
+    assert [(ev.dx, ev.dy, ev.buttons) for ev in raw.injected] == [
+        (0, 0, 0x01),
+        (0, 0, 0x00),
+    ]

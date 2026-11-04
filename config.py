@@ -58,7 +58,6 @@ class MotionCfg:
     hid_clamp: int = C.HID_CLAMP  # 1 ~ 127
     entry_margin_px: int = C.ENTRY_MARGIN_PX
     exit_overflow_px: int = C.EXIT_OVERFLOW_PX
-    entry_guard_px: int = C.ENTRY_GUARD_PX
     debounce_ms: int = C.DEBOUNCE_MS
     arm_px: int = C.ARM_PX
     arm_window_ms: int = C.ARM_WINDOW_MS
@@ -220,7 +219,6 @@ class Config:
                 "hid_clamp": int,
                 "entry_margin_px": int,
                 "exit_overflow_px": int,
-                "entry_guard_px": int,
                 "debounce_ms": int,
                 "arm_px": int,
                 "arm_window_ms": int,
@@ -303,7 +301,7 @@ class Config:
             if getattr(m, name) < 1:
                 self.add_issue(f"motion.{name} 必须 ≥1，已恢复默认")
                 setattr(m, name, getattr(MotionCfg(), name))
-        for name in ("debounce_ms", "boundary_inset_px", "entry_margin_px", "entry_guard_px"):
+        for name in ("debounce_ms", "boundary_inset_px", "entry_margin_px"):
             if getattr(m, name) < 0:
                 self.add_issue(f"motion.{name} 不能为负，已恢复默认")
                 setattr(m, name, getattr(MotionCfg(), name))
@@ -358,8 +356,6 @@ class Config:
             problems.append("motion.arm_window_ms 必须 ≥1")
         if m.exit_overflow_px < 1:
             problems.append("motion.exit_overflow_px 必须 ≥1")
-        if m.entry_guard_px < 0:
-            problems.append("motion.entry_guard_px 必须 ≥0")
         if m.edge_band_px < 1:
             problems.append("motion.edge_band_px 必须 ≥1")
         if m.debounce_ms < 0:

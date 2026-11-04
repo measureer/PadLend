@@ -713,10 +713,10 @@ arm_accum += |delta|
 若 光标离开边缘带 / 方向反转 / now > arm_deadline        → IDLE
 
 # CAPTURED → RETURNING
-若尚未越过进入保护（指针距入口边 < entry_guard_px, 默认 160）→ 不评估出口
-若鼠标左/右/中键仍按下（拖动/框选）→ 不评估出口，清零溢出
-e = estimator.hit()
-若 e 非空 且 该方向累计溢出 >= exit_overflow_px(24)      → RETURNING
+若平板上的有效按键仍按下（拖动/框选）→ 不评估出口，清零溢出
+若 estimator 未抵达 entry_edge（直接检查对应坐标，角落可同时命中多条边）→ 清零溢出
+在 entry_edge 连续向外累计溢出 >= exit_overflow_px(24)       → RETURNING
+进入时已经按住的键保持中性，收到物理松键后才恢复平板按键转发
 
 # RETURNING → IDLE
 执行交还后 sleep 去抖 250ms；期间不评估 IDLE→ARMING

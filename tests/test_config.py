@@ -126,6 +126,17 @@ def test_validate_does_not_mutate():
     assert cfg.placement.offset == 2.0
 
 
+def test_legacy_entry_guard_is_ignored_and_removed_on_save(tmp_path):
+    path = tmp_path / "legacy.yaml"
+    path.write_text("version: 1\nmotion:\n  entry_guard_px: 160\n", encoding="utf-8")
+    cfg = Config.load(path)
+    assert cfg.validate() == []
+    assert not hasattr(cfg.motion, "entry_guard_px")
+    cfg.save(path)
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert "entry_guard_px" not in saved["motion"]
+
+
 def test_to_dict_version():
     raw = Config().to_dict()
     assert raw["version"] == 1

@@ -224,6 +224,24 @@ def test_arm_adopts_matching_edge_on_other_monitor() -> None:
     router.stop()
 
 
+def test_merged_edge_clips_cursor_on_actual_monitor() -> None:
+    first = MonitorInfo(1, r"\\.\DISPLAY1", Rect(0, 0, 1920, 1080), 96, True)
+    second = MonitorInfo(2, r"\\.\DISPLAY2", Rect(1920, 0, 3840, 1080), 96, False)
+    merged = EdgeSegment(1, Edge.BOTTOM, 0, 3840)
+    desktop = FakeDesktop([first, second], segments=[merged])
+    session, mask, clock = FakeSession(), FakeMask(), FakeClock()
+    router = Router(FakeConfig(), session, desktop, mask, clock=clock, keymap=FakeKeymap())
+    router.set_placement(Placement(merged))
+    desktop.cursor = (2500, 1080)
+    for _ in range(5):
+        router.on_raw(raw(0, 10))
+    assert router.state is State.CAPTURED
+    clip = mask.shown[-1]
+    assert clip is not None
+    assert clip.as_tuple() == (1920, 1079, 3840, 1080)
+    router.stop()
+
+
 def test_corner_priority_selects_right_edge() -> None:
     rig = make_rig(edges=(Edge.RIGHT, Edge.TOP))
     rig.desktop.cursor = (1919, 0)
@@ -268,20 +286,29 @@ def test_overflow_counts_only_after_hit() -> None:
     assert rig.router._overflow == 0.0
 
 
-def test_entry_guard_blocks_immediate_return_until_inside() -> None:
-    # 6.5.4 可用性保护：从入口边直接反向滚动不能立刻穿回 PC。
-    rig = make_rig(config=FakeConfig(entry_guard_px=100))
+def test_immediate_reverse_at_entry_returns_to_pc() -> None:
+    # 误入平板后不需要先深入固定距离；抵达入口边并外推 24px 即可返回。
+    rig = make_rig()
     capture_by_arm(rig)
     rig.router.on_raw(raw(-30, 0))
-    assert rig.router.state is State.CAPTURED
-    assert rig.router._entry_depth_ok is False
-    # 先向平板内部移动，越过保护距离（feed 单次 clamp 到 127）。
-    rig.router.on_raw(raw(300, 0))
-    assert rig.router._entry_depth_ok is True
-    # 回到入口边并继续外推，此时才允许交还。
-    rig.router.on_raw(raw(-127, 0))
-    rig.router.on_raw(raw(-30, 0))
     assert rig.router.state is State.RETURNING
+
+
+def test_entry_corner_does_not_hide_return_edge() -> None:
+    # 从 PC 底边两端进入时，平板同时位于左/右上角和顶边；顶边仍可返回。
+    for pc_x in (0, 1919):
+        rig = make_rig(
+            edges=(Edge.BOTTOM,),
+            placement=make_placement(Edge.BOTTOM, span=(0, 1920)),
+        )
+        rig.desktop.cursor = (pc_x, 1080)
+        for _ in range(5):
+            rig.router.on_raw(raw(0, 10))
+        assert rig.router.state is State.CAPTURED
+        assert rig.router.estimator is not None
+        assert rig.router.estimator.y == 0
+        rig.router.on_raw(raw(0, -30))
+        assert rig.router.state is State.RETURNING
 
 
 def test_heartbeat_preserves_held_buttons() -> None:
@@ -299,9 +326,31 @@ def test_heartbeat_preserves_held_buttons() -> None:
     assert rig.session.mouse_reports[-1] == (C.MOUSE_BTN_LEFT, 0, 0, 0)
 
 
+def test_buttons_held_during_entry_stay_neutral_until_physical_release() -> None:
+    # 穿屏前已经按住的键不能在平板入口重新按下，否则顶边会形成意外拖拽。
+    rig = make_rig()
+    rig.router.on_raw(raw(0, 0, buttons=C.MOUSE_BTN_LEFT))
+    capture_manually(rig)
+    rig.router._sender_frame()  # 入口 warp 全部为 buttons=0
+    assert all(buttons == 0 for buttons, _dx, _dy, _wheel in rig.session.mouse_reports)
+
+    rig.session.mouse_reports.clear()
+    rig.router._sender_frame()  # 心跳也不能恢复入口前的按下状态
+    assert rig.session.mouse_reports == [(0, 0, 0, 0)]
+    rig.router.on_raw(raw(5, 0, buttons=C.MOUSE_BTN_LEFT))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][0] == 0
+
+    # 物理松键后，下一次新的按下/拖拽仍正常转发。
+    rig.router.on_raw(raw(0, 0, buttons=0))
+    rig.router.on_raw(raw(2, 0, buttons=C.MOUSE_BTN_LEFT))
+    rig.router._sender_frame()
+    assert rig.session.mouse_reports[-1][0] == C.MOUSE_BTN_LEFT
+
+
 def test_mouse_buttons_block_exit_until_release() -> None:
     # 拖动时指针常被推回入口边，不能因此把光标交还给 PC。
-    rig = make_rig(config=FakeConfig(entry_guard_px=0))
+    rig = make_rig()
     capture_manually(rig)
     rig.router.on_raw(raw(300, 0))
     rig.router.on_raw(raw(-300, 0, buttons=C.MOUSE_BTN_LEFT))
@@ -426,6 +475,26 @@ def test_drain_batches_at_most_eight() -> None:
     assert len(batch) == C.MAX_BATCH
     assert len(rest) == 2
     assert rig.router._drain() == []
+
+
+def test_saturated_queue_preserves_motion_and_final_button_release() -> None:
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router._drain()  # 清空入口 warp
+
+    for _ in range(C.SEND_QUEUE_MAXLEN):
+        rig.router.on_raw(raw(1, 0, buttons=C.MOUSE_BTN_LEFT))
+    rig.router.on_raw(raw(0, 0, buttons=0))  # 全零，但它是真实松键而不是心跳
+    assert len(rig.router._send_queue) == C.SEND_QUEUE_MAXLEN + 1
+
+    drained: list[object] = []
+    while rig.router._send_queue:
+        drained.extend(rig.router._drain())
+    assert len(drained) == C.SEND_QUEUE_MAXLEN + 1
+    release = drained[-1]
+    assert release.buttons == 0
+    assert release.dx == 0
+    assert release.dy == 0
 
 
 def test_warp_burst_exceeds_normal_batch() -> None:
@@ -839,6 +908,11 @@ def test_disconnect_device_suspends_auto_reconnect_until_user_connects() -> None
     assert rig.router.facts is None
     assert rig.router.connected is False
     calls = rig.session.start_calls
+    sent = len(rig.session.mouse_reports)
+    for _ in range(C.CONSECUTIVE_WRITE_FAILURES + 1):
+        rig.router._sender_frame()
+    assert len(rig.session.mouse_reports) == sent
+    assert rig.router.state is State.IDLE
 
     rig.clock.advance(120.0)
     rig.router._supervisor_tick()

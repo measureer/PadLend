@@ -334,20 +334,10 @@ class SettingsPanel(QWidget):
         layout.addWidget(self.exit_row)
         layout.addWidget(self._hint("在平板边缘反向移动多少像素后交还 PC；越大越不容易误退。"))
 
-        self.guard_row = SliderRow(
-            "进入保护", 0, 300, C.ENTRY_GUARD_PX, lambda v: f"{v} px", box
-        )
-        self.guard_slider = self.guard_row.slider
-        layout.addWidget(self.guard_row)
-        layout.addWidget(
-            self._hint("进入平板后先向内移动多少像素才允许穿回；0 关闭，越大越不易误退。")
-        )
-
         self._field_widgets["motion.gain"] = self.gain_slider
         self._field_widgets["motion.report_hz"] = self.hz_slider
         self._field_widgets["motion.arm_px"] = self.arm_slider
         self._field_widgets["motion.exit_overflow_px"] = self.exit_slider
-        self._field_widgets["motion.entry_guard_px"] = self.guard_slider
         return box
 
     def _build_keyboard_group(self) -> QGroupBox:
@@ -454,7 +444,6 @@ class SettingsPanel(QWidget):
             self.hz_row,
             self.arm_row,
             self.exit_row,
-            self.guard_row,
         ):
             row.slider.valueChanged.connect(self._on_control_changed)
         self.layout_combo.currentIndexChanged.connect(self._on_control_changed)
@@ -607,7 +596,6 @@ class SettingsPanel(QWidget):
         motion.report_hz = int(self.hz_slider.value())
         motion.arm_px = int(self.arm_slider.value())
         motion.exit_overflow_px = int(self.exit_slider.value())
-        motion.entry_guard_px = int(self.guard_slider.value())
 
         keyboard = cfg.keyboard
         keyboard.forward = self.forward_check.isChecked()
@@ -661,7 +649,6 @@ class SettingsPanel(QWidget):
         self.hz_slider.setValue(int(cfg.report_hz))
         self.arm_slider.setValue(int(cfg.arm_px))
         self.exit_slider.setValue(int(cfg.exit_overflow_px))
-        self.guard_slider.setValue(int(cfg.entry_guard_px))
 
     def _fill_keyboard(self) -> None:
         cfg = self._config.keyboard
