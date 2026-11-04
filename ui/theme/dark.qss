@@ -740,6 +740,23 @@ QListWidget#deviceList::item:selected {
     color: @text_primary;
 }
 
+QWidget#deviceRow {
+    background: transparent;
+}
+
+QLabel#deviceRowTitle {
+    background: transparent;
+    color: @text_primary;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#deviceRowMeta {
+    background: transparent;
+    color: @text_muted;
+    font-size: 11px;
+}
+
 QPushButton#primaryButton {
     background-color: @accent;
     border-color: @accent;

@@ -81,6 +81,21 @@ class _RECT(ctypes.Structure):
     ]
 
 
+class _CURSORINFO(ctypes.Structure):
+    """``GetCursorInfo`` 的输入结构；``flags & CURSOR_SHOWING`` 即"光标正在显示"。"""
+
+    _fields_ = [
+        ("cbSize", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("hCursor", ctypes.c_void_p),
+        ("ptScreenPos_x", ctypes.c_int32),
+        ("ptScreenPos_y", ctypes.c_int32),
+    ]
+
+
+CURSOR_SHOWING = 0x0001
+
+
 class _MONITORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", ctypes.c_uint32),
@@ -353,6 +368,18 @@ class Win32MaskApi:
             return None
         return Rect(native.left, native.top, native.right, native.bottom)
 
+    def cursor_visible(self) -> bool | None:
+        """当前光标是否对用户可见；查询失败返回 ``None``。
+
+        接管期这个值必须是 ``False``：一旦为 ``True``，用户就会在电脑屏幕上
+        看见鼠标（穿透时"点一下鼠标冒出来"的现场证据）。
+        """
+        info = _CURSORINFO()
+        info.cbSize = ctypes.sizeof(_CURSORINFO)
+        if not _user32().GetCursorInfo(ctypes.byref(info)):
+            return None
+        return bool(info.flags & CURSOR_SHOWING)
+
     def set_cursor_hidden(self, hidden: bool) -> None:
         """把当前线程的光标设为空/箭头。
 
@@ -533,6 +560,27 @@ class CursorMask:
     def clip_rect(self) -> Rect | None:
         """本对象最后一次成功设置的光标裁剪矩形。"""
         return self._clip_rect
+
+    def diagnose(self) -> str:
+        """一行现场状态：``visible`` / ``clip`` / 遮罩窗口数。
+
+        接管期（尤其是点击前后）写进日志，用来判断"电脑上又冒出鼠标"是遮罩
+        被拆了、锁被系统回收了，还是别的进程把光标显示回来了。
+        """
+        visible: bool | None = None
+        query = getattr(self._api, "cursor_visible", None)
+        if callable(query):
+            try:
+                visible = query()
+            except Exception:  # pragma: no cover - 诊断不应抛
+                visible = None
+        try:
+            clip = self._api.clip_rect()
+        except Exception:  # pragma: no cover
+            clip = None
+        with self._lock:
+            windows = len(self._windows)
+        return f"visible={visible} clip={clip} windows={windows} active={self._active}"
 
     # -- 生命周期 ---------------------------------------------------------
     def show(self, clip_rect: Rect | None) -> None:

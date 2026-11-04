@@ -30,6 +30,32 @@ from ui.theme import tokens
 log = logging.getLogger("ui.device_page")
 
 
+class _DeviceRow(QWidget):
+    """设备列表的一行：型号 + 「序列号  传输 · 状态」。
+
+    不用 ``QListWidgetItem`` 的多行文本，因为 ``QListWidget::item`` 的样式规则
+    会让默认代理只渲染一行（型号后面的序列号被省略号吃掉）。
+    """
+
+    def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("deviceRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout = QVBoxLayout(self)
+        # 内边距由 deviceList::item 的 QSS padding 提供，这里再加边距会把
+        # 第二行挤出 62px 的行高（表现为文字下半截被切掉）。
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        name = QLabel(title)
+        name.setObjectName("deviceRowTitle")
+        meta = QLabel(subtitle)
+        meta.setObjectName("deviceRowMeta")
+        layout.addWidget(name)
+        layout.addWidget(meta)
+        layout.addStretch(1)
+
+
+
 class _EmptyArt(QWidget):
     """空状态插画：一台平板、一条线缆和一点微光。"""
 
@@ -185,6 +211,9 @@ class DevicePage(QWidget):
         self.device_list = QListWidget()
         self.device_list.setObjectName("deviceList")
         self.device_list.setSpacing(2)
+        # 每行是「型号\n序列号  传输 · 状态」两行；不开启换行时样式代理会把整段
+        # 压成单行并加省略号，只剩型号，看不出是哪台设备。
+        self.device_list.setWordWrap(True)
         self.device_list.itemSelectionChanged.connect(self._on_selection)
         self.device_list.itemDoubleClicked.connect(lambda _item: self._connect_selected())
         box.addWidget(self.device_list, 1)
@@ -348,12 +377,16 @@ class DevicePage(QWidget):
             serial = str(getattr(entry, "serial", "") or "")
             transport = "USB" if getattr(entry, "is_usb", False) else "无线"
             state = str(getattr(entry, "state", "") or "")
-            label = f"{model}\n{serial}    {transport} · {state}"
-            item = QListWidgetItem(label)
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, serial)
             item.setSizeHint(QSize(0, 62))
             item.setToolTip(serial)
             self.device_list.addItem(item)
+            # 两行文字不能放在 item 文本里：`QListWidget::item` 的样式规则会让
+            # 代理只画一行并省略，型号后面的序列号全被截掉。用一个两层标签的
+            # 行部件承载文字，item 只负责背景/选中态。
+            subtitle = f"{serial}    {transport} · {state}"
+            self.device_list.setItemWidget(item, _DeviceRow(model, subtitle))
             if serial == selected_serial:
                 self.device_list.setCurrentItem(item)
 

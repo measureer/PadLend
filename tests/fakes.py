@@ -468,6 +468,9 @@ class FakeMask:
         self.active = False
         self.clip_rect = None
 
+    def diagnose(self) -> str:
+        return f"visible=False clip={self.clip_rect} windows={1 if self.active else 0}"
+
 
 class FakeKeymap:
     """``tablet.keymap.Keymap`` 的替身：固定报告 + 记录 reset。"""

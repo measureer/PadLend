@@ -514,6 +514,14 @@ class Router:
         self._buttons = int(ev.buttons)
         if self._buttons != previous_buttons:
             log_event(log, "cap.btn", buttons=f"0x{self._buttons:02x}")
+            # 按下/抬起是"电脑上冒出鼠标"的现场：把遮罩、锁、光标可见性一起
+            # 写进日志，事后能区分是遮罩被拆、锁被系统收回，还是外部程序把
+            # 光标显示回来了（用户报的问题只在真实点击时出现）。
+            if self._state is State.CAPTURED:
+                try:
+                    log.info("cap.cursor %s", self._mask.diagnose())
+                except Exception:  # pragma: no cover - 诊断不应影响输入
+                    log.debug("cap.cursor diagnose failed", exc_info=True)
         self._track_pc_cursor(ev)
         state = self._state
         if state is State.FAULT:

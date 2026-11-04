@@ -164,6 +164,27 @@ misc:
 .\.venv\Scripts\python.exe tools\probe.py
 ```
 
+### 没有平板时怎么验收
+
+真机流程（进边缘 → 穿透 → 点击/拖动 → 交还）可以完全在没有平板、也不用鼠标的机器上跑：
+
+```powershell
+# 端到端验收：假平板 + 真实遮罩/ClipCursor/状态机，24 项断言，退出码即结论
+.\.venv\Scripts\python.exe tools\acceptance.py
+
+# 想自己看界面：用假平板启动 GUI（设备页会列出 Simulated Tablet）
+.\.venv\Scripts\python.exe main.py --simulate
+```
+
+`acceptance.py` 只驱动真实代码路径，不 mock 被测逻辑：进入接管后检查遮罩窗口确实吞掉
+`WM_SETCURSOR`、`ClipCursor` 确实钉在屏幕边缘的 1px 条上，再用真实输入事件走单击/连点/
+双击/拖动，断言平板端收到按下+抬起、状态机没被踢出 CAPTURED、遮罩与裁剪区都还在，最后
+交还并断言遮罩销毁、`ClipCursor` 解除。本机光标不可观测（远程桌面/无头会话）时相关三项
+会明确标成 SKIP，而不是假装通过。
+
+排查「穿透时电脑上又冒出鼠标」用 `docs/VERIFICATION.md` 里的 `cap.cursor` 日志：
+接管期每次按下/抬起都会记录 `visible=… clip=… windows=… active=…`。
+
 目录结构：
 
 ```

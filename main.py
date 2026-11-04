@@ -31,7 +31,7 @@ from core.errors import PadLendError
 from core.logsetup import setup_logging
 
 if TYPE_CHECKING:
-    from tablet.session import DeviceFacts, TabletSession
+    from tablet.session import DeviceFacts
 
 LOG = logging.getLogger("padlend.main")
 
@@ -66,6 +66,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="打印 Raw Input 计数后退出（诊断用）",
     )
     parser.add_argument("--no-wizard", action="store_true", help="首次运行也不弹向导")
+    parser.add_argument(
+        "--simulate",
+        action="store_true",
+        default=bool(os.environ.get("PADLEND_SIMULATE")),
+        help="用内存里的假平板代替真机（无硬件验收/演示用）",
+    )
     parser.add_argument(
         "--no-single-instance",
         action="store_true",
@@ -190,20 +196,30 @@ def _mark_clean_exit() -> None:
 class Runtime:
     """一组协作对象；GUI 与无头模式共用。"""
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, *, simulate: bool = False) -> None:
         # 延迟导入：--version / 参数错误时不必加载 ctypes 后端。
         from core.router import Router
-        from tablet.adb import Adb
-        from tablet.session import TabletSession
         from win.desktop import DesktopMap
         from win.keyboard_hook import KeyboardHook
         from win.mask import CursorMask
         from win.rawinput import RawInputSource
 
         self.cfg = cfg
-        self.adb = Adb(serial=cfg.device.serial or None)
+        self.simulated = bool(simulate)
+        if self.simulated:
+            # --simulate：不碰 ADB / scrcpy，设备端由内存替身扮演。
+            from tablet.simulated import SimulatedAdb, SimulatedSession
+
+            # 假 ADB 让设备页/“添加设备”照常工作：列表里有一台已授权的假平板。
+            self.adb: Any = SimulatedAdb()
+            self.session: Any = SimulatedSession()
+        else:
+            from tablet.adb import Adb
+            from tablet.session import TabletSession
+
+            self.adb = Adb(serial=cfg.device.serial or None)
+            self.session = TabletSession(cfg, adb=self.adb)
         self.desktop = DesktopMap()
-        self.session: TabletSession = TabletSession(cfg, adb=self.adb)
         self.mask: CursorMask = CursorMask()
         self.router: Router = Router(cfg, self.session, self.desktop, self.mask)
         # Raw Input 在独立线程回调 Router；是否接管由 Router 状态机决定。
@@ -262,7 +278,8 @@ class Runtime:
                         self.raw_debug.stop()
                     # adb fork-server 默认常驻；退出时主动关掉它，避免“关了界面还在跑后台”。
                     try:
-                        self.adb.kill_server()
+                        if self.adb is not None:
+                            self.adb.kill_server()
                     except Exception as exc:  # noqa: BLE001 - 清理失败不阻断退出
                         LOG.debug("adb kill-server failed: %r", exc)
 
@@ -274,7 +291,7 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     from tablet.cursor import CursorEstimator
     from win.rawinput import RawInputSource
 
-    runtime = Runtime(cfg)
+    runtime = Runtime(cfg, simulate=getattr(args, "simulate", False))
     stop_event = threading.Event()
     source: RawInputSource | None = None
 
@@ -408,7 +425,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
     app.setQuitOnLastWindowClosed(False)  # 托盘常驻
 
     apply_theme(app, getattr(cfg.ui, "theme", "dark"))
-    runtime = Runtime(cfg)
+    runtime = Runtime(cfg, simulate=getattr(args, "simulate", False))
     window = MainWindow(
         cfg,
         runtime.router,
