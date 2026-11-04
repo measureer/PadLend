@@ -848,6 +848,10 @@ class Router:
         self._wheel_accum = 0
         self._hit_logged = False
         self._suppress_logged = False
+        # 平板可能还停在上一次会话的"按住"状态（异常退出、重连、换了设备）：
+        # 先排队一条全松再发 warp，否则进入后的第一次位移会被它当成拖拽，
+        # 松手时就在平板上点了一下。走队列才能保证全松先于 warp 到达。
+        self._queue_mouse_locked(0, 0, 0, 0)
         self._enqueue_burst_locked(reports)
         log_event(
             log,
@@ -855,6 +859,7 @@ class Router:
             edge=placement.segment.edge.value,
             manual=reason == "manual",
             reports=len(reports),
+            point=f"{entry[0]:.0f},{entry[1]:.0f}",
             buttons=f"0x{self._buttons:02x}",
         )
 

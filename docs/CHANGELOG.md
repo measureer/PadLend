@@ -2,6 +2,21 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.8] — 2026-11-04
+
+### 修复
+
+- **穿屏时平板上某个按钮被按了一下（0.3.7 之后仍然出现）**：进入接管时不再假设平板还停在前一次会话的松键状态——队列里先补一条 `buttons=0` 的全松再发 warp，把异常退出/重连/换设备遗留的「左键按着」清掉，否则进入后的第一次位移会被平板当成拖拽、松手就点中控件。
+
+### 诊断
+
+- `tablet.session` 在按键状态变化时打一条 `tablet.mouse.btn 0x…`，接管期按下/抬起同时记 `cap.btn`、`cap.cursor`、`cursorwatch.btn`。用户报「平板上按钮被触发」时，这一组日志能直接区分：真的是我们发出去的按下，还是 Raw Input 停摆后由 `GetAsyncKeyState` 补的按下，或者压根与我们无关（平板侧的 hover 效果）。
+
+### 测试
+
+- `tools/acceptance.py` 增至 30 项断言（新增「进入时先补一条全松」），0 失败 3 跳过。
+- 367 passed, 3 skipped；新增 `tests/test_session_mouse.py`（按键日志只在变化时打、滚轮标志位不会落进 HID 报告）与路由器入口全松用例。
+
 ## [0.3.7] — 2026-11-04
 
 ### 修复

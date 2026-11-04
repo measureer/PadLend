@@ -385,6 +385,14 @@ def main(argv: list[str] | None = None) -> int:
             "重新进入时平板没有残留按下（不会一点就触发按钮）",
             f"buttons={[hex(r.buttons) for r in first_reports]}",
         )
+        report.check(
+            bool(sim.reports)
+            and sim.reports[0].buttons == 0
+            and not sim.reports[0].dx
+            and not sim.reports[0].dy,
+            "进入时先补一条全松（清掉上一次会话遗留的按住）",
+            f"first={sim.reports[0] if sim.reports else None}",
+        )
 
         # -- 交还 -----------------------------------------------------------
         router.toggle_manual()

@@ -128,6 +128,9 @@ class CursorWatch:
             if buttons == self._last_buttons:
                 return False
             self._last_buttons = buttons
+            # 这条日志是"平板上按钮被按了一下"的关键旁证：它说明按下来自
+            # GetAsyncKeyState（Raw Input 已经停摆），而不是真实的 WM_INPUT。
+            LOG.info("cursorwatch.btn 0x%02x age=%.2fs", buttons, age)
             return self._inject(RawDelta(dx=0, dy=0, buttons=buttons, ts=time.time()))
 
         position = self._get_cursor()

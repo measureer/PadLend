@@ -115,6 +115,17 @@ def test_manual_capture_shows_one_pixel_clip_and_warps() -> None:
     assert (State.ARMING, State.CAPTURED, "manual") in rig.transitions
 
 
+def test_entry_releases_stale_buttons_before_warp() -> None:
+    """平板若还停在上一次会话的按住状态，进入前必须先收到一条全松。"""
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router._sender_frame()
+    reports = rig.session.mouse_reports
+    assert reports
+    assert reports[0] == (0, 0, 0, 0)
+    assert all(buttons == 0 for buttons, _dx, _dy, _wheel in reports)
+
+
 def test_manual_release_restores_cursor_and_debounces() -> None:
     rig = make_rig()
     capture_manually(rig)

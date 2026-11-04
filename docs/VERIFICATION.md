@@ -213,3 +213,19 @@ adb devices -l
 
 仍需真机确认：RTT 数值是否符合实际手感（设备端没有 ack，量的是「输入进队 → HID 写入成功」），
 以及「穿屏瞬间点一下平板按钮」在真机上是否消失。
+
+## 13. 0.3.8 穿屏误触诊断与入口全松（2026-11-04）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 进入时先补全松 | 单测 `test_entry_releases_stale_buttons_before_warp` | 排空后第一条报告是 `(0,0,0,0)`，其后的 warp 全为 0 按键 | ✅ |
+| 按键日志只在变化时打 | 单测 `test_send_mouse_logs_only_on_button_change` | `0x00 → 0x01 → 0x00` 三条，相同状态不重复 | ✅ |
+| 滚轮标志位不落进 HID 报告 | 单测 `test_send_mouse_masks_buttons_to_five_bits` | `mouse_report(0x0400, …)[0] == 0` | ✅ |
+| 验收覆盖入口全松 | `tools/acceptance.py` | 「进入时先补一条全松」PASS，30 项 0 失败 3 跳过 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 367 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.8 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 见下 | ✅ |
+
+仍需真机确认：穿屏误触是否消失。若仍出现，日志里 `tablet.mouse.btn`（真的发出了按下）、
+`cursorwatch.btn`（Raw Input 停摆后由 `GetAsyncKeyState` 补的按下）、`cap.btn` 三条能定位来源。
+

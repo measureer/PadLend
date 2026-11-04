@@ -233,6 +233,8 @@ class TabletSession:
         self._sock: socket.socket | None = None
         self._uhid_created = False
         self._sock_broken = False
+        # 只在写日志时用来识别"这一帧是按下还是抬起"；平板端收到的是状态快照。
+        self._last_mouse_buttons: int | None = None
 
         self._orig_pointer_speed: int | None = None
         self._orig_stay_on: str | None = None
@@ -402,6 +404,11 @@ class TabletSession:
     def send_mouse(self, buttons: int, dx: int, dy: int, wheel: int) -> None:
         """4 字节 UHID 鼠标报告（9.3）。"""
         self._ensure_connected()
+        value = int(buttons) & 0x1F
+        if value != self._last_mouse_buttons:
+            # 平板上的"按钮被按了一下"要么来自这条日志，要么与我们无关。
+            LOG.info("tablet.mouse.btn 0x%02x dx=%d dy=%d", value, int(dx), int(dy))
+            self._last_mouse_buttons = value
         self._send(protocol.uhid_report(C.UHID_MOUSE_ID, mouse_report(buttons, dx, dy, wheel)))
 
     def send_key(self, modifier: int, usages: Sequence[int]) -> None:
@@ -636,6 +643,7 @@ class TabletSession:
             )
         )
         self._uhid_created = True
+        self._last_mouse_buttons = None  # 新设备的第一条报告也算一次状态
         LOG.info(
             "UHID 已创建：鼠标 id=0x%04X、键盘 id=0x%04X",
             C.UHID_MOUSE_ID,
