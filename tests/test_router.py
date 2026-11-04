@@ -126,6 +126,22 @@ def test_entry_releases_stale_buttons_before_warp() -> None:
     assert all(buttons == 0 for buttons, _dx, _dy, _wheel in reports)
 
 
+def test_entry_pins_the_tablet_pointer_onto_the_entry_edge() -> None:
+    """估计器启动时在 (0,0)，设备上的指针却可能停在屏幕中间：进入时要补一段
+    外向位移把它真正顶到入口边上，否则镜面先到边界、指针还差一截就穿回去了。"""
+    rig = make_rig()
+    capture_manually(rig)
+    rig.router._sender_frame()
+    reports = rig.session.mouse_reports
+    estimator = rig.router.estimator
+    assert estimator is not None
+
+    total = -sum(dx for _buttons, dx, _dy, _wheel in reports)
+    assert total >= estimator.width
+    assert all(dy == 0 and buttons == 0 for buttons, _dx, dy, _wheel in reports)
+    assert estimator.x == 0.0
+
+
 def test_manual_release_restores_cursor_and_debounces() -> None:
     rig = make_rig()
     capture_manually(rig)

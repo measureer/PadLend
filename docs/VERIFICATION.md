@@ -229,3 +229,18 @@ adb devices -l
 仍需真机确认：穿屏误触是否消失。若仍出现，日志里 `tablet.mouse.btn`（真的发出了按下）、
 `cursorwatch.btn`（Raw Input 停摆后由 `GetAsyncKeyState` 补的按下）、`cap.btn` 三条能定位来源。
 
+## 14. 0.3.9 入口贴边对齐（2026-11-04）
+
+| 项 | 验证方式 | 实际 | 结论 |
+|---|---|---|---|
+| 入口补位覆盖整轴 | 单测 `test_entry_pins_the_tablet_pointer_onto_the_entry_edge` | 全部报告 `dy=0`、`buttons=0`，累计位移 ≥ 平板宽度，`estimator.x == 0.0` | ✅ |
+| 入口补位走输入队列 | 同批 `test_manual_capture_shows_one_pixel_clip_and_warps` 等 60 例 | 捕获时仍零写入，`_sender_frame()` 才 flush | ✅ |
+| 验收覆盖贴边对齐 | `tools/acceptance.py` | 「进入时把指针顶到入口边」`sweep=-1520 need=768 on_edge=True`，31 项 0 失败 3 跳过 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 368 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 0.3.9 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 见下 | ✅ |
+
+仍需真机确认：指针是否在到达平板边沿之后才穿回电脑（入口那一下可能看到指针被吸到边上，
+这是镜面与真实位置对齐的过程）。
+
+

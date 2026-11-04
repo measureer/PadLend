@@ -274,6 +274,27 @@ def main(argv: list[str] | None = None) -> int:
             f"clip={clip}",
         )
 
+        # 进入时必须把指针真正顶到入口边：估计器启动在 (0,0)，设备上的指针
+        # 却可能停在屏幕中间，不补这段位移就会“没滑到边就穿回电脑”。
+        est = router.estimator
+        entry_edge = placement.segment.edge.opposite
+        sweep = sum(r.dx + r.dy for r in sim.reports)
+        axis = est.width if entry_edge.is_vertical else est.height if est else 0
+        need = axis / max(est.k if est else 1.0, 1e-9) * 0.9
+        on_edge = bool(
+            est
+            and (
+                (est.x == 0.0 if entry_edge is Edge.LEFT else est.x == est.W - 1.0)
+                if entry_edge.is_vertical
+                else (est.y == 0.0 if entry_edge is Edge.TOP else est.y == est.H - 1.0)
+            )
+        )
+        report.check(
+            bool(est) and abs(sweep) >= need and on_edge,
+            "进入时把指针顶到入口边（镜面与真实位置对齐）",
+            f"sweep={sweep} need={need:.0f} on_edge={on_edge}",
+        )
+
         # -- 单击（用户报的 bug 场景）---------------------------------------
         sim.clear()
         transitions.clear()

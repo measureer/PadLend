@@ -814,6 +814,31 @@ class Router:
             reports.append(estimator.feed(dx, dy, 1.0))
         return reports
 
+    def _pin_to_edge_reports(self, edge: Edge) -> list[tuple[int, int]]:
+        """把平板指针真正顶到 ``edge`` 上的补位报文。
+
+        估计器只镜像我们发出的计数，而系统里指针的实际位置我们看不到
+        （F5）：程序启动时估计器从 (0,0) 开始，设备那支指针却可能停在屏幕
+        中间。于是 warp 只是"镜面"到了边，真实指针还在里面——用户往里推一点
+        再拉回来，镜面先到边界，指针离边上还差一截，就表现为没滑到顶就穿回
+        电脑了。
+
+        这里补一段沿该边法线的整轴位移：设备在边界会丢掉多余的位移，
+        所以最坏也只是指针贴着边停住，正好把镜面与真实位置对齐。
+        """
+        estimator = self._estimator
+        if estimator is None:
+            return []
+        nx, ny = edge.outward_normal()
+        axis = estimator.W if edge.is_vertical else estimator.H
+        remaining = int(axis / (estimator.k or 1.0)) + 1
+        out: list[tuple[int, int]] = []
+        while remaining > 0:
+            step = min(C.HID_CLAMP, remaining)
+            remaining -= step
+            out.append((step * nx, step * ny))
+        return out
+
     def _enter_captured_locked(self, reason: str) -> None:
         if self._state is State.CAPTURED:
             return
@@ -852,13 +877,15 @@ class Router:
         # 先排队一条全松再发 warp，否则进入后的第一次位移会被它当成拖拽，
         # 松手时就在平板上点了一下。走队列才能保证全松先于 warp 到达。
         self._queue_mouse_locked(0, 0, 0, 0)
-        self._enqueue_burst_locked(reports)
+        pin = self._pin_to_edge_reports(self._entry_edge)
+        self._enqueue_burst_locked([*reports, *pin])
         log_event(
             log,
             C.EVENT_CAP_START,
             edge=placement.segment.edge.value,
             manual=reason == "manual",
             reports=len(reports),
+            pin=len(pin),
             point=f"{entry[0]:.0f},{entry[1]:.0f}",
             buttons=f"0x{self._buttons:02x}",
         )
