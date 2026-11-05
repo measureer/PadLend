@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QLabel, QWizardPage
@@ -688,3 +689,62 @@ def test_packaged_icon_matches_the_runtime_brand() -> None:
             assert len(blob) == 40 + width * width * 4 + mask_row * width
         sizes.append(width)
     assert sizes == [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
+
+
+# ---------------------------------------------------------------------------
+# 0.3.12：关闭窗口 = 退出还是收进托盘
+# ---------------------------------------------------------------------------
+class _FakeTray:
+    """只提供 close_to_tray 判定需要的那点协议。"""
+
+    def __init__(self, available: bool = True) -> None:
+        self._available = available
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def dispose(self) -> None:
+        self._available = False
+
+
+def test_close_to_tray_setting_roundtrips(tmp_path):
+    path = tmp_path / "config.yaml"
+    cfg = Config()
+    assert cfg.ui.close_to_tray is False, "默认完全退出"
+    cfg.ui.close_to_tray = True
+    cfg.save(path)
+    assert Config.load(path).ui.close_to_tray is True
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["ui"]["close_to_tray"] is True
+
+
+def test_settings_panel_close_to_tray_checkbox(window: Any, config_path: Path) -> None:
+    panel = window.settings
+    assert panel.close_tray_check.isChecked() is False
+    panel.close_tray_check.setChecked(True)
+    assert panel.save() is True
+    assert window.config.ui.close_to_tray is True
+    again = Config.load(config_path)
+    assert again.ui.close_to_tray is True
+
+
+def test_request_close_hides_when_close_to_tray(window: Any) -> None:
+    window.tray = _FakeTray(available=True)
+    window.config.ui.close_to_tray = True
+    assert window.request_close() is True
+    assert window.isHidden() is True
+    assert window._shutdown_done is False, "收进托盘不能走清理流程"
+
+
+def test_request_close_quits_when_setting_off(window: Any) -> None:
+    window.tray = _FakeTray(available=True)
+    window.config.ui.close_to_tray = False
+    assert window.request_close() is False
+    assert window._shutdown_done is True
+
+
+def test_request_close_quits_when_tray_is_missing(window: Any) -> None:
+    window.tray = _FakeTray(available=False)  # 例如没有系统托盘的环境
+    window.config.ui.close_to_tray = True
+    assert window.request_close() is False
+    assert window._shutdown_done is True

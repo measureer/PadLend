@@ -194,7 +194,7 @@ class _NativeCloseFilter(QAbstractNativeEventFilter):
                 return False
         except RuntimeError:  # 窗口已销毁
             return False
-        window.request_quit()
+        window.request_close()
         return True
 
 
@@ -977,6 +977,34 @@ class MainWindow(QMainWindow):
     def quit_app(self) -> None:
         self.request_quit()
 
+    def _close_to_tray(self) -> bool:
+        """X 应该只收进托盘吗？（设置开启 + 托盘真的存在 + 不是强制退出）"""
+        if self._force_quit or self._shutdown_done:
+            return False
+        if not bool(getattr(self.config.ui, "close_to_tray", False)):
+            return False
+        tray = getattr(self, "tray", None)
+        return bool(tray is not None and getattr(tray, "available", False))
+
+    def request_close(self) -> bool:
+        """处理“用户想关窗口”。
+
+        返回 True 表示窗口已收进托盘、调用方不要继续关闭；返回 False 表示
+        已经走完退出流程（``request_quit``）。
+        """
+        if self._shutdown_done:
+            return True
+        if self._close_to_tray():
+            if not self.isHidden():
+                self.hide()
+                notify = getattr(self.tray, "notify", None)
+                if callable(notify):
+                    notify(C.APP_NAME, "已最小化到托盘，从托盘菜单可重新打开或退出。")
+                log.info("window hidden to tray (ui.close_to_tray)")
+            return True
+        self.request_quit()
+        return False
+
     def request_quit(self) -> None:
         """优雅退出入口：无论窗口是否被模态对话框挡住都能走完清理。
 
@@ -1339,9 +1367,11 @@ class MainWindow(QMainWindow):
             log.debug("DWM attributes unavailable: %r", exc)
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        # 关闭窗口 = 退出应用：不再藏到托盘常驻（旧行为会让用户以为“退不干净”）。
+        # X 的行为由设置决定：默认完全退出；勾了“最小化到托盘”就藏起来继续跑。
         # 原生标题栏的 X 由 _NativeCloseFilter 先接住；这里覆盖程序化 close()。
-        self.request_quit()
+        if self.request_close():
+            event.ignore()
+            return
         event.accept()
 
     def _close_modal_dialogs(self) -> None:

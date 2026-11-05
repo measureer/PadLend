@@ -409,6 +409,7 @@ class SettingsPanel(QWidget):
         box, layout = self._make_group("⚙ 杂项")
         self.tray_check = QCheckBox("托盘气泡通知", box)
         self.ghost_check = QCheckBox("显示指针幽灵", box)
+        self.close_tray_check = QCheckBox("关闭窗口时最小化到托盘", box)
         self.clipboard_check = QCheckBox("剪贴板同步", box)
         self.keepawake_check = QCheckBox("保持平板亮屏", box)
         left = QVBoxLayout()
@@ -418,6 +419,13 @@ class SettingsPanel(QWidget):
         )
         left.addWidget(
             self._check_row(self.ghost_check, "在 PC 屏幕边缘显示平板指针位置的半透明提示。")
+        )
+        left.addWidget(
+            self._check_row(
+                self.close_tray_check,
+                "点 X 只收进系统托盘，PadLend 继续在后台运行；"
+                "从托盘菜单选「退出 PadLend」才会真正退出。",
+            )
         )
         right = QVBoxLayout()
         right.setSpacing(4)
@@ -448,7 +456,8 @@ class SettingsPanel(QWidget):
             row.slider.valueChanged.connect(self._on_control_changed)
         self.layout_combo.currentIndexChanged.connect(self._on_control_changed)
         for check in (self.forward_check, self.suppress_check, self.tray_check,
-                      self.ghost_check, self.clipboard_check, self.keepawake_check):
+                      self.ghost_check, self.close_tray_check, self.clipboard_check,
+                      self.keepawake_check):
             check.toggled.connect(self._on_control_changed)
         for edit in (self.toggle_edit, self.panic_edit, self.clipboard_edit):
             edit.keySequenceChanged.connect(self._on_control_changed)
@@ -608,6 +617,7 @@ class SettingsPanel(QWidget):
 
         cfg.ui.tray_notifications = self.tray_check.isChecked()
         cfg.ui.show_pointer_ghost = self.ghost_check.isChecked()
+        cfg.ui.close_to_tray = self.close_tray_check.isChecked()
         cfg.misc.clipboard_sync = self.clipboard_check.isChecked()
         cfg.misc.keep_screen_on = self.keepawake_check.isChecked()
 
@@ -666,6 +676,7 @@ class SettingsPanel(QWidget):
         cfg = self._config
         self.tray_check.setChecked(bool(cfg.ui.tray_notifications))
         self.ghost_check.setChecked(bool(cfg.ui.show_pointer_ghost))
+        self.close_tray_check.setChecked(bool(cfg.ui.close_to_tray))
         self.clipboard_check.setChecked(bool(cfg.misc.clipboard_sync))
         self.keepawake_check.setChecked(bool(cfg.misc.keep_screen_on))
 

@@ -88,6 +88,8 @@ class UiCfg:
     theme: str = "dark"
     tray_notifications: bool = True
     show_pointer_ghost: bool = True
+    # 关闭主窗时：True = 收进托盘继续跑；False = 完全退出（0.3.12）
+    close_to_tray: bool = False
 
 
 @dataclass
@@ -252,6 +254,7 @@ class Config:
                 "theme": str,
                 "tray_notifications": bool,
                 "show_pointer_ghost": bool,
+                "close_to_tray": bool,
             },
         )
         cfg.misc = _section(

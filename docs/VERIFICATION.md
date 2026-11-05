@@ -285,5 +285,25 @@ adb devices -l
 仍需真机确认：记忆行点「连接此设备」能否把平板上线（平板需开着无线调试，
 端口若变了要先在平板上看一眼当前端口；`adb connect` 失败时会等到 45s 超时）。
 
+## 17. 0.3.12 关闭窗口 = 退出还是收进托盘（2026-11-05）
+
+| 项 | 命令 / 检查 | 实际 | 结论 |
+|---|---|---|---|
+| 配置项默认值 | `ui.close_to_tray` 缺省 | `False`（保持 0.3.11 的“点 X 即退出”） | ✅ |
+| 存盘往返 | `pytest tests/test_ui_smoke.py -k close_to_tray` | 勾选后 save 写入 `config.yaml`，重载仍为 `True` | ✅ |
+| 设置页渲染 | 源码 GUI（预置 `ui.close_to_tray: true`）滚到「⚙ 杂项」 | 第三行「关闭窗口时最小化到托盘」带说明，已勾选 | ✅ |
+| 勾选后点 X | 打包版 GUI（`close_to_tray: true`）+ `ps-close-check.ps1` | `padlend_alive=True`、`window_visible=False`，日志 `window hidden to tray` | ✅ |
+| 不勾选点 X | 打包版 GUI（默认配置）+ `ps-close-check.ps1` | `alive=False`，PadLend.exe 归零 | ✅ |
+| 托盘不可用时 | 单测 `test_request_close_quits_when_tray_is_missing` | 即使勾选也走真退出 | ✅ |
+| 重复触发幂等 | 原生 `WM_CLOSE` 与 `closeEvent` 同时到达 | 只隐藏一次、只弹一次气泡（`isHidden()` 守卫） | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 380 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 32 项，0 失败，3 跳过 | ✅ |
+| 0.3.12 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,172,393 B，sha256 `3c026d6b21f92b989e211c83c77c20bd4d50e8831a9f8e589fcccc2ea0b231ea`，`--version` → `PadLend 0.3.12` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2` | exit 0 | ✅ |
+
+仍需真机确认：勾选后在真机上点 X，托盘图标应仍在、双击可重新打开窗口；
+从托盘菜单「退出 PadLend」应完全退出且 `adb server 已停止`。
+
 
 

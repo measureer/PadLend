@@ -2,6 +2,18 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.12] — 2026-11-05
+
+### 新增
+
+- **关闭窗口的行为可选**：设置页「⚙ 杂项」新增「关闭窗口时最小化到托盘」。勾选后点窗口 X 只收进系统托盘（弹一次气泡，进程继续在后台跑），从托盘菜单选「退出 PadLend」才真正退出；不勾选（默认）保持原来的“点 X = 完全退出”。配置键 `ui.close_to_tray`。
+- 关窗入口统一成 `MainWindow.request_close()`：原生 `WM_CLOSE` 过滤器、`closeEvent`、托盘「退出」都走同一条判定，重复触发是幂等的。
+
+### 测试
+
+- `tests/test_ui_smoke.py`：`ui.close_to_tray` 默认值与存盘往返；设置页勾选后保存会写进文件；设置打开且托盘可用时 `request_close()` 只隐藏不退出、设置关闭时立即退出、托盘不可用时即使勾选也退出。
+- 全量 380 passed, 3 skipped；`tools/acceptance.py` 32 项 0 失败。
+
 ## [0.3.11] — 2026-11-05
 
 ### 新增
