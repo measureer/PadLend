@@ -556,7 +556,7 @@ def test_settings_hints_and_exit_threshold(window: Any) -> None:
     hints = window.settings.findChildren(QLabel, "fieldHint")
     assert len(hints) >= 13
     assert any("交还 PC" in hint.text() for hint in hints)
-    assert any("反向移动" in hint.text() for hint in hints)
+    assert any("反向拖回" in hint.text() for hint in hints)
 
     window.settings.exit_slider.setValue(36)
     assert window.settings.save() is True
@@ -748,3 +748,73 @@ def test_request_close_quits_when_tray_is_missing(window: Any) -> None:
     window.config.ui.close_to_tray = True
     assert window.request_close() is False
     assert window._shutdown_done is True
+
+
+# ---------------------------------------------------------------------------
+# 设备列表：改名、可移除、启动探测结论（0.3.13）
+# ---------------------------------------------------------------------------
+def test_device_page_is_called_a_device_list(window: Any) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    labels = [label.text() for label in window.device_page.findChildren(QLabel)]
+    assert "设备列表" in labels
+    assert "可用设备" not in labels
+
+
+def test_remembered_device_can_be_removed(window: Any) -> None:
+    from PySide6.QtCore import Qt
+
+    first = "192.168.67.8:37495"
+    second = "10.0.0.9:5555"
+    window.config.device.serial = first
+    window.config.device.known = [first, second]
+    page = window.device_page
+    page.set_known([first, second])
+
+    assert page.device_list.count() == 2
+    item = page.device_list.item(0)
+    assert item.data(Qt.ItemDataRole.UserRole) == first
+    page.device_list.setCurrentItem(item)
+    assert page.remove_button.isEnabled() is True
+
+    page.remove_button.click()
+
+    assert window.config.device.known == [second]
+    assert window.config.device.serial == second
+    assert page.device_list.count() == 1
+
+
+def test_remembered_device_shows_the_probe_result(window: Any) -> None:
+    serial = "192.168.67.8:37495"
+    page = window.device_page
+    page.set_known([serial])
+    page.set_located(serial, "offline", "在局域网里找不到这台平板")
+
+    item = page.device_list.item(0)
+    row = page.device_list.itemWidget(item)
+    texts = [label.text() for label in row.findChildren(QLabel)]
+    assert any("不在线" in text for text in texts)
+    assert "找不到" in item.toolTip()
+
+
+def test_settings_widgets_do_not_react_to_the_wheel(window: Any) -> None:
+    class _Wheel:
+        def __init__(self) -> None:
+            self.ignored = False
+
+        def ignore(self) -> None:
+            self.ignored = True
+
+    window._switch_page(2)
+    widgets = [
+        window.settings.edge_combo,
+        window.settings.align_combo,
+        window.settings.corner_combo,
+        window.settings.layout_combo,
+        window.settings.exit_slider,
+        window.settings.offset_slider,
+    ]
+    for widget in widgets:
+        event = _Wheel()
+        widget.wheelEvent(event)
+        assert event.ignored is True, widget

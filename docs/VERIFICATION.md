@@ -305,5 +305,33 @@ adb devices -l
 仍需真机确认：勾选后在真机上点 X，托盘图标应仍在、双击可重新打开窗口；
 从托盘菜单「退出 PadLend」应完全退出且 `adb server 已停止`。
 
+## 18. 0.3.13 设备列表与自动找回（2026-11-05）
+
+| 项 | 命令 / 检查 | 实际 | 结论 |
+|---|---|---|---|
+| 标题改名 | GUI / 单测 `test_device_page_is_called_a_device_list` | 卡片标题是「设备列表」，不再出现「可用设备」 | ✅ |
+| 移除记忆设备 | 单测 `test_remembered_device_can_be_removed` | 选中记忆行后按钮可用；点一下从 `device.known` 删除，`device.serial` 改指下一条 | ✅ |
+| 在线设备不可移除 | 单测 + `_on_selection` 判定 | 扫描到的设备行按钮保持禁用 | ✅ |
+| 探测结论上屏 | 单测 `test_remembered_device_shows_the_probe_result` | 记忆行副标题显示「不在线」，tooltip 带原因 | ✅ |
+| 原地仍在线 | `tests/test_locator.py::test_locate_reports_online_when_address_answers` | `STATUS_ONLINE`，detail「仍然在线」 | ✅ |
+| 只换端口 | `::test_locate_follows_a_new_port_from_mdns` | `STATUS_MOVED`，地址换成 mDNS 广播的新端口 | ✅ |
+| 只换 IP | `::test_locate_follows_a_new_ip_through_the_arp_table` | 按 MAC 在 ARP 表找到新 IP，再取 mDNS 端口 | ✅ |
+| 找到 IP 没端口 | `::test_locate_reports_no_port_when_only_the_ip_is_found` | `STATUS_NO_PORT`，`reachable=True`、`online=False` | ✅ |
+| 彻底找不到 | `::test_locate_reports_offline_when_nothing_answers` | `STATUS_OFFLINE`，detail「找不到这台平板」 | ✅ |
+| ARP 解析 | `::test_arp_table_reads_windows_output` | GBK 输出也能解析出 MAC→IP | ✅ |
+| 记住 Wi-Fi MAC | `tests/test_adb.py::test_wifi_mac_reads_wlan0` 等 3 例 | 读 `wlan0`、扫描接口兜底、非法输出返回空串 | ✅ |
+| MAC 存盘 | 连接成功后 `_capture_mac` → `device.mac` | 只在值变化时写配置 | ✅ |
+| 设置不吃滚轮 | 单测 `test_settings_widgets_do_not_react_to_the_wheel` | 4 个组合框 + 2 个滑条都 `event.ignore()` | ✅ |
+| 设置说明重写 | GUI 设置页逐条目视 | 19 条都改成“是什么/什么时候调/例子” | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 398 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 32 项，0 失败，3 跳过 | ✅ |
+| 0.3.13 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,185,332 B，sha256 `66055bdb2c09ccc2c77ade1003fb791c8cab55baaa15187c75bc2c7ee4bc2f27`，`--version` → `PadLend 0.3.13` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate` + `ps-close-check.ps1` | 「设备列表」标题、两行说明、「从列表移除」按钮、`v0.3.13`；`WM_CLOSE` 后 `alive=False`、日志 `已退出` | ✅ |
+
+仍需真机确认：真机换 IP / 换端口后能否在列表里自动标成新地址；ARP 表里查不到时
+（例如平板刚休眠）应显示「不在线」而不是卡住。
+
 
 

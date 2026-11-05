@@ -239,3 +239,6 @@ class SimulatedAdb:
 
     def kill_server(self, *, timeout: float = 5.0) -> None:
         return None
+
+    def wifi_mac(self, serial: str | None = None, *, timeout: float = 8.0) -> str:
+        return ""

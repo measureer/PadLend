@@ -29,6 +29,14 @@ from ui.theme import tokens
 
 log = logging.getLogger("ui.device_page")
 
+# 启动探测的结论 → 记忆行上的短标签（0.3.13）
+_LOCATED_LABELS = {
+    "online": "在线",
+    "moved": "已换地址",
+    "no_port": "端口未知",
+    "offline": "不在线",
+}
+
 
 class _DeviceRow(QWidget):
     """设备列表的一行：型号 + 「序列号  传输 · 状态」。
@@ -119,6 +127,7 @@ class DevicePage(QWidget):
     connectRequested = Signal(str)
     disconnectRequested = Signal()
     addRequested = Signal()
+    removeRequested = Signal(str)
 
     def __init__(
         self,
@@ -133,6 +142,9 @@ class DevicePage(QWidget):
         self._entries: list[Any] = []
         # 记住的设备（上次连过的，离线也列出来）
         self._known: list[str] = []
+        # 启动探测的结论：serial → (状态文本, 说明)（0.3.13）
+        self._located: dict[str, str] = {}
+        self._located_detail: dict[str, str] = {}
         self._error = ""
         self._scan_thread: _ScanThread | None = None
         self._facts: Any | None = None
@@ -203,9 +215,12 @@ class DevicePage(QWidget):
         box.setContentsMargins(18, 16, 18, 16)
         box.setSpacing(10)
 
-        title = QLabel("可用设备")
+        title = QLabel("设备列表")
         title.setObjectName("cardTitle")
-        hint = QLabel("USB 直连优先；同一台设备同时存在 USB 与无线时只显示稳定的一条。")
+        hint = QLabel(
+            "这里只列已经通过 ADB 授权的设备（USB 或无线）。"
+            "上次连过、但这次没扫到的设备也会留一行，可以点「从列表移除」。"
+        )
         hint.setObjectName("cardHint")
         hint.setWordWrap(True)
         box.addWidget(title)
@@ -246,7 +261,20 @@ class DevicePage(QWidget):
         self.connect_button.setIconSize(QSize(16, 16))
         self.connect_button.setEnabled(False)
         self.connect_button.clicked.connect(self._connect_selected)
-        box.addWidget(self.connect_button)
+
+        self.remove_button = QPushButton("从列表移除")
+        self.remove_button.setObjectName("ghostButton")
+        self.remove_button.setIcon(make_icon("close", tokens.COLORS["text_secondary"], 16))
+        self.remove_button.setIconSize(QSize(16, 16))
+        self.remove_button.setToolTip("把选中的「上次连接的设备」从记忆列表里删掉；正在线的设备不受影响。")
+        self.remove_button.setEnabled(False)
+        self.remove_button.clicked.connect(self._remove_selected)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        footer.addWidget(self.connect_button, 1)
+        footer.addWidget(self.remove_button)
+        box.addLayout(footer)
         return card
 
     def _build_detail_card(self) -> QFrame:
@@ -325,6 +353,9 @@ class DevicePage(QWidget):
         self.disconnect_button = QPushButton("断开连接")
         self.disconnect_button.setObjectName("dangerButton")
         self.disconnect_button.setIcon(make_icon("unlink", tokens.COLORS["err"], 16))
+        self.remove_button.setIcon(
+            make_icon("close", tokens.COLORS["text_secondary"], 16)
+        )
         self.disconnect_button.setIconSize(QSize(16, 16))
         self.disconnect_button.setEnabled(False)
         self.disconnect_button.clicked.connect(self._disconnect)
@@ -373,6 +404,26 @@ class DevicePage(QWidget):
         self._known = known
         self._render()
 
+    def set_located(self, serial: str, status: str, detail: str = "") -> None:
+        """启动探测结论：写在对应的记忆行上，扫不到时也有个交代（0.3.13）。"""
+        serial = str(serial or "")
+        if not serial:
+            return
+        label = _LOCATED_LABELS.get(status, "")
+        if label:
+            self._located[serial] = label
+        else:
+            self._located.pop(serial, None)
+        if detail:
+            self._located_detail[serial] = str(detail)
+        elif not label:
+            self._located_detail.pop(serial, None)
+        self._render()
+
+    def _remembered_selected(self) -> bool:
+        item = self.device_list.currentItem()
+        return bool(item is not None and item.data(Qt.ItemDataRole.UserRole + 1))
+
     def _show_entries(self, entries: list[Any], error: str) -> None:
         self._entries = entries
         self._error = error
@@ -414,15 +465,24 @@ class DevicePage(QWidget):
             if not serial or serial in present:
                 continue
             transport = "无线" if ":" in serial else "USB"
+            status = self._located.get(serial, "")
+            detail = self._located_detail.get(serial, "")
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, serial)
             item.setData(Qt.ItemDataRole.UserRole + 1, True)  # 标记：记忆行
             item.setSizeHint(QSize(0, 62))
-            item.setToolTip(f"{serial}（上次连接，当前未接入）")
-            self.device_list.addItem(item)
-            self.device_list.setItemWidget(
-                item, _DeviceRow(serial, f"上次连接的设备 · {transport}")
+            item.setToolTip(
+                f"{serial}（{detail}）"
+                if detail
+                else f"{serial}（上次连接，当前未接入）"
             )
+            self.device_list.addItem(item)
+            subtitle = (
+                f"上次连接的设备 · {status}"
+                if status
+                else f"上次连接的设备 · {transport}"
+            )
+            self.device_list.setItemWidget(item, _DeviceRow(serial, subtitle))
             if serial == selected_serial:
                 self.device_list.setCurrentItem(item)
             remembered += 1
@@ -457,6 +517,17 @@ class DevicePage(QWidget):
     def _on_selection(self) -> None:
         item = self.device_list.currentItem()
         self.connect_button.setEnabled(item is not None and not self._busy)
+        remembered = bool(item is not None and item.data(Qt.ItemDataRole.UserRole + 1))
+        self.remove_button.setEnabled(remembered and not self._busy)
+
+    def _remove_selected(self) -> None:
+        item = self.device_list.currentItem()
+        if item is None or self._busy:
+            return
+        remembered = bool(item.data(Qt.ItemDataRole.UserRole + 1))
+        serial = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if remembered and serial:
+            self.removeRequested.emit(serial)
 
     def _connect_selected(self) -> None:
         item = self.device_list.currentItem()
@@ -486,6 +557,7 @@ class DevicePage(QWidget):
         self.add_button.setEnabled(not busy)
         self.connect_button.setEnabled(not busy and self.device_list.currentItem() is not None)
         self.disconnect_button.setEnabled(not busy and self._facts is not None)
+        self.remove_button.setEnabled(not busy and self._remembered_selected())
         if busy:
             self._set_scan_hint("正在连接…")
 

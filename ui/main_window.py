@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
+from tablet.locator import STATUS_MOVED, STATUS_ONLINE, Located, locate
 from ui.add_device_dialog import AddDeviceDialog
 from ui.bridge import RouterBridge, state_value
 from ui.device_page import DevicePage
@@ -209,6 +210,8 @@ class MainWindow(QMainWindow):
     deviceActionFinished = Signal(bool, str)
     # 「添加无线设备」：adb connect/pair 也在后台线程跑。
     addDeviceFinished = Signal(bool, str)
+    locatedFinished = Signal(object)
+    macKnown = Signal(str)
 
     def __init__(
         self,
@@ -250,6 +253,7 @@ class MainWindow(QMainWindow):
         self._facts: Any | None = None
         self._connecting = False
         self._last_wireless_address = ""
+        self._probe_thread: threading.Thread | None = None
         self._shutdown_done = False
 
         self._build_ui()
@@ -258,6 +262,8 @@ class MainWindow(QMainWindow):
         self.clipboardSyncRequested.connect(self.sync_clipboard, Qt.ConnectionType.QueuedConnection)
         self.deviceActionFinished.connect(self._on_device_action_finished)
         self.addDeviceFinished.connect(self._on_add_device_finished)
+        self.locatedFinished.connect(self._on_located)
+        self.macKnown.connect(self._on_mac_known)
         self._build_shortcuts()
         self._build_actions()
         self._connect_canvas()
@@ -286,6 +292,7 @@ class MainWindow(QMainWindow):
         self.device_page.disconnectRequested.connect(self._on_device_disconnect_requested)
         self.device_page.addRequested.connect(self._on_add_device_requested)
         self.device_page.set_known(self._known_devices())
+        self.device_page.removeRequested.connect(self._forget_device)
 
         self.log_view = LogView(self)
         self.metrics_panel = MetricsPanel(self)
@@ -1276,6 +1283,114 @@ class MainWindow(QMainWindow):
             self.config.device.serial = text
         self.device_page.set_known(self._known_devices())
         self._save_config()
+        self._capture_mac(text)
+
+    def _forget_device(self, serial: str) -> None:
+        """从记忆列表里删掉一台设备（0.3.13：设备列表可删除）。"""
+        text = str(serial or "").strip()
+        if not text:
+            return
+        known = [s for s in (self.config.device.known or []) if str(s) != text]
+        self.config.device.known = known
+        if str(getattr(self.config.device, "serial", "") or "") == text:
+            self.config.device.serial = known[0] if known else ""
+        self.device_page.set_located(text, "")
+        self.device_page.set_known(self._known_devices())
+        self._save_config()
+        self.log_view.append_event("DEVICE", f"已从列表移除 {text}")
+
+    # ------------------------------------------------------------ 启动探测
+    def probe_last_device(self) -> None:
+        """打开应用后先确认上次那台平板还在不在线（0.3.13）。
+
+        只有记过 ``ip:port`` 的无线设备才需要探；探测在后台线程里做，
+        结果通过 ``locatedFinished`` 回到 GUI 线程。
+        """
+        serial = str(getattr(self.config.device, "serial", "") or "").strip()
+        if ":" not in serial:
+            return
+        if getattr(self._adb, "path", "") == "simulated-adb":
+            return  # 假平板没有局域网，别去探
+        if getattr(self, "_probe_thread", None) is not None:
+            return
+        mac = str(getattr(self.config.device, "mac", "") or "")
+        thread = threading.Thread(
+            target=self._probe_worker,
+            args=(serial, mac),
+            name="padlend-locate",
+            daemon=True,
+        )
+        self._probe_thread = thread
+        self.log_view.append_event("DEVICE", f"正在确认 {serial} 是否还在线…")
+        thread.start()
+
+    def _probe_worker(self, serial: str, mac: str) -> None:
+        located = Located(detail="探测失败")
+        try:
+            services = getattr(self._adb, "mdns_services", None)
+            located = locate(
+                serial,
+                mac,
+                services=services if callable(services) else None,
+            )
+        except Exception as exc:  # noqa: BLE001 - 探测失败按离线处理
+            log.info("locate failed: %r", exc)
+            located = Located(detail=f"探测失败：{exc}")
+        self.locatedFinished.emit(located)
+
+    def _on_located(self, located: object) -> None:
+        self._probe_thread = None
+        if not isinstance(located, Located):
+            return
+        serial = str(getattr(self.config.device, "serial", "") or "")
+        log.info("device.locate status=%s detail=%s", located.status, located.detail)
+        if located.status == STATUS_MOVED and located.address:
+            previous = serial
+            self.device_page.set_located(previous, "moved", located.detail)
+            self._remember_device(located.address)
+            self.device_page.set_located(located.address, "online", "启动时在局域网里找到")
+            self.log_view.append_event(
+                "DEVICE", f"平板换了地址：{previous} → {located.address}"
+            )
+            return
+        if not serial:
+            return
+        self.device_page.set_located(serial, located.status, located.detail)
+        if located.status == STATUS_ONLINE:
+            self.log_view.append_event("DEVICE", f"上次的设备仍在线：{serial}")
+        elif located.detail:
+            self.log_view.append_event("DEVICE", f"设备探测：{located.detail}")
+
+    def _capture_mac(self, serial: str) -> None:
+        """后台问一次平板 Wi-Fi 的 MAC（只在无线设备上问，失败无所谓）。"""
+        if ":" not in serial or self._adb is None:
+            return
+        try:
+            threading.Thread(
+                target=self._mac_worker,
+                args=(serial,),
+                name="padlend-mac",
+                daemon=True,
+            ).start()
+        except RuntimeError:
+            return
+
+    def _mac_worker(self, serial: str) -> None:
+        try:
+            mac = self._adb.wifi_mac(serial)
+        except Exception as exc:  # noqa: BLE001 - 拿不到 MAC 不算错误
+            log.info("wifi_mac failed: %r", exc)
+            return
+        if mac:
+            self.macKnown.emit(mac)
+
+    def _on_mac_known(self, mac: str) -> None:
+        text = str(mac or "").strip().lower()
+        if not text or text == str(getattr(self.config.device, "mac", "") or ""):
+            return
+        self.config.device.mac = text
+        self._save_config()
+        log.info("device.mac learned %s", text)
 
     # ------------------------------------------------------------------ 几何
     def center_on_screen(self) -> None:

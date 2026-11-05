@@ -435,6 +435,8 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
     )
     window.show()
     window.center_on_screen()  # 每次启动都摆在屏幕正中间（0.3.11）
+    # 先确认上次那台平板还在不在线，再决定设备列表里那行怎么写（0.3.13）。
+    QTimer.singleShot(400, window.probe_last_device)
 
     hotkeys = None
     if sys.platform == "win32":

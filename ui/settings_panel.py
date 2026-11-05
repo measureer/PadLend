@@ -66,6 +66,25 @@ _KEY_WIDTH = 76
 _VALUE_WIDTH = 68
 
 
+class _NoWheelComboBox(QComboBox):
+    """不接受滚轮的组合框（0.3.13）。
+
+    设置页本身要上下滚动；指针停在组合框上时滚轮会顺手改掉选项（实测把
+    「布局」从 US 滚成 UK），非常容易误触。滚轮一律忽略，事件会冒泡给
+    外层 ``QScrollArea`` 去滚动页面。
+    """
+
+    def wheelEvent(self, event: Any) -> None:  # noqa: N802 - Qt 命名
+        event.ignore()
+
+
+class _NoWheelSlider(QSlider):
+    """不接受滚轮的滑条，理由同上。"""
+
+    def wheelEvent(self, event: Any) -> None:  # noqa: N802 - Qt 命名
+        event.ignore()
+
+
 class SliderRow(QWidget):
     """一行滑杆：名称 + QSlider + 数值标签。"""
 
@@ -80,7 +99,7 @@ class SliderRow(QWidget):
     ) -> None:
         super().__init__(parent)
         self._formatter = formatter
-        self.slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.slider = _NoWheelSlider(Qt.Orientation.Horizontal, self)
         self.slider.setRange(minimum, maximum)
         self.slider.setValue(value)
         self.slider.setSingleStep(1)
@@ -262,24 +281,27 @@ class SettingsPanel(QWidget):
     def _build_placement_group(self) -> QGroupBox:
         box, layout = self._make_group("📍 平板位置")
 
-        self.edge_combo = QComboBox(box)
+        self.edge_combo = _NoWheelComboBox(box)
         self.edge_combo.setToolTip("可吸附的虚拟桌面外轮廓边段")
         layout.addWidget(
             self._labeled_row(
                 "吸附边",
                 self.edge_combo,
-                "平板接在虚拟桌面的哪条外侧边上；只有红色外轮廓段可选。",
+                "平板放在电脑屏幕的哪一侧：鼠标推到这条边就会穿进平板。"
+                "平板在电脑下面就选「下方」；下拉里只列真正与桌面外轮廓相接的边段。",
             )
         )
 
-        self.align_combo = QComboBox(box)
+        self.align_combo = _NoWheelComboBox(box)
         for text, value in ALIGN_LABELS:
             self.align_combo.addItem(text, value)
         layout.addWidget(
             self._labeled_row(
                 "对齐",
                 self.align_combo,
-                "入口与落点沿吸附边的分布方式；等比会铺满整段。",
+                "平板影幕和 PC 屏幕大小不一样时，入口/落点沿边怎么摊："
+                "「等比」把 PC 这条边整体映射到平板整条边（两端都走得到），"
+                "「居中」只映射中间一段，「1:1」按像素一一对应。一般用「等比」。",
             )
         )
 
@@ -288,9 +310,14 @@ class SettingsPanel(QWidget):
         )
         self.offset_slider = self.offset_row.slider
         layout.addWidget(self.offset_row)
-        layout.addWidget(self._hint("平板在吸附边上的位置：0 在起点，1 在终点。"))
+        layout.addWidget(
+            self._hint(
+                "平板影幕沿吸附边前后挪的位置：0.00 贴在边的起点（如屏幕最上端），"
+                "1.00 贴在终点。影幕和这条边一样长时调它看不出变化。"
+            )
+        )
 
-        self.corner_combo = QComboBox(box)
+        self.corner_combo = _NoWheelComboBox(box)
         for text, value in CORNER_LABELS:
             self.corner_combo.addItem(text, value)
         self.corner_combo.setToolTip("拖到角落时优先吸附的边（Shift 临时切换）")
@@ -298,7 +325,8 @@ class SettingsPanel(QWidget):
             self._labeled_row(
                 "角优先",
                 self.corner_combo,
-                "靠近两屏交界的角落时优先吸附的边；按住 Shift 可临时切换。",
+                "鼠标推到两块屏幕交界的角落时，先算作哪条边（决定往左穿还是往下穿）。"
+                "「自动」按鼠标更靠近的那条边算；被角卡住时按住 Shift 可临时切到另一边。",
             )
         )
 
@@ -314,25 +342,33 @@ class SettingsPanel(QWidget):
         self.gain_row = SliderRow("速度", 25, 300, 100, lambda v: f"{v / 100:.2f}×", box)
         self.gain_slider = self.gain_row.slider
         layout.addWidget(self.gain_row)
-        layout.addWidget(self._hint("平板指针相对 PC 鼠标的移动倍率；1.00× 为 1:1。"))
+        layout.addWidget(
+            self._hint(
+                "平板指针的移动倍率：1.00× 表示鼠标在 PC 上走 100 像素、"
+                "平板指针也走 100 像素。觉得指针太慢就调大，太飘就调小。"
+            )
+        )
 
         self.hz_row = SliderRow("上报频率", C.MIN_REPORT_HZ, C.MAX_REPORT_HZ, 1000,
                                 lambda v: f"{v} Hz", box)
         self.hz_slider = self.hz_row.slider
         layout.addWidget(self.hz_row)
-        layout.addWidget(self._hint("每秒向平板发送的鼠标报文数；越高越跟手，也越占带宽。"))
+        layout.addWidget(self._hint("每秒向平板发多少次指针位置。1000 Hz 最跟手（多数设备的上限）；"
+                "无线信号差、延迟大时降到 250–500 Hz 更稳。"))
 
         self.arm_row = SliderRow("触发阈值", 10, 200, C.ARM_PX, lambda v: f"{v} px", box)
         self.arm_slider = self.arm_row.slider
         layout.addWidget(self.arm_row)
-        layout.addWidget(self._hint("从 PC 边缘向外移动多少像素后正式接管；太小容易误触。"))
+        layout.addWidget(self._hint("鼠标从屏幕边缘继续往外推多少像素才正式接管平板。太小会一蹭就进，"
+                "太大又觉得推不进去；40 px 是折中值。"))
 
         self.exit_row = SliderRow(
             "穿回阈值", 4, 120, C.EXIT_OVERFLOW_PX, lambda v: f"{v} px", box
         )
         self.exit_slider = self.exit_row.slider
         layout.addWidget(self.exit_row)
-        layout.addWidget(self._hint("在平板边缘反向移动多少像素后交还 PC；越大越不容易误退。"))
+        layout.addWidget(self._hint("在平板边缘反向拖回多少像素才交还 PC。越大越不容易误退"
+                "（在平板边缘点按钮时更稳），越小回 PC 越快。"))
 
         self._field_widgets["motion.gain"] = self.gain_slider
         self._field_widgets["motion.report_hz"] = self.hz_slider
@@ -345,24 +381,29 @@ class SettingsPanel(QWidget):
 
         self.forward_check = QCheckBox("转发按键到平板", box)
         self.suppress_check = QCheckBox("屏蔽本机按键", box)
-        self.layout_combo = QComboBox(box)
+        self.layout_combo = _NoWheelComboBox(box)
         for name in LAYOUTS:
             self.layout_combo.addItem(name.upper(), name)
 
         layout.addWidget(
-            self._check_row(self.forward_check, "接管期间把键盘按键转发为平板 HID 输入。")
+            self._check_row(
+                self.forward_check,
+                "接管期间按下的键盘按键会发到平板：可以打字、用平板上的快捷键。",
+            )
         )
         layout.addWidget(
             self._check_row(
                 self.suppress_check,
-                "接管期间阻止按键在本机生效，避免 PC 与平板同时响应。",
+                "接管期间把键盘输入从 Windows 拦下来，只发给平板。"
+                "关掉时同一个键会在两边各触发一次（例如 Ctrl+W 同时关掉 PC 和平板上的东西）。",
             )
         )
         layout.addWidget(
             self._labeled_row(
                 "布局",
                 self.layout_combo,
-                "平板端键盘布局；应与 Android 当前输入法的布局一致。",
+                "平板上当前输入法的键盘布局。要和 Android「设置 → 系统 → 语言和输入法」里"
+                "选的一致，否则字符会对不上（例如 @ 和 \" 互换）。",
             )
         )
 
@@ -382,21 +423,23 @@ class SettingsPanel(QWidget):
             self._labeled_row(
                 "接管/交还",
                 self.toggle_edit,
-                "手动进入或退出平板接管的全局快捷键。",
+                "手动进入/退出平板接管：按一次进入（鼠标可在平板上操作），再按一次交还 PC。"
+                "也可以不按它，直接把鼠标从屏幕边缘推进平板。",
             )
         )
         layout.addWidget(
             self._labeled_row(
                 "急停",
                 self.panic_edit,
-                "任何状态下立即释放遮罩、清空按键并把光标交还 PC。",
+                "出问题时立即脱身：松开所有按住的键、释放遮罩、把光标还给 PC，不用先退出接管。",
             )
         )
         layout.addWidget(
             self._labeled_row(
                 "剪贴板",
                 self.clipboard_edit,
-                "把 PC 剪贴板文本发送到平板当前输入框。",
+                "把 PC 剪贴板里的文字一次性发到平板当前输入框（纯文本，超过 4 KB 会截断）。"
+                "接管瞬间不会自动发，避免剪贴板里的字符被当成快捷键。",
             )
         )
 
@@ -415,25 +458,38 @@ class SettingsPanel(QWidget):
         left = QVBoxLayout()
         left.setSpacing(4)
         left.addWidget(
-            self._check_row(self.tray_check, "连接、断开或发生故障时在托盘弹出气泡提醒。")
+            self._check_row(
+                self.tray_check,
+                "连接成功、断开或出故障时，在右下角托盘弹一个气泡提醒。",
+            )
         )
         left.addWidget(
-            self._check_row(self.ghost_check, "在 PC 屏幕边缘显示平板指针位置的半透明提示。")
+            self._check_row(
+                self.ghost_check,
+                "在 PC 屏幕边缘画一个半透明小圆点，表示平板指针大概在哪，"
+                "方便穿屏前找位置。",
+            )
         )
         left.addWidget(
             self._check_row(
                 self.close_tray_check,
-                "点 X 只收进系统托盘，PadLend 继续在后台运行；"
-                "从托盘菜单选「退出 PadLend」才会真正退出。",
+                "点窗口 X 时：勾选 = 只收进托盘，接管服务继续在后台跑，"
+                "要从托盘菜单「退出 PadLend」才真退；不勾选 = 直接退出。",
             )
         )
         right = QVBoxLayout()
         right.setSpacing(4)
         right.addWidget(
-            self._check_row(self.clipboard_check, "允许通过快捷键或进入接管时自动发送剪贴板文本。")
+            self._check_row(
+                self.clipboard_check,
+                "允许用上面的剪贴板快捷键（默认 Ctrl+Alt+V）把文本发到平板。",
+            )
         )
         right.addWidget(
-            self._check_row(self.keepawake_check, "连接期间让平板保持亮屏，断开后恢复系统设置。")
+            self._check_row(
+                self.keepawake_check,
+                "连接期间不让平板自动熄屏；断开后把平板原来的熄屏设置还回去。",
+            )
         )
         columns = QHBoxLayout()
         columns.setSpacing(18)

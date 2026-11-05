@@ -40,6 +40,8 @@ class DeviceCfg:
     server_port: int = C.DEFAULT_SERVER_PORT
     # 最近连接过的设备（新的在前，最多 8 条）：设备页用它在离线时也列出来。
     known: list[str] = field(default_factory=list)
+    # 上次那台平板的 Wi-Fi MAC：路由器换了 IP 之后靠它在局域网里找回来（0.3.13）。
+    mac: str = ""
 
 
 @dataclass
@@ -200,6 +202,7 @@ class Config:
                 "auto_connect": bool,
                 "server_port": int,
                 "known": list,
+                "mac": str,
             },
         )
         cfg.placement = _section(

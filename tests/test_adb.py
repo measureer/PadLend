@@ -178,3 +178,42 @@ def test_kill_server_never_raises() -> None:
     adb = _RunStub("", 1)
     adb.kill_server()
     assert adb.calls[-1] == ["kill-server"]
+
+
+class _ShellStub(Adb):
+    """按命令前缀返回固定 stdout，用来测 wifi_mac 的探测顺序。"""
+
+    def __init__(self, answers: dict[str, tuple[int, str]]) -> None:
+        super().__init__()
+        self.answers = answers
+        self.calls: list[str] = []
+
+    def with_serial(self, serial: str | None) -> _ShellStub:  # noqa: D401 - stub
+        self.calls.append(f"serial={serial}")
+        return self
+
+    def shell_result(self, *args: str, timeout: float = 0.0) -> tuple[int, str]:
+        key = " ".join(args)
+        self.calls.append(key)
+        return self.answers.get(key, (1, ""))
+
+
+def test_wifi_mac_reads_wlan0() -> None:
+    adb = _ShellStub({"cat /sys/class/net/wlan0/address": (0, "88:A4:79:1A:2B:3C\n")})
+    assert adb.wifi_mac("192.168.1.8:37495") == "88:a4:79:1a:2b:3c"
+    assert adb.calls[0] == "serial=192.168.1.8:37495"
+
+
+def test_wifi_mac_falls_back_to_scanning_interfaces() -> None:
+    adb = _ShellStub(
+        {
+            "ls /sys/class/net": (0, "lo\nwlan0\nwlan9\n"),
+            "cat /sys/class/net/wlan9/address": (0, "aa:bb:cc:dd:ee:ff\n"),
+        }
+    )
+    assert adb.wifi_mac() == "aa:bb:cc:dd:ee:ff"
+
+
+def test_wifi_mac_returns_empty_when_nothing_valid() -> None:
+    adb = _ShellStub({"cat /sys/class/net/wlan0/address": (0, "not-a-mac\n")})
+    assert adb.wifi_mac() == ""

@@ -538,6 +538,44 @@ class Adb:
         proc = self._run(["shell", command], timeout=timeout, check=False)
         return proc.returncode, self._decode(proc.stdout)
 
+    def wifi_mac(self, serial: str | None = None, *, timeout: float = 8.0) -> str:
+        """平板 Wi-Fi 网卡的 MAC（``aa:bb:cc:dd:ee:ff``），拿不到返回空串。
+
+        记住 MAC 是为了在路由器换了 IP 之后还能在局域网里找到它（0.3.13）：
+        ``/sys/class/net/wlan0/address`` 是最稳的来源，有些设备网卡叫别的名字，
+        再退一步扫 ``/sys/class/net`` 里带 ``address`` 的无线接口。
+        """
+        adb = self.with_serial(serial) if serial else self
+        candidates = ("wlan0", "eth0", "wlan1")
+        for iface in candidates:
+            try:
+                _rc, out = adb.shell_result(
+                    "cat", f"/sys/class/net/{iface}/address", timeout=timeout
+                )
+            except Exception as exc:  # noqa: BLE001 - 拿不到就当没有
+                LOG.debug("wifi_mac %s failed: %r", iface, exc)
+                continue
+            mac = out.strip().lower()
+            if re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", mac):
+                return mac
+        try:
+            _rc, listing = adb.shell_result("ls", "/sys/class/net", timeout=timeout)
+        except Exception:  # noqa: BLE001
+            return ""
+        for iface in listing.split():
+            if iface in candidates:
+                continue
+            try:
+                _rc, out = adb.shell_result(
+                    "cat", f"/sys/class/net/{iface}/address", timeout=timeout
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            mac = out.strip().lower()
+            if re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", mac):
+                return mac
+        return ""
+
     def shell_ok(self, *args: str) -> bool:
         """远端 shell 是否成功（清理步骤用，绝不抛）。"""
         try:
