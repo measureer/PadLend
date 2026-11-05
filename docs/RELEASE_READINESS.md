@@ -16,7 +16,7 @@
 | 打包形态 | onedir；启动不解包到 CWD，可安装到 Program Files 或只读目录 |
 | 版本资源 | FileVersion 1.0.0.0、ProductVersion 1.0.0、ProductName / CompanyName / Copyright 齐全 |
 | 许可 | 产物根目录含 `THIRD_PARTY_NOTICES.md` 与 `LICENSES/`（8 份全文） |
-| 产物 | `PadLend-1.0.0-win64.zip`（51.3 MiB）+ `SHA256SUMS.txt`；SHA-256 `4eb96bc76b0790f48a7f274953dca6dee3717eaf61b501082f81c4bef550a3e4` |
+| 产物 | GitHub Release [v1.0.0](https://github.com/measureer/PadLend/releases/tag/v1.0.0)：ZIP（54.3 MiB）、`setup.exe`、`SHA256SUMS.txt`；发布 ZIP SHA-256 `c90bda8448eff60be6a38297f2aff119e52c464935ce1eab33c703f686618b5c` |
 | 冒烟 | 从外部 CWD 启动、自动连真机、UHID 键鼠、正常退出与强制清理均已验证 |
 
 ## P0 关闭情况
@@ -110,7 +110,7 @@
 - [x] 从外部 CWD 隔离启动冒烟（`PADLEND_HOME` 指向临时目录）
 - [x] 用最终代码重建产物并复核 SHA-256
 - [x] 本地提交并打 tag `v1.0.0`
-- [ ] 推送 GitHub、创建 Release，上传 ZIP 与 SHA256SUMS
+- [x] 推送 GitHub、创建 Release，上传 ZIP、安装器与 SHA256SUMS
 - [x] 发布说明模板 `.github/release-notes.md`：未签名、LGPLv3/Qt、已验证设备与反馈入口
 
 ## 复核方法
