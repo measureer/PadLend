@@ -376,6 +376,29 @@ adb devices -l
 仍需真机确认：旧的 `config.yaml` 里若有 `hotkeys.clipboard`，保存一次后该行应消失且
 不影响接管/急停热键。截图：`build/padlend-0.3.15-settings.png`。
 
+## 第 21 节：0.3.16 上报频率定档 / 穿回阈值 120 / 托盘兜底（2026-11-05）
+
+| 项 | 命令 / 检查 | 实际 | 结论 |
+|---|---|---|---|
+| 上报频率只有四档 | `tests/test_ui_smoke.py::test_report_hz_is_four_fixed_choices` | 下拉项 = `[125, 250, 500, 1000]`；选 250 保存后 `motion.report_hz == 250` | ✅ |
+| 旧值自动收敛 | `tests/test_config.py::test_report_hz_snaps_to_a_fixed_choice` | `report_hz: 998` → 1000，并记一条 issue | ✅ |
+| 穿回阈值默认 120 | `test_exit_threshold_default_is_120` | `C.EXIT_OVERFLOW_PX == 120`、`Config().motion.exit_overflow_px == 120` | ✅ |
+| 边界用例仍成立 | `tests/test_router.py` 五个溢出用例 | 位移改用 `C.EXIT_OVERFLOW_PX + 10`，仍按时交还 | ✅ |
+| 托盘图标不可见时不藏窗口 | `test_request_close_minimizes_when_tray_icon_is_invisible` | 退化成最小化，`_shutdown_done` 仍为 False | ✅ |
+| 托盘可见时正常收起 | `test_request_close_hides_when_close_to_tray` | 先 `ensure_visible()`（调用 1 次）再 `hide()` | ✅ |
+| 日志可定位托盘问题 | 源码 `--simulate` + `close_to_tray: true` → `WM_CLOSE` | 日志 `tray shown: available=True visible=True` → `tray ensure_visible -> True` → `window hidden to tray`（本机 agent 进程 `Shell_NotifyIcon` 返回 ACCESS_DENIED，**图标是否真的挂上无法在本机证实**） | ⚠️ 本机环境限制 |
+| 托盘图标可辨认 | `tests/test_ui_smoke.py::test_tray_icon_carries_the_brand_and_the_state` + `build/padlend-0.3.16-tray-icons.png` | 图标 = 品牌标「P」；≥24px 在右下角叠状态点（`idle`/`captured` 像素不同）；16/20px 只留品牌标 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 409 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 33 项，0 失败，3 跳过 | ✅ |
+| 0.3.16 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 53,189,727 B，sha256 `cec28aefcb15be57bc2100626600037a0c7ab454519bb8e40d7d8c51bc16a71b`，`--version` → `PadLend 0.3.16` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2 --no-wizard --no-single-instance` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate` + `close_to_tray: true` → `ps-close-check.ps1` | 设备页「设备列表」、设置页「上报频率 1000 Hz」下拉与「穿回阈值 120 px」；`v0.3.16`；`WM_CLOSE` 后 `alive=True`、日志 `tray ensure_visible -> True` + `window hidden to tray`，窗口句柄归 0 | ✅ |
+
+仍需真机确认：在系统托盘（含「^」溢出区）里能看到 PadLend 的品牌标图标；
+关闭到托盘后从托盘菜单「打开主窗口」/重新运行 PadLend 能唤回窗口。
+截图：`build/padlend-0.3.16-settings.png`、托盘图标预览 `build/padlend-0.3.16-tray-icons.png`。
+
 
 
 

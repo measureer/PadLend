@@ -299,9 +299,12 @@ class Config:
         if not (1 <= m.hid_clamp <= C.HID_CLAMP):
             self.add_issue(f"motion.hid_clamp={m.hid_clamp} 越界，已夹紧到 [1,127]")
             m.hid_clamp = min(max(m.hid_clamp, 1), C.HID_CLAMP)
-        if not (C.MIN_REPORT_HZ <= m.report_hz <= C.MAX_REPORT_HZ):
-            self.add_issue(f"motion.report_hz={m.report_hz} 越界，已夹紧到 [125,1000]")
-            m.report_hz = min(max(m.report_hz, C.MIN_REPORT_HZ), C.MAX_REPORT_HZ)
+        if m.report_hz not in C.REPORT_HZ_CHOICES:
+            nearest = min(C.REPORT_HZ_CHOICES, key=lambda hz: abs(hz - int(m.report_hz)))
+            self.add_issue(
+                f"motion.report_hz={m.report_hz} 不是固定档位，已改成 {nearest}"
+            )
+            m.report_hz = nearest
         if not (0.25 <= m.gain <= 3.0):
             self.add_issue(f"motion.gain={m.gain} 越界，已夹紧到 [0.25,3.0]")
             m.gain = min(max(m.gain, 0.25), 3.0)
@@ -354,8 +357,8 @@ class Config:
             problems.append("placement.span_end 必须大于 span_start")
         if not (1 <= m.hid_clamp <= C.HID_CLAMP):
             problems.append("motion.hid_clamp 必须在 1..127")
-        if not (C.MIN_REPORT_HZ <= m.report_hz <= C.MAX_REPORT_HZ):
-            problems.append("motion.report_hz 必须在 125..1000")
+        if m.report_hz not in C.REPORT_HZ_CHOICES:
+            problems.append("motion.report_hz 必须是 125/250/500/1000 之一")
         if not (0.25 <= m.gain <= 3.0):
             problems.append("motion.gain 必须在 0.25..3.0")
         if m.arm_px < 1:

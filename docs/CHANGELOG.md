@@ -2,6 +2,34 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.16] — 2026-11-05
+
+### 修改
+
+- **上报频率改成四个固定档**：设置页从滑条换成下拉框，只给 125 / 250 / 500 / 1000 Hz。
+  旧配置里的任意值（例如 998）在加载时取最近的档位并记一条 issue；`motion.report_hz`
+  不再接受中间值。
+- **穿回阈值默认值 24 → 120 px**：在平板边缘点按/轻微晃动不再把光标误交还给 PC；
+  代价是从平板边往回拖的时间稍长一点（设置页仍可在 4–120 之间调）。
+- **托盘图标换成品牌标**：以前只是一个状态色圆点，缩到 16px 后看不出是哪个程序，
+  很容易被当成系统图标（“在托盘里找不到 PadLend”多半就是这个）。现在图标是品牌标
+  「P」，24px 以上再在右下角叠一颗状态色小点（灰未连接 / 绿空闲 / 红接管中 / 黄故障）；
+  16/20px 只留品牌标，保证缩到通知区大小仍然认得出。
+- **关闭到托盘更可靠**：隐藏主窗前先确认托盘图标真的挂在通知区
+  （`TrayController.ensure_visible()`），挂不上就退化成最小化，避免窗口藏进
+  “找不到图标也找不到窗口”的状态；日志新增 `tray shown` / `tray ensure_visible` /
+  `tray icon is not visible; minimized …`，下次可据此判断是没注册还是被系统收进
+  任务栏右下角的「^」溢出区。气泡提示也补上了「找不到就点 ^ 或重新运行 PadLend」
+  的说明——重新运行会通过单实例互斥量唤回已隐藏的窗口。
+
+### 测试
+
+- `test_report_hz_is_four_fixed_choices`、`test_exit_threshold_default_is_120`、
+  `test_report_hz_snaps_to_a_fixed_choice`，以及托盘不可见时退化成最小化的
+  `test_request_close_minimizes_when_tray_icon_is_invisible`。
+- `tools/acceptance.py` 33 项 0 失败 3 跳过（阈值改大后原有边界用例改用
+  `C.EXIT_OVERFLOW_PX + 10` 的相对位移）。
+
 ## [0.3.15] — 2026-11-05
 
 ### 修改

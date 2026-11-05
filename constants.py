@@ -15,7 +15,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
 APP_ID = "PadLend"
-VERSION = "0.3.15"
+VERSION = "0.3.16"
 LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。
@@ -262,7 +262,9 @@ ARM_WINDOW_MS = 80
 # 慢推兜底：没在 80ms 内攒够 40px，但已经明显向外推了这么多，
 # 仍视为有意接管。轻推/慢推的用户不该被 500px/s 的速度门槛挡住。
 ARM_SLOW_PX = 12
-EXIT_OVERFLOW_PX = 24
+# 在平板边缘反向拖回多少像素才交还 PC。0.3.16 起默认 120（原来 24），
+# 边缘点按晃动不再误退，代价是回 PC 要多拖一点点。
+EXIT_OVERFLOW_PX = 120
 
 EDGE_BAND_PX = 1
 ENTRY_MARGIN_PX = 2
@@ -274,6 +276,8 @@ DEFAULT_GAIN = 1.0
 DEFAULT_REPORT_HZ = 1000
 MIN_REPORT_HZ = 125
 MAX_REPORT_HZ = 1000
+# 0.3.16：上报频率只给四个固定档（设置页是下拉框，不再是滑条）。
+REPORT_HZ_CHOICES = (125, 250, 500, 1000)
 MAX_BATCH = 8  # 单帧最多 8 报文（D12）
 SEND_QUEUE_MAXLEN = 64
 RAW_QUEUE_MAXSIZE = 4096

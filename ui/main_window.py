@@ -1032,10 +1032,24 @@ class MainWindow(QMainWindow):
             return True
         if self._close_to_tray():
             if not self.isHidden():
+                ensure = getattr(self.tray, "ensure_visible", None)
+                if callable(ensure) and not ensure():
+                    # 托盘图标挂不上时不要把窗口藏进“找不到”的状态：
+                    # 退化成最小化，用户还能从任务栏点回来。
+                    self.showMinimized()
+                    log.warning(
+                        "tray icon is not visible; minimized instead of hiding "
+                        "(ui.close_to_tray)"
+                    )
+                    return True
                 self.hide()
                 notify = getattr(self.tray, "notify", None)
                 if callable(notify):
-                    notify(C.APP_NAME, "已最小化到托盘，从托盘菜单可重新打开或退出。")
+                    notify(
+                        C.APP_NAME,
+                        "已最小化到托盘。找不到图标时点任务栏右下角的「^」，"
+                        "或右键图标菜单里选「退出 PadLend」。",
+                    )
                 log.info("window hidden to tray (ui.close_to_tray)")
             return True
         self.request_quit()

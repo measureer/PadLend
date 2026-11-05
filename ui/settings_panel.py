@@ -349,12 +349,20 @@ class SettingsPanel(QWidget):
             )
         )
 
-        self.hz_row = SliderRow("上报频率", C.MIN_REPORT_HZ, C.MAX_REPORT_HZ, 1000,
-                                lambda v: f"{v} Hz", box)
-        self.hz_slider = self.hz_row.slider
-        layout.addWidget(self.hz_row)
-        layout.addWidget(self._hint("每秒向平板发多少次指针位置。1000 Hz 最跟手（多数设备的上限）；"
-                "无线信号差、延迟大时降到 250–500 Hz 更稳。"))
+        self.hz_combo = _NoWheelComboBox(box)
+        for hz in (125, 250, 500, 1000):
+            self.hz_combo.addItem(f"{hz} Hz", hz)
+        self.hz_combo.setToolTip("每秒向平板发多少次指针位置")
+        layout.addWidget(
+            self._labeled_row(
+                "上报频率",
+                self.hz_combo,
+                "每秒向平板发多少次指针位置：1000 Hz 最跟手（多数设备的上限）；"
+                "无线信号差、延迟大时降到 250–500 Hz 更稳，125 Hz 最省电。"
+                "只提供这四个固定值，避免中间档位在小数点上抖动。",
+            )
+        )
+        self.hz_combo.currentIndexChanged.connect(self._on_control_changed)
 
         self.arm_row = SliderRow("触发阈值", 10, 200, C.ARM_PX, lambda v: f"{v} px", box)
         self.arm_slider = self.arm_row.slider
@@ -371,7 +379,7 @@ class SettingsPanel(QWidget):
                 "（在平板边缘点按钮时更稳），越小回 PC 越快。"))
 
         self._field_widgets["motion.gain"] = self.gain_slider
-        self._field_widgets["motion.report_hz"] = self.hz_slider
+        self._field_widgets["motion.report_hz"] = self.hz_combo
         self._field_widgets["motion.arm_px"] = self.arm_slider
         self._field_widgets["motion.exit_overflow_px"] = self.exit_slider
         return box
@@ -497,7 +505,6 @@ class SettingsPanel(QWidget):
         self.offset_slider.valueChanged.connect(self._on_control_changed)
         for row in (
             self.gain_row,
-            self.hz_row,
             self.arm_row,
             self.exit_row,
         ):
@@ -650,7 +657,7 @@ class SettingsPanel(QWidget):
 
         motion = cfg.motion
         motion.gain = round(self.gain_slider.value() / 100.0, 2)
-        motion.report_hz = int(self.hz_slider.value())
+        motion.report_hz = int(self.hz_combo.currentData() or C.DEFAULT_REPORT_HZ)
         motion.arm_px = int(self.arm_slider.value())
         motion.exit_overflow_px = int(self.exit_slider.value())
 
@@ -703,7 +710,7 @@ class SettingsPanel(QWidget):
     def _fill_motion(self) -> None:
         cfg = self._config.motion
         self.gain_slider.setValue(int(round(cfg.gain * 100)))
-        self.hz_slider.setValue(int(cfg.report_hz))
+        self._select_data(self.hz_combo, int(cfg.report_hz))
         self.arm_slider.setValue(int(cfg.arm_px))
         self.exit_slider.setValue(int(cfg.exit_overflow_px))
 
@@ -733,7 +740,7 @@ class SettingsPanel(QWidget):
             combo.setCurrentIndex(index)
 
     def _refresh_value_labels(self) -> None:
-        for row in (self.offset_row, self.gain_row, self.hz_row, self.arm_row, self.exit_row):
+        for row in (self.offset_row, self.gain_row, self.arm_row, self.exit_row):
             row.update_label()
 
     def _on_control_changed(self, *_args: object) -> None:

@@ -1,7 +1,7 @@
 """系统托盘（设计文档 6.10.7）。
 
-- 图标用 ``QPainter`` 现画状态圆点，不依赖外部资源：灰未连接 / 绿空闲 /
-  红接管中 / 黄故障。
+- 图标 = 品牌标 + 右下角状态点（灰未连接 / 绿空闲 / 红接管中 / 黄故障），
+  不依赖外部资源；0.3.16 之前只有一个状态色圆点，通知区里认不出是哪个程序。
 - 左键（Trigger/DoubleClick）显隐主窗；右键菜单：手动接管·交还、重连、
   打开配置、复制诊断、退出。
 - 托盘不可用时（无桌面会话、RDP、部分 offscreen 平台）不创建
@@ -14,10 +14,11 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QObject, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
 import constants as C
+from ui.icons import brand_pixmap
 from ui.theme import tokens
 
 log = logging.getLogger("ui.tray")
@@ -26,27 +27,46 @@ _TRAY_ICON_SIZE = 32
 
 
 def status_icon(state: str, size: int = _TRAY_ICON_SIZE) -> QIcon:
-    """按状态色画一个圆点图标（外圈半透明 + 内圈实心）。"""
-    color = QColor(tokens.state_color(state))
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
+    """托盘图标：品牌标 + 右下角状态点（0.3.16）。
+
+    早期版本只画一个状态色圆点；通知区缩到 16px 后既看不出是哪个程序，
+    也容易被当成系统图标，用户会以为「程序没在托盘里」。现在以品牌标为
+    底，右下角叠一颗状态色小圆点（未连接/空闲/接管/故障）。
+    """
+    icon = QIcon()
+    for px in (16, 20, 24, 32, 48):
+        icon.addPixmap(_tray_pixmap(state, px))
+    return icon
+
+
+def _tray_pixmap(state: str, size: int) -> QPixmap:
+    """品牌标 + 右下角状态点，按目标像素尺寸 1:1 绘制。
+
+    通知区在 100% 缩放下只有 16px：这里不放状态点，整格都给品牌标，
+    否则两样都糊成一团、又回到“认不出是哪个程序”。24px 起才叠状态点。
+    每个尺寸单独出图（16/20/24/32/48），交给 Windows 直接选，避免缩放模糊。
+    """
+    canvas = QPixmap(size, size)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
 
-        halo = QColor(color)
-        halo.setAlpha(90)
-        painter.setBrush(halo)
-        painter.drawEllipse(QRectF(0.0, 0.0, float(size), float(size)))
+        mark_size = size if size <= 20 else round(size * 0.84)
+        mark = brand_pixmap(mark_size)
+        target = QRectF(0.0, 0.0, float(mark_size), float(mark_size))
+        painter.drawPixmap(target, mark, QRectF(mark.rect()))
 
-        painter.setBrush(color)
-        inner = size * 0.56
-        offset = (size - inner) / 2.0
-        painter.drawEllipse(QRectF(offset, offset, inner, inner))
+        if size > 20:
+            dot = max(7.0, size * 0.36)
+            x = size - dot
+            y = size - dot
+            painter.setPen(QPen(QColor(16, 20, 28), max(1.0, size * 0.08)))
+            painter.setBrush(QColor(tokens.state_color(state)))
+            painter.drawEllipse(QRectF(x, y, dot, dot))
     finally:
         painter.end()
-    return QIcon(pixmap)
+    return canvas
 
 
 class TrayController(QObject):
@@ -130,10 +150,38 @@ class TrayController(QObject):
     def show(self) -> None:
         if self.tray is not None:
             self.tray.show()
+            log.info(
+                "tray shown: available=%s visible=%s",
+                QSystemTrayIcon.isSystemTrayAvailable(),
+                self.tray.isVisible(),
+            )
 
     def hide(self) -> None:
         if self.tray is not None:
             self.tray.hide()
+
+    @property
+    def visible(self) -> bool:
+        """图标此刻是否真的挂在通知区（Windows 上 show() 可能被吞）。"""
+        return bool(self.tray is not None and self.tray.isVisible())
+
+    def ensure_visible(self) -> bool:
+        """确认图标在通知区；不在就再 show() 一次。
+
+        0.3.16 修「关闭到托盘后在托盘里找不到」：Windows 11 上
+        ``QSystemTrayIcon.show()`` 偶尔静默失败（尤其图标是在窗口显示
+        之前创建的），这里在要隐藏主窗时兜底再挂一次，并把结果写进
+        日志，方便下次从 ``padlend.log`` 判断是「没注册」还是「被系统
+        收进了 ^ 溢出区」。
+        """
+        if self.tray is None:
+            return False
+        if not self.tray.isVisible():
+            log.info("tray icon not visible; re-showing before hiding the window")
+            self.tray.show()
+        visible = self.tray.isVisible()
+        log.info("tray ensure_visible -> %s", visible)
+        return visible
 
     def dispose(self) -> None:
         """退出前清理，避免托盘幽灵图标残留。"""

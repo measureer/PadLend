@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import yaml
 
@@ -81,6 +82,18 @@ def test_repair_clamps_and_reports(tmp_path):
     assert cfg.hotkeys.toggle == "Ctrl+Alt+S"
     assert cfg.issues, "修复过的配置必须留下 issue 供 GUI 标红"
     assert cfg.validate() == [], "load 之后对象必须已经自愈"
+
+
+def test_report_hz_snaps_to_a_fixed_choice(tmp_path: Path) -> None:
+    """0.3.16：只允许 125/250/500/1000；旧的任意值（如 998）取最近的档位。"""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "version: 1\nmotion:\n  report_hz: 998\n", encoding="utf-8"
+    )
+    cfg = Config.load(path)
+    assert cfg.motion.report_hz == 1000
+    assert any("report_hz" in issue for issue in cfg.issues)
+    assert cfg.validate() == []
 
 
 def test_theme_repair_and_roundtrip(tmp_path):

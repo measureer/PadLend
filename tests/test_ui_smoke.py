@@ -17,6 +17,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import QApplication, QLabel, QWizardPage
 
+import constants as C
 from config import Config
 from core.geometry import Edge, EdgeSegment, MonitorInfo, Placement, Rect
 from core.state import State
@@ -387,6 +388,18 @@ def test_tray_menu_and_status_icons(window: Any) -> None:
     assert "接管" in tray.toggle_action.text()
 
 
+def test_tray_icon_carries_the_brand_and_the_state(qapp) -> None:
+    """0.3.16：托盘图标是品牌标 + 状态点，不是一颗匿名圆点。"""
+    def pixels(state: str, size: int) -> bytes:
+        image = status_icon(state).pixmap(QSize(size, size)).toImage()
+        return bytes(image.constBits())
+
+    assert pixels("idle", 24) != pixels("captured", 24), "状态点没有落在图标上"
+    small = status_icon("captured").pixmap(QSize(16, 16))
+    assert not small.isNull()
+    assert any(pixels("captured", 16)), "16px 图标是空的"
+
+
 def test_shortcuts_and_menu_actions(window: Any) -> None:
     assert window.settings_shortcut.key() == QKeySequence("Ctrl+,")
     assert window.toggle_shortcut.key() == QKeySequence("Ctrl+Alt+S")
@@ -586,6 +599,26 @@ def test_settings_hints_and_exit_threshold(window: Any) -> None:
     assert window.settings._config.motion.exit_overflow_px == 36
 
 
+def test_report_hz_is_four_fixed_choices(window: Any) -> None:
+    """0.3.16：上报频率从滑条改成 125/250/500/1000 四个固定档。"""
+    combo = window.settings.hz_combo
+    assert [combo.itemData(i) for i in range(combo.count())] == [125, 250, 500, 1000]
+
+    window._switch_page(2)
+    combo.setCurrentIndex(combo.findData(250))
+    assert window.settings.save() is True
+    assert window.settings._config.motion.report_hz == 250
+
+    window.settings._fill_motion()
+    assert combo.currentData() == 250
+
+
+def test_exit_threshold_default_is_120() -> None:
+    """0.3.16：穿回阈值默认从 24 提到 120 px。"""
+    assert C.EXIT_OVERFLOW_PX == 120
+    assert Config().motion.exit_overflow_px == 120
+
+
 # ---------------------------------------------------------------------------
 # 添加无线设备对话框
 # ---------------------------------------------------------------------------
@@ -720,12 +753,18 @@ def test_packaged_icon_matches_the_runtime_brand() -> None:
 class _FakeTray:
     """只提供 close_to_tray 判定需要的那点协议。"""
 
-    def __init__(self, available: bool = True) -> None:
+    def __init__(self, available: bool = True, visible: bool = True) -> None:
         self._available = available
+        self._visible = visible
+        self.ensured = 0
 
     @property
     def available(self) -> bool:
         return self._available
+
+    def ensure_visible(self) -> bool:
+        self.ensured += 1
+        return self._visible
 
     def dispose(self) -> None:
         self._available = False
@@ -758,12 +797,28 @@ def test_settings_panel_has_no_clipboard_hotkey(window: Any) -> None:
     assert "hotkeys.clipboard" not in panel._field_widgets
 
 
-def test_request_close_hides_when_close_to_tray(window: Any) -> None:
+def test_request_close_hides_when_close_to_tray(window: Any, qapp: Any) -> None:
     window.tray = _FakeTray(available=True)
     window.config.ui.close_to_tray = True
+    window.show()
+    qapp.processEvents()
     assert window.request_close() is True
+    assert window.tray.ensured == 1, "隐藏前要先确认托盘图标真的挂上"
     assert window.isHidden() is True
     assert window._shutdown_done is False, "收进托盘不能走清理流程"
+
+
+def test_request_close_minimizes_when_tray_icon_is_invisible(
+    window: Any, qapp: Any
+) -> None:
+    # 0.3.16：图标挂不上时不能把窗口藏进“找不到”的状态，退化成最小化。
+    window.tray = _FakeTray(available=True, visible=False)
+    window.config.ui.close_to_tray = True
+    window.show()
+    qapp.processEvents()
+    assert window.request_close() is True
+    assert window.isMinimized() is True
+    assert window._shutdown_done is False
 
 
 def test_request_close_quits_when_setting_off(window: Any) -> None:

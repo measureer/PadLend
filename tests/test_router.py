@@ -285,7 +285,7 @@ def test_corner_priority_selects_right_edge() -> None:
 def test_overflow_triggers_returning_and_debounce() -> None:
     rig = make_rig()
     capture_by_arm(rig)
-    rig.router.on_raw(raw(-30, 0))
+    rig.router.on_raw(raw(-(C.EXIT_OVERFLOW_PX + 10), 0))
     assert rig.router.state is State.RETURNING
     assert rig.mask.release_calls >= 1
     rig.clock.advance(0.2)
@@ -314,10 +314,10 @@ def test_overflow_counts_only_after_hit() -> None:
 
 
 def test_immediate_reverse_at_entry_returns_to_pc() -> None:
-    # 误入平板后不需要先深入固定距离；抵达入口边并外推 24px 即可返回。
+    # 误入平板后不需要先深入固定距离；抵达入口边并外推阈值即可返回。
     rig = make_rig()
     capture_by_arm(rig)
-    rig.router.on_raw(raw(-30, 0))
+    rig.router.on_raw(raw(-(C.EXIT_OVERFLOW_PX + 10), 0))
     assert rig.router.state is State.RETURNING
 
 
@@ -334,7 +334,7 @@ def test_entry_corner_does_not_hide_return_edge() -> None:
         assert rig.router.state is State.CAPTURED
         assert rig.router.estimator is not None
         assert rig.router.estimator.y == 0
-        rig.router.on_raw(raw(0, -30))
+        rig.router.on_raw(raw(0, -(C.EXIT_OVERFLOW_PX + 10)))
         assert rig.router.state is State.RETURNING
 
 
@@ -382,7 +382,7 @@ def test_mouse_buttons_block_exit_until_release() -> None:
     rig.router.on_raw(raw(300, 0))
     rig.router.on_raw(raw(-300, 0, buttons=C.MOUSE_BTN_LEFT))
     assert rig.router.state is State.CAPTURED
-    rig.router.on_raw(raw(-30, 0))
+    rig.router.on_raw(raw(-(C.EXIT_OVERFLOW_PX + 10), 0))
     assert rig.router.state is State.RETURNING
 
 
@@ -479,7 +479,7 @@ def test_i1_no_displacement_outside_captured() -> None:
     assert (1, 0) in rig.session.displacements
 
     marker = len(rig.session.mouse_reports)
-    rig.router.on_raw(raw(-30, 0))
+    rig.router.on_raw(raw(-(C.EXIT_OVERFLOW_PX + 10), 0))
     assert rig.router.state is State.RETURNING
     rig.router.on_raw(raw(50, 50))
     rig.router._sender_frame()
