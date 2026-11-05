@@ -205,3 +205,28 @@ adb shell settings put system pointer_location 0
 | A11 强杀清理 | 待复验 |
 | A12 性能/延迟 | 待复验 |
 | A13 长时间稳定性 | 待复验 |
+
+## 8. 系统托盘
+
+### 托盘里没有图标 / 点 X 只最小化到任务栏
+
+先看日志里的 `tray shown: ... native_ok=... err=...`：
+
+- `native_ok=True`：图标已被系统接受，可能只是被 Windows 11 收进了任务栏右下角的「^」溢出区；把它拖到任务栏上即可常驻。
+- `native_ok=False err=5`：`ERROR_ACCESS_DENIED`，进程以低完整性（Low integrity）运行，Explorer 拒绝注册托盘图标。此时程序会故意退化成最小化，避免把窗口藏到“找不到图标也找不到窗口”的状态。
+
+检查 exe 的完整性标签：
+
+```powershell
+icacls dist\PadLend.exe
+```
+
+如果看到 `Mandatory Label\Low Mandatory Level`，说明 exe 是在带 Low 标签的目录里构建/复制得到的。用一个普通权限的 shell 把 exe 复制到 `%LOCALAPPDATA%` 下的普通目录，再**移动**回 `dist`（复制会重新继承 Low，移动会保留目标文件的标签）：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\PadLend-build" | Out-Null
+copy dist\PadLend.exe "$env:LOCALAPPDATA\PadLend-build\PadLend.exe"
+move /Y "$env:LOCALAPPDATA\PadLend-build\PadLend.exe" dist\PadLend.exe
+```
+
+`dist` 里的 `_MEI*` 是 onefile 运行期解包目录，不会影响托盘注册。

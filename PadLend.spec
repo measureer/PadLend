@@ -9,6 +9,15 @@ Output: dist/PadLend.exe (single executable).
 The onefile bootloader extracts next to the exe (runtime_tmpdir=".") instead
 of %TEMP%; this keeps the portable app working in restricted Windows profiles
 where the system temp directory is not writable.
+
+If the workspace carries a Low mandatory integrity label (sandboxed build
+directory), files created in dist\\ inherit it and Windows starts the exe at
+low integrity. The shell then rejects tray icons with ERROR_ACCESS_DENIED (5).
+From a normal shell, re-stamp the finished exe by copying it to a normal
+folder and moving it back (the move preserves the file's label):
+
+    copy dist\\PadLend.exe %LOCALAPPDATA%\\PadLend-build\\PadLend.exe
+    move /Y %LOCALAPPDATA%\\PadLend-build\\PadLend.exe dist\\PadLend.exe
 """
 
 from pathlib import Path
