@@ -2,6 +2,29 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.18] — 2026-11-05
+
+### 修复
+
+- **托盘图标的「注册成功」不再靠 Qt 自说自话**：0.3.16/0.3.17 的日志里一直是
+  `available=True visible=True`，但图标可能根本没被外壳接受。新增
+  `win/trayprobe.py`：挂一个 message-only 的探针图标、立刻摘掉，用
+  `Shell_NotifyIconW` 的返回值当判据。
+  - 启动日志改为
+    `tray shown: qt_visible=… native_ok=… err=… entries=… self_entry=…`；
+    启动 1.2 秒后再复核一次（`tray recheck after startup -> …`）。
+  - 隐藏窗口前用探针复核（`ensure_visible`）；被拒时不再把窗口藏进“找不到”
+    的状态，改为最小化到任务栏，并在底栏写明原因与错误码。
+  - Windows 11 默认把新图标收进任务栏右下角的「^」溢出区：首次启动弹一次
+    位置提示（`ui.tray_hint_shown` 记录已弹过），设置页的「关闭窗口时最小化
+    到托盘」说明也补了这一句。
+
+### 测试
+
+- `tests/test_ui_smoke.py`：探针判定（`probe_registration` 返回 False → 不
+  隐藏、返回 True → 隐藏）、退化最小化时的底栏文案、首次提示只记一次。
+- 全量 411 passed, 3 skipped；`tools/acceptance.py` 33 项 0 失败 3 跳过。
+
 ## [0.3.17] — 2026-11-05
 
 ### 修改

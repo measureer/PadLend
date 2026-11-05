@@ -1011,6 +1011,18 @@ QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
 | 右键 | 手动接管·交还 / 重连 / 打开配置 / 复制诊断 / 退出 |
 | 气泡 | 仅首次连接、断连、重锚定（可关） |
 
+图标 = 品牌标（P）+ 右下角状态点；16/20px 只留品牌标（通知区 100% 缩放就是
+16px，叠点会两样都糊）。
+
+**可靠性（0.3.18）**：`QSystemTrayIcon.isVisible()` 只说明 Qt 自己 `show()` 过，
+图标是否真被外壳接受它并不知道。因此启动时用 `win/trayprobe.py` 挂一个探针
+图标再立刻摘掉，把 `Shell_NotifyIconW` 的返回值写进日志
+（`tray shown: qt_visible=… native_ok=… err=… entries=… self_entry=…`）；隐藏
+窗口前再用它复核一次（`ensure_visible`），失败就退化成最小化并在底栏说明。
+Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区，所以首次启动弹一次
+位置提示（`ui.tray_hint_shown` 记已弹过）。设置页「关闭窗口时最小化到托盘」
+的说明里也写明了这一点。
+
 ### 6.10.8 其他界面
 
 - **首次向导**：检查 adb → USB 调试 → UHID 可写 → server jar → 完成

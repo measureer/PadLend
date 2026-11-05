@@ -770,6 +770,39 @@ class _FakeTray:
         self._available = False
 
 
+class _FakeTrayIcon:
+    """假的 QSystemTrayIcon：只记调用，不碰真实通知区。"""
+
+    def __init__(self, visible: bool = True) -> None:
+        self._visible = visible
+        self.shown = 0
+        self.hidden = 0
+        self.messages: list[tuple[str, str]] = []
+
+    def show(self) -> None:
+        self.shown += 1
+        self._visible = True
+
+    def hide(self) -> None:
+        self.hidden += 1
+        self._visible = False
+
+    def isVisible(self) -> bool:  # noqa: N802 - Qt 命名
+        return self._visible
+
+    def setIcon(self, icon: Any) -> None:  # noqa: N802,N803 - Qt 命名
+        pass
+
+    def setToolTip(self, text: str) -> None:  # noqa: N802,N803 - Qt 命名
+        pass
+
+    def setContextMenu(self, menu: Any) -> None:  # noqa: N802,N803 - Qt 命名
+        pass
+
+    def showMessage(self, title: str, text: str, *args: Any) -> None:  # noqa: N802
+        self.messages.append((title, text))
+
+
 def test_close_to_tray_setting_roundtrips(tmp_path):
     path = tmp_path / "config.yaml"
     cfg = Config()
@@ -819,6 +852,38 @@ def test_request_close_minimizes_when_tray_icon_is_invisible(
     assert window.request_close() is True
     assert window.isMinimized() is True
     assert window._shutdown_done is False
+    assert "系统托盘没有接受图标" in window.bottom_hint.text()
+
+
+def test_tray_probe_decides_whether_the_icon_is_registered(monkeypatch: Any) -> None:
+    # 0.3.18：Qt 的 isVisible() 不可信，判据改成 Shell_NotifyIcon 的返回值。
+    import ui.tray as tray_mod
+
+    controller = tray_mod.TrayController()
+    fake = _FakeTrayIcon()
+    controller.tray = fake
+
+    monkeypatch.setattr(tray_mod, "probe_registration", lambda: (False, 5))
+    monkeypatch.setattr(tray_mod, "registered_paths", lambda: [])
+    assert controller.ensure_visible() is False
+    assert controller.registered is False
+    assert controller.last_error == 5
+    assert fake.shown >= 0
+
+    monkeypatch.setattr(tray_mod, "probe_registration", lambda: (True, 0))
+    assert controller.ensure_visible() is True
+    assert controller.registered is True
+
+
+def test_tray_hint_is_recorded_after_the_first_explanation(
+    window: Any, config_path: Path
+) -> None:
+    # 0.3.18：托盘位置提示只弹一次，弹完写进配置。
+    window.config.ui.tray_hint_shown = False
+    window.config_path = config_path
+    window._explain_tray_once()
+    assert window.config.ui.tray_hint_shown is True
+    assert Config.load(config_path).ui.tray_hint_shown is True
 
 
 def test_request_close_quits_when_setting_off(window: Any) -> None:

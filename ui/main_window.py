@@ -254,6 +254,7 @@ class MainWindow(QMainWindow):
         self._last_wireless_address = ""
         self._probe_thread: threading.Thread | None = None
         self._shutdown_done = False
+        self._tray_fallback_at = 0.0
 
         self._build_ui()
         self._build_tray()
@@ -609,6 +610,11 @@ class MainWindow(QMainWindow):
         self.menu_button.setVisible(not self.tray.available)
         if self.tray.available:
             self.tray.show()
+            # 有些外壳在窗口还没稳定时会把较早上报的图标丢掉：1.2 秒后再确认一次，
+            # 不改变用户看到的东西，只把真实结果写进日志（0.3.18）。
+            QTimer.singleShot(1200, self._recheck_tray)
+            if not bool(getattr(self.config.ui, "tray_hint_shown", False)):
+                QTimer.singleShot(2500, self._explain_tray_once)
 
     def _build_shortcuts(self) -> None:
         self.settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
@@ -1022,6 +1028,22 @@ class MainWindow(QMainWindow):
         tray = getattr(self, "tray", None)
         return bool(tray is not None and getattr(tray, "available", False))
 
+    def _recheck_tray(self) -> None:
+        """启动后复核一次托盘注册（0.3.18）。"""
+        ensure = getattr(self.tray, "ensure_visible", None)
+        if callable(ensure):
+            ok = ensure()
+            log.info("tray recheck after startup -> %s", ok)
+
+    def _explain_tray_once(self) -> None:
+        """首次启动时告诉用户图标在「^」溢出区（0.3.18）。"""
+        explain = getattr(self.tray, "explain_location", None)
+        if callable(explain):
+            explain()
+        self.config.ui.tray_hint_shown = True
+        self._save_config()
+        log.info("tray location hint shown once (ui.tray_hint_shown)")
+
     def request_close(self) -> bool:
         """处理“用户想关窗口”。
 
@@ -1036,10 +1058,20 @@ class MainWindow(QMainWindow):
                 if callable(ensure) and not ensure():
                     # 托盘图标挂不上时不要把窗口藏进“找不到”的状态：
                     # 退化成最小化，用户还能从任务栏点回来。
+                    # 原生 WM_CLOSE 与 Qt 的 closeEvent 会先后各来一次，用时间戳去重。
+                    now = time.monotonic()
+                    if now - self._tray_fallback_at < 0.6:
+                        return True
+                    self._tray_fallback_at = now
                     self.showMinimized()
+                    self.bottom_hint.setText(
+                        "系统托盘没有接受图标，已改为最小化到任务栏；"
+                        "可在设置里关闭「关闭窗口时最小化到托盘」"
+                    )
                     log.warning(
-                        "tray icon is not visible; minimized instead of hiding "
-                        "(ui.close_to_tray)"
+                        "tray icon rejected by the shell; minimized instead of "
+                        "hiding (ui.close_to_tray err=%s)",
+                        getattr(self.tray, "last_error", 0),
                     )
                     return True
                 self.hide()

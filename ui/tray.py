@@ -26,6 +26,37 @@ log = logging.getLogger("ui.tray")
 _TRAY_ICON_SIZE = 32
 
 
+def probe_registration() -> tuple[bool, int]:
+    """直接问 Windows 能不能挂上通知区图标。
+
+    ``QSystemTrayIcon.isVisible()`` 只说明 Qt 自己 ``show()`` 过了，图标是否
+    真的被 ``Shell_NotifyIcon`` 接受它并不知道；0.3.16/0.3.17 的日志里
+    ``available=True visible=True`` 却看不到图标就是这个原因。这里挂一个
+    message-only 的探针图标、立刻摘掉，用返回值当可信判据。
+    """
+    try:
+        from win.trayprobe import probe_icon
+    except Exception:  # pragma: no cover - 非 Windows 或导入失败
+        return (True, 0)
+    try:
+        return probe_icon()
+    except Exception as exc:  # pragma: no cover - 探针自身出错不拦主流程
+        log.debug("tray probe failed: %r", exc)
+        return (True, 0)
+
+
+def registered_paths() -> list[str]:
+    """Windows 为托盘图标记下的 ``ExecutablePath`` 列表（诊断用）。"""
+    try:
+        from win.trayprobe import registered_paths as paths
+    except Exception:  # pragma: no cover - 非 Windows
+        return []
+    try:
+        return paths()
+    except Exception:  # pragma: no cover
+        return []
+
+
 def status_icon(state: str, size: int = _TRAY_ICON_SIZE) -> QIcon:
     """托盘图标：品牌标 + 右下角状态点（0.3.16）。
 
@@ -103,6 +134,8 @@ class TrayController(QObject):
         self.quit_action = self._add_action("退出 PadLend", self.quitRequested)
 
         self.tray: QSystemTrayIcon | None = None
+        self.last_error = 0
+        self._registered: bool | None = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             tray = QSystemTrayIcon(status_icon(""), self)
             tray.setToolTip(f"{C.APP_NAME} · {tokens.state_label('')}")
@@ -150,10 +183,19 @@ class TrayController(QObject):
     def show(self) -> None:
         if self.tray is not None:
             self.tray.show()
+            self._registered, self.last_error = probe_registration()
+            paths = registered_paths()
+            own = _own_exe_name()
+            registered_self = any(p.lower().endswith(own) for p in paths) if own else False
             log.info(
-                "tray shown: available=%s visible=%s",
+                "tray shown: qt_available=%s qt_visible=%s native_ok=%s err=%d "
+                "entries=%d self_entry=%s",
                 QSystemTrayIcon.isSystemTrayAvailable(),
                 self.tray.isVisible(),
+                self._registered,
+                self.last_error,
+                len(paths),
+                registered_self,
             )
 
     def hide(self) -> None:
@@ -164,6 +206,11 @@ class TrayController(QObject):
     def visible(self) -> bool:
         """图标此刻是否真的挂在通知区（Windows 上 show() 可能被吞）。"""
         return bool(self.tray is not None and self.tray.isVisible())
+
+    @property
+    def registered(self) -> bool | None:
+        """``Shell_NotifyIcon`` 是否接受了我们的图标；None 表示还没探测过。"""
+        return self._registered
 
     def ensure_visible(self) -> bool:
         """确认图标在通知区；不在就再 show() 一次。
@@ -179,9 +226,16 @@ class TrayController(QObject):
         if not self.tray.isVisible():
             log.info("tray icon not visible; re-showing before hiding the window")
             self.tray.show()
-        visible = self.tray.isVisible()
-        log.info("tray ensure_visible -> %s", visible)
-        return visible
+        ok, err = probe_registration()
+        self._registered, self.last_error = ok, err
+        if ok:
+            log.info(
+                "tray ensure_visible -> True (native_ok, qt_visible=%s)",
+                self.tray.isVisible(),
+            )
+            return True
+        log.warning("tray registration rejected by the shell (err=%d)", err)
+        return False
 
     def dispose(self) -> None:
         """退出前清理，避免托盘幽灵图标残留。"""
@@ -189,6 +243,25 @@ class TrayController(QObject):
             self.tray.setContextMenu(None)
             self.tray.hide()
             self.tray = None
+
+    def explain_location(self) -> None:
+        """一次性告诉用户图标去了哪儿（不看通知开关）。
+
+        Windows 11 默认把**新**托盘图标收进任务栏右下角的「^」溢出区，
+        用户第一反应就是“程序没在托盘里”。这条提示只在首次启动弹一次。
+        """
+        if self.tray is None:
+            return
+        try:
+            self.tray.showMessage(
+                C.APP_NAME,
+                "我在系统托盘里运行：图标在任务栏右下角的「^」里，"
+                "拖到任务栏上可以常驻；右键它可退出。",
+                QSystemTrayIcon.MessageIcon.Information,
+                6000,
+            )
+        except Exception as exc:  # pragma: no cover - 平台差异
+            log.debug("tray hint failed: %r", exc)
 
     def notify(self, title: str, message: str) -> None:
         """气泡通知（仅托盘可用且用户未关闭时）。"""
@@ -222,3 +295,14 @@ class TrayController(QObject):
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
             self.visibilityToggled.emit()
+
+
+def _own_exe_name() -> str:
+    """当前进程的可执行文件名（打包版 = PadLend.exe，源码版 = python.exe）。"""
+    import os
+    import sys
+
+    try:
+        return os.path.basename(sys.executable).lower()
+    except Exception:  # pragma: no cover - 拿不到就当未知
+        return ""

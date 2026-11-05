@@ -417,6 +417,27 @@ adb devices -l
 
 截图：`build/padlend-0.3.17-settings.png`（源码）、`build/padlend-0.3.17-pkg-settings.png`（打包版）。
 
+## 第 23 节：0.3.18 托盘注册自检与兜底（2026-11-05）
+
+| 项 | 命令 / 方式 | 结果 | 状态 |
+|---|---|---|---|
+| 探针直接问外壳 | `win/trayprobe.py::probe_icon()`（message-only 窗口 + `Shell_NotifyIconW` NIM_ADD/NIM_DELETE） | 本机返回 `(False, 5)`（ACCESS_DENIED）——本机 agent 会话挂不上通知区图标，属环境限制 | ✅ |
+| 启动日志能区分「注册失败」与「被收进 ^」 | 打包版启动后读 `padlend.log` | `tray shown: qt_available=True qt_visible=True native_ok=False err=5 entries=64 self_entry=False` | ✅ |
+| 启动后复核 | 同上，1.2 秒后 | `tray registration rejected by the shell (err=5)` + `tray recheck after startup -> False` | ✅ |
+| 图标被拒时退化成最小化 | 打包版 `WM_CLOSE`（`build/ps-close-check.ps1 -Hwnd 6558056 -ProcId 92180`） | `alive=True`、窗口最小化、日志 `tray icon rejected by the shell; minimized instead of hiding (ui.close_to_tray err=5)`，**只出现一次**（原生 WM_CLOSE 与 closeEvent 已去重） | ✅ |
+| 底栏告知原因 | 恢复窗口截图 | 底栏显示「系统托盘没有接受图标，已改为最小化到任务栏，可在设置里关闭「关闭窗口时最小化到托盘」」 | ✅ |
+| 首次启动的位置提示只弹一次 | 启动后读配置 | 日志 `tray location hint shown once (ui.tray_hint_shown)`，`config.yaml` 写入 `ui.tray_hint_shown: true` | ✅ |
+| 单元测试 | `pytest -o addopts="" -q` | 411 passed, 3 skipped（新增探针判定、退化文案、首次提示三例） | ✅ |
+| 无硬件验收 | `python tools/acceptance.py` | 33 项 0 失败 3 跳过 | ✅ |
+| 0.3.18 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 53,196,978 B，sha256 `f92ed0260b7771127ca2a5d47e9caaeb61b5a9a81eafc5d7c108a75e1aef4732`，`--version` → `PadLend 0.3.18` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2 --no-wizard --no-single-instance` | exit 0 | ✅ |
+
+截图：`build/padlend-0.3.18-tray-fallback.png`（打包版被拒后最小化 + 底栏说明，底部 `v0.3.18`）。
+
+**待真机复验**：用户机器上 `tray shown` 行的 `native_ok` / `err` 才代表真实结果。若
+`native_ok=True`，图标已被外壳接受、只是落在任务栏「^」溢出区（拖出来即可常驻）；
+若 `native_ok=False`，把 `err=` 的值发回来即可定位（5=ACCESS_DENIED 表示外壳拒绝）。
+
 
 
 

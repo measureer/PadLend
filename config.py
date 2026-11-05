@@ -91,6 +91,8 @@ class UiCfg:
     show_pointer_ghost: bool = True
     # 关闭主窗时：True = 收进托盘继续跑；False = 完全退出（0.3.12）
     close_to_tray: bool = False
+    # 托盘位置提示只弹一次（0.3.18：Win11 把新图标收进「^」溢出区）
+    tray_hint_shown: bool = False
 
 
 @dataclass
@@ -257,6 +259,7 @@ class Config:
                 "tray_notifications": bool,
                 "show_pointer_ghost": bool,
                 "close_to_tray": bool,
+                "tray_hint_shown": bool,
             },
         )
         cfg.misc = _section(

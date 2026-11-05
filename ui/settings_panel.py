@@ -438,7 +438,9 @@ class SettingsPanel(QWidget):
             self._check_row(
                 self.close_tray_check,
                 "点窗口 X 时：勾选 = 只收进托盘，接管服务继续在后台跑，"
-                "要从托盘菜单「退出 PadLend」才真退；不勾选 = 直接退出。",
+                "要从托盘菜单「退出 PadLend」才真退；不勾选 = 直接退出。"
+                "图标通常被 Windows 11 收在任务栏右下角的「^」里，"
+                "可以拖到任务栏上常驻。",
             )
         )
         right = QVBoxLayout()
