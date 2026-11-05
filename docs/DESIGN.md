@@ -1019,9 +1019,8 @@ QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
 图标再立刻摘掉，把 `Shell_NotifyIconW` 的返回值写进日志
 （`tray shown: qt_visible=… native_ok=… err=… entries=… self_entry=…`）；隐藏
 窗口前再用它复核一次（`ensure_visible`），失败就退化成最小化并在底栏说明。
-Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区，所以首次启动弹一次
-位置提示（`ui.tray_hint_shown` 记已弹过）。设置页「关闭窗口时最小化到托盘」
-的说明里也写明了这一点。
+Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区；设置页「关闭窗口时
+最小化到托盘」的说明里写明了这一点。
 
 ### 6.10.8 其他界面
 

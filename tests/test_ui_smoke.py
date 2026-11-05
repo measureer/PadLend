@@ -757,6 +757,7 @@ class _FakeTray:
         self._available = available
         self._visible = visible
         self.ensured = 0
+        self.messages: list[tuple[str, str]] = []
 
     @property
     def available(self) -> bool:
@@ -765,6 +766,9 @@ class _FakeTray:
     def ensure_visible(self) -> bool:
         self.ensured += 1
         return self._visible
+
+    def notify(self, title: str, message: str) -> None:
+        self.messages.append((title, message))
 
     def dispose(self) -> None:
         self._available = False
@@ -839,6 +843,7 @@ def test_request_close_hides_when_close_to_tray(window: Any, qapp: Any) -> None:
     assert window.tray.ensured == 1, "隐藏前要先确认托盘图标真的挂上"
     assert window.isHidden() is True
     assert window._shutdown_done is False, "收进托盘不能走清理流程"
+    assert window.tray.messages == [], "收进托盘不再弹“已最小化到托盘”气泡"
 
 
 def test_request_close_minimizes_when_tray_icon_is_invisible(
@@ -873,17 +878,6 @@ def test_tray_probe_decides_whether_the_icon_is_registered(monkeypatch: Any) -> 
     monkeypatch.setattr(tray_mod, "probe_registration", lambda: (True, 0))
     assert controller.ensure_visible() is True
     assert controller.registered is True
-
-
-def test_tray_hint_is_recorded_after_the_first_explanation(
-    window: Any, config_path: Path
-) -> None:
-    # 0.3.18：托盘位置提示只弹一次，弹完写进配置。
-    window.config.ui.tray_hint_shown = False
-    window.config_path = config_path
-    window._explain_tray_once()
-    assert window.config.ui.tray_hint_shown is True
-    assert Config.load(config_path).ui.tray_hint_shown is True
 
 
 def test_request_close_quits_when_setting_off(window: Any) -> None:

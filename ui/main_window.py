@@ -613,8 +613,6 @@ class MainWindow(QMainWindow):
             # 有些外壳在窗口还没稳定时会把较早上报的图标丢掉：1.2 秒后再确认一次，
             # 不改变用户看到的东西，只把真实结果写进日志（0.3.18）。
             QTimer.singleShot(1200, self._recheck_tray)
-            if not bool(getattr(self.config.ui, "tray_hint_shown", False)):
-                QTimer.singleShot(2500, self._explain_tray_once)
 
     def _build_shortcuts(self) -> None:
         self.settings_shortcut = QShortcut(QKeySequence("Ctrl+,"), self)
@@ -1035,15 +1033,6 @@ class MainWindow(QMainWindow):
             ok = ensure()
             log.info("tray recheck after startup -> %s", ok)
 
-    def _explain_tray_once(self) -> None:
-        """首次启动时告诉用户图标在「^」溢出区（0.3.18）。"""
-        explain = getattr(self.tray, "explain_location", None)
-        if callable(explain):
-            explain()
-        self.config.ui.tray_hint_shown = True
-        self._save_config()
-        log.info("tray location hint shown once (ui.tray_hint_shown)")
-
     def request_close(self) -> bool:
         """处理“用户想关窗口”。
 
@@ -1075,13 +1064,6 @@ class MainWindow(QMainWindow):
                     )
                     return True
                 self.hide()
-                notify = getattr(self.tray, "notify", None)
-                if callable(notify):
-                    notify(
-                        C.APP_NAME,
-                        "已最小化到托盘。找不到图标时点任务栏右下角的「^」，"
-                        "或右键图标菜单里选「退出 PadLend」。",
-                    )
                 log.info("window hidden to tray (ui.close_to_tray)")
             return True
         self.request_quit()

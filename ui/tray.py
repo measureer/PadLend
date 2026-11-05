@@ -244,25 +244,6 @@ class TrayController(QObject):
             self.tray.hide()
             self.tray = None
 
-    def explain_location(self) -> None:
-        """一次性告诉用户图标去了哪儿（不看通知开关）。
-
-        Windows 11 默认把**新**托盘图标收进任务栏右下角的「^」溢出区，
-        用户第一反应就是“程序没在托盘里”。这条提示只在首次启动弹一次。
-        """
-        if self.tray is None:
-            return
-        try:
-            self.tray.showMessage(
-                C.APP_NAME,
-                "我在系统托盘里运行：图标在任务栏右下角的「^」里，"
-                "拖到任务栏上可以常驻；右键它可退出。",
-                QSystemTrayIcon.MessageIcon.Information,
-                6000,
-            )
-        except Exception as exc:  # pragma: no cover - 平台差异
-            log.debug("tray hint failed: %r", exc)
-
     def notify(self, title: str, message: str) -> None:
         """气泡通知（仅托盘可用且用户未关闭时）。"""
         if not self._notifications or self.tray is None:
