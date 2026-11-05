@@ -894,10 +894,10 @@ def test_settings_widgets_do_not_react_to_the_wheel(window: Any) -> None:
     widgets = [
         window.settings.edge_combo,
         window.settings.align_combo,
-        window.settings.corner_combo,
+        window.settings.hz_combo,
         window.settings.layout_combo,
         window.settings.exit_slider,
-        window.settings.offset_slider,
+        window.settings.arm_slider,
     ]
     for widget in widgets:
         event = _Wheel()

@@ -52,13 +52,6 @@ ALIGN_LABELS: list[tuple[str, str]] = [
     ("1:1", Align.ONE_TO_ONE.value),
 ]
 
-CORNER_LABELS: list[tuple[str, str]] = [
-    ("自动", ""),
-    ("左", Edge.LEFT.value),
-    ("右", Edge.RIGHT.value),
-    ("上", Edge.TOP.value),
-    ("下", Edge.BOTTOM.value),
-]
 
 LAYOUTS: list[str] = ["us", "uk", "de", "fr", "es", "ru", "ja"]
 
@@ -305,35 +298,8 @@ class SettingsPanel(QWidget):
             )
         )
 
-        self.offset_row = SliderRow(
-            "偏移", 0, 100, 50, lambda v: f"{v / 100:.2f}", box
-        )
-        self.offset_slider = self.offset_row.slider
-        layout.addWidget(self.offset_row)
-        layout.addWidget(
-            self._hint(
-                "平板影幕沿吸附边前后挪的位置：0.00 贴在边的起点（如屏幕最上端），"
-                "1.00 贴在终点。影幕和这条边一样长时调它看不出变化。"
-            )
-        )
-
-        self.corner_combo = _NoWheelComboBox(box)
-        for text, value in CORNER_LABELS:
-            self.corner_combo.addItem(text, value)
-        self.corner_combo.setToolTip("拖到角落时优先吸附的边（Shift 临时切换）")
-        layout.addWidget(
-            self._labeled_row(
-                "角优先",
-                self.corner_combo,
-                "鼠标推到两块屏幕交界的角落时，先算作哪条边（决定往左穿还是往下穿）。"
-                "「自动」按鼠标更靠近的那条边算；被角卡住时按住 Shift 可临时切到另一边。",
-            )
-        )
-
         self._field_widgets["placement.edge"] = self.edge_combo
         self._field_widgets["placement.align"] = self.align_combo
-        self._field_widgets["placement.offset"] = self.offset_slider
-        self._field_widgets["placement.corner_priority"] = self.corner_combo
         return box
 
     def _build_motion_group(self) -> QGroupBox:
@@ -501,8 +467,6 @@ class SettingsPanel(QWidget):
     def _connect(self) -> None:
         self.edge_combo.currentIndexChanged.connect(self._on_control_changed)
         self.align_combo.currentIndexChanged.connect(self._on_control_changed)
-        self.corner_combo.currentIndexChanged.connect(self._on_control_changed)
-        self.offset_slider.valueChanged.connect(self._on_control_changed)
         for row in (
             self.gain_row,
             self.arm_row,
@@ -626,11 +590,14 @@ class SettingsPanel(QWidget):
         if not isinstance(segment, EdgeSegment):
             return None
         align_text = str(self.align_combo.currentData() or Align.PROPORTIONAL.value)
-        corner_text = str(self.corner_combo.currentData() or "")
+        # 偏移与角优先不再有设置项：偏移由「布局」页拖动平板决定，角优先由
+        # 拖动时按 Shift 循环（默认自动）。这里沿用配置里已有的值，不要覆盖。
+        stored = self._config.placement
+        corner_text = str(stored.corner_priority or "")
         try:
             return Placement(
                 segment=segment,
-                offset=float(self.offset_slider.value()) / 100.0,
+                offset=float(stored.offset),
                 align=Align(align_text),
                 corner_priority=Edge(corner_text) if corner_text else None,
             )
@@ -685,8 +652,6 @@ class SettingsPanel(QWidget):
         if index >= 0:
             self.edge_combo.setCurrentIndex(index)
         self._select_data(self.align_combo, cfg.align)
-        self.offset_slider.setValue(int(round(cfg.offset * 100)))
-        self._select_data(self.corner_combo, cfg.corner_priority or "")
 
     def _find_segment_index(self, monitor: str, edge: str) -> int:
         if not self._segments:
@@ -740,7 +705,7 @@ class SettingsPanel(QWidget):
             combo.setCurrentIndex(index)
 
     def _refresh_value_labels(self) -> None:
-        for row in (self.offset_row, self.gain_row, self.arm_row, self.exit_row):
+        for row in (self.gain_row, self.arm_row, self.exit_row):
             row.update_label()
 
     def _on_control_changed(self, *_args: object) -> None:

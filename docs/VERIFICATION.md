@@ -399,6 +399,24 @@ adb devices -l
 关闭到托盘后从托盘菜单「打开主窗口」/重新运行 PadLend 能唤回窗口。
 截图：`build/padlend-0.3.16-settings.png`、托盘图标预览 `build/padlend-0.3.16-tray-icons.png`。
 
+---
+
+## 第 22 节：0.3.17 设置页删掉「偏移」「角优先」（2026-11-05）
+
+| 项 | 命令 / 方式 | 结果 | 状态 |
+|---|---|---|---|
+| 设置页不再有这两行 | 源码实例 `Ctrl+,` → UIA 读「📍 平板位置」卡片 | 只有「吸附边」「对齐」两行；无「偏移」「角优先」 | ✅ |
+| 面板不引用已删控件 | `ruff check .` | All checks passed | ✅ |
+| 控件注册表同步清理 | 单测 `test_settings_widgets_do_not_react_to_the_wheel` | 通过（控件列表改为 edge/align/hz/layout/exit/arm） | ✅ |
+| 摆位仍能保存 | `_build_placement()` 从 `config.placement` 读回 `offset` / `corner_priority` | 未覆盖画布拖动写入的值 | ✅ |
+| 配置兼容 | 旧 yaml 里的 `placement.offset` / `placement.corner_priority` | 字段保留、继续生效；设置页不再显示 | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 409 passed, 3 skipped | ✅ |
+| 0.3.17 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 53,185,982 B，sha256 `1a601a1e9891f2d8b42e58ae92d7a93fe156e6a4ec2fbf6bb7854839a132223d`，`--version` → `PadLend 0.3.17` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2 --no-wizard --no-single-instance` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate` → `Ctrl+,` 截图 | 「📍 平板位置」只剩吸附边/对齐，无偏移/角优先；`v0.3.17`；`WM_CLOSE` 后进程归零 | ✅ |
+
+截图：`build/padlend-0.3.17-settings.png`（源码）、`build/padlend-0.3.17-pkg-settings.png`（打包版）。
+
 
 
 
