@@ -52,6 +52,7 @@ class SimulatedSession:
     reports: list[SimReport] = field(default_factory=list)
     keys: list[tuple[int, tuple[int, ...]]] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
+    clipboards: list[tuple[str, bool]] = field(default_factory=list)
     cursor: tuple[float, float] = (0.0, 0.0)
 
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
@@ -125,6 +126,13 @@ class SimulatedSession:
         with self._lock:
             self.texts.append(str(text))
 
+    def set_clipboard(self, text: str, *, sequence: int = 0, paste: bool = False) -> None:
+        """记录写平板剪贴板的请求（0.3.14 起自动同步走这条路）。"""
+        if not text:
+            return
+        with self._lock:
+            self.clipboards.append((str(text), bool(paste)))
+
     def health(self) -> HealthReport:
         with self._lock:
             return HealthReport(
@@ -164,6 +172,7 @@ class SimulatedSession:
             self.reports.clear()
             self.keys.clear()
             self.texts.clear()
+            self.clipboards.clear()
 
     @property
     def clicks(self) -> int:

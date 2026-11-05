@@ -27,6 +27,7 @@ MSG_UHID_CREATE: Final = 12
 MSG_UHID_INPUT: Final = 13
 MSG_UHID_DESTROY: Final = 14
 MSG_OPEN_HARD_KEYBOARD_SETTINGS: Final = 15
+MSG_SET_CLIPBOARD: Final = 9  # 直接写平板剪贴板，不敲键盘（6.8）
 
 # android.view.KeyEvent.ACTION_* / MotionEvent.ACTION_*
 ACTION_DOWN: Final = 0
@@ -36,6 +37,7 @@ ACTION_UP: Final = 1
 _U8 = 0xFF
 _U16 = 0xFFFF
 _U32 = 0xFFFF_FFFF
+_U64 = 0xFFFF_FFFF_FFFF_FFFF
 
 # Android KeyEvent 的常用键码（发送端与 probe 用）
 KEYCODE_BACK: Final = 4
@@ -58,6 +60,12 @@ def _u16(value: int, field: str) -> int:
 def _u32(value: int, field: str) -> int:
     if not 0 <= value <= _U32:
         raise ValueError(f"{field} 超出 u32 范围: {value}")
+    return value
+
+
+def _u64(value: int, field: str) -> int:
+    if not 0 <= value <= _U64:
+        raise ValueError(f"{field} 超出 u64 范围: {value}")
     return value
 
 
@@ -86,6 +94,29 @@ def inject_text(text: str) -> bytes:
     """
     payload = text.encode("utf-8")
     return struct.pack(">BI", MSG_INJECT_TEXT, _u32(len(payload), "text 长度")) + payload
+
+
+def set_clipboard(text: str, *, sequence: int = 0, paste: bool = False) -> bytes:
+    """直接写平板剪贴板（type 9，6.8）。
+
+    载荷：``sequence(8) paste(1) len(4) utf8(len)``，大端。
+
+    和 ``inject_text`` 的区别是它**不会敲键盘**：服务端调
+    ``ClipboardManager.setPrimaryClip()``，平板当前 App 收不到任何按键，
+    所以可以安全地在接管瞬间与每次复制时自动同步。``paste=True`` 时服务端
+    还会在焦点输入框里执行一次粘贴（快捷键路径用）。
+    """
+    payload = text.encode("utf-8")
+    return (
+        struct.pack(
+            ">BQBI",
+            MSG_SET_CLIPBOARD,
+            _u64(sequence, "sequence"),
+            1 if paste else 0,
+            _u32(len(payload), "text 长度"),
+        )
+        + payload
+    )
 
 
 def back_or_screen_on(action: int) -> bytes:

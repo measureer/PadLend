@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import yaml
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import QApplication, QLabel, QWizardPage
 
 from config import Config
@@ -72,6 +72,10 @@ class FakeRouter:
 
     def resync_pointer(self) -> None:
         self.calls.append(("resync_pointer", None))
+
+    def inject_clipboard(self, text: str, *, paste: bool = False) -> bool:
+        self.calls.append(("clipboard", (text, bool(paste))))
+        return True
 
 
 class FakeDesktop:
@@ -253,6 +257,41 @@ def test_entering_capture_does_not_push_the_clipboard(
     qapp.processEvents()
     assert window._state == "captured"
     assert fired == []
+
+
+def test_entering_capture_syncs_the_clipboard_when_enabled(
+    window: Any, router: FakeRouter, qapp: QApplication
+) -> None:
+    """勾选「剪贴板同步」后，进入接管会自动同步一次（0.3.14）。
+
+    走 ``SET_CLIPBOARD``（不敲键盘），所以不会再触发平板 App 的快捷键。
+    """
+    QGuiApplication.clipboard().setText("hello tablet")
+    window.config.misc.clipboard_sync = True
+    window._on_state(State.IDLE, State.CAPTURED, "smoke")
+    assert window._clipboard_timer.isActive()
+    window._clipboard_timer.timeout.emit()
+    assert ("clipboard", ("hello tablet", False)) in router.calls
+
+
+def test_entering_capture_does_not_queue_clipboard_when_switched_off(
+    window: Any, router: FakeRouter
+) -> None:
+    window.config.misc.clipboard_sync = False
+    window._on_state(State.IDLE, State.CAPTURED, "smoke")
+    assert window._clipboard_timer.isActive() is False
+    assert not [call for call in router.calls if call[0] == "clipboard"]
+
+
+def test_clipboard_changes_only_sync_while_captured(window: Any) -> None:
+    window.config.misc.clipboard_sync = True
+    window._state = "idle"
+    window._on_clipboard_changed()
+    assert window._clipboard_timer.isActive() is False
+    window._state = "captured"
+    window._on_clipboard_changed()
+    assert window._clipboard_timer.isActive() is True
+    window._clipboard_timer.stop()
 
 
 def test_bridge_detach_restores_callbacks(window: Any, router: FakeRouter) -> None:

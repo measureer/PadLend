@@ -333,5 +333,28 @@ adb devices -l
 仍需真机确认：真机换 IP / 换端口后能否在列表里自动标成新地址；ARP 表里查不到时
 （例如平板刚休眠）应显示「不在线」而不是卡住。
 
+## 19. 0.3.14 剪贴板自动同步（2026-11-05）
+
+| 项 | 命令 / 检查 | 实际 | 结论 |
+|---|---|---|---|
+| 服务端支持 type 9 | 解包 `vendor/scrcpy-server-v5.0.1.jar` 后 `grep -c` `classes.dex` | `SET_CLIPBOARD`=1、`setPrimaryClip`=1、`GET_CLIPBOARD`=1、`getPrimaryClip`=1 | ✅ |
+| 报文逐字节 | `tests/test_protocol.py::test_set_clipboard_packs_sequence_paste_and_text` | `09` + `sequence(8)` + `paste(1)` + `len(4)` + utf8；`paste=False` 时该字节为 0 | ✅ |
+| 不再敲键盘 | `tests/test_clipboard.py` 四例 | 只记录 `set_clipboard`，`inject_text` 从未被调用 | ✅ |
+| 4KB 截断 | `::test_inject_clipboard_truncates_to_4kb` | 5000 个 `a` → 4096 字节 | ✅ |
+| 进入接管自动同步 | `tests/test_ui_smoke.py::test_entering_capture_syncs_the_clipboard_when_enabled` | 勾选时 `_clipboard_timer` 启动，触发后 router 收到 `("hello tablet", False)` | ✅ |
+| 未勾选不发 | `::test_entering_capture_does_not_queue_clipboard_when_switched_off` | 不排队、无 clipboard 调用 | ✅ |
+| 复制触发同步 | `::test_clipboard_changes_only_sync_while_captured` | 仅 `captured` 状态排队；`idle` 不排队 | ✅ |
+| 只写剪贴板 | `tools/acceptance.py` 第 33 项 | `clipboards=[("acceptance clipboard", False)]`、`texts=[]`、`keys=[]` | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 404 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 33 项，0 失败，3 跳过 | ✅ |
+| 0.3.14 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | `dist/PadLend.exe` 53,189,288 B，sha256 `549d1f8c5fbe62e8abe3f6e67ea6449bab710f8ede36d089abca01bddbad584e`，`--version` → `PadLend 0.3.14` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2 --no-single-instance` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate` + UIA + `ps-close-check.ps1` | 设置页显示「剪贴板同步」勾选与新说明、快捷键条目写「立即粘贴」、底部 `v0.3.14`、RTT 2ms；`WM_CLOSE` 后进程退出 | ✅ |
+
+仍需真机确认：接管时复制一段文字后，在平板输入框长按应能粘贴出同一段文字；
+刷抖音时穿过屏幕不应再触发「不感兴趣」。
+
+
 
 

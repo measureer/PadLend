@@ -298,8 +298,19 @@ def main(argv: list[str] | None = None) -> int:
         # 不感兴趣），所以进入接管时绝不能自动发剪贴板文本，也不能发键盘报告。
         report.check(
             not sim.texts and not sim.keys,
-            "进入接管不会向平板打字（剪贴板只在 Ctrl+Alt+V 时发）",
+            "进入接管不会向平板打字（剪贴板走 SET_CLIPBOARD，不敲键盘）",
             f"texts={sim.texts!r} keys={sim.keys!r}",
+        )
+        # 0.3.14：自动同步走 SET_CLIPBOARD（type 9），只写剪贴板、不产生按键事件。
+        cfg.misc.clipboard_sync = True
+        pushed = router.inject_clipboard("acceptance clipboard")
+        report.check(
+            pushed
+            and sim.clipboards == [("acceptance clipboard", False)]
+            and not sim.texts
+            and not sim.keys,
+            "剪贴板同步只写平板剪贴板（不敲键盘）",
+            f"pushed={pushed} clipboards={sim.clipboards!r} texts={sim.texts!r}",
         )
 
         # -- 单击（用户报的 bug 场景）---------------------------------------

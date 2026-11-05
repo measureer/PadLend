@@ -2,6 +2,21 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.14] — 2026-11-05
+
+### 修复 / 改进
+
+- **剪贴板同步改为自动**：勾选「⚙ 杂项 → 剪贴板同步」后，进入接管时同步一次，接管期间每次在 PC 上复制都会自动同步到平板，不需要再按快捷键；`Ctrl+Alt+V` 改成「立即粘贴一次」，只给需要往输入框贴文本的场合用。
+- **改用 `SET_CLIPBOARD` 协议（type 9）**：不再用 `INJECT_TEXT`。后者在服务端会被 `KeyCharacterMap.getEvents()` 翻成真实按键事件，等于把剪贴板当键盘打进平板前台 App（刷抖音命中 `R` 就是「不感兴趣」）。`SET_CLIPBOARD` 只调 `setPrimaryClip()` 写剪贴板，不产生任何按键，所以自动同步是安全的（scrcpy 5.0.1 服务端已支持该消息）。
+- 说明文字同步更新：快捷键条目改成「立即粘贴」，勾选项说明写清「进入接管 + 每次复制自动同步、不敲键盘」。
+
+### 测试
+
+- 新增 `tests/test_protocol.py::test_set_clipboard_packs_sequence_paste_and_text`（逐字节钉死 `sequence(8) paste(1) len(4) utf8`）与 `::test_set_clipboard_defaults_to_paste_off`。
+- `tests/test_clipboard.py` 改为断言写剪贴板路径：4KB 截断、开关、空串、`paste` 透传，并断言不再产生 `inject_text`。
+- `tests/test_ui_smoke.py`：勾选时进入接管会排队同步、未勾选不排队、`dataChanged` 只在接管期间触发。
+- `tools/acceptance.py` 新增「剪贴板同步只写平板剪贴板（不敲键盘）」：33 项，0 失败，3 跳过。
+
 ## [0.3.13] — 2026-11-05
 
 ### 新增

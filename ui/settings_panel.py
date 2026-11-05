@@ -438,8 +438,9 @@ class SettingsPanel(QWidget):
             self._labeled_row(
                 "剪贴板",
                 self.clipboard_edit,
-                "把 PC 剪贴板里的文字一次性发到平板当前输入框（纯文本，超过 4 KB 会截断）。"
-                "接管瞬间不会自动发，避免剪贴板里的字符被当成快捷键。",
+                "立即把 PC 剪贴板贴到平板当前输入框（纯文本，超过 4 KB 会截断）。"
+                "平时不用按它：勾选下面的「剪贴板同步」后，接管期间会自动同步"
+                "（直接写平板剪贴板，不会敲键盘）；这个快捷键只是手动粘贴一次。",
             )
         )
 
@@ -482,7 +483,9 @@ class SettingsPanel(QWidget):
         right.addWidget(
             self._check_row(
                 self.clipboard_check,
-                "允许用上面的剪贴板快捷键（默认 Ctrl+Alt+V）把文本发到平板。",
+                "勾选后，接管期间 PC 剪贴板会跟着平板走：进入接管时同步一次，"
+                "之后每次复制也会自动同步（直接写平板剪贴板，不敲键盘）；"
+                "取消勾选就完全不发。",
             )
         )
         right.addWidget(

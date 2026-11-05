@@ -1,4 +1,4 @@
-"""剪贴板注入（6.8，SHOULD）：大小限制与开关。"""
+"""剪贴板同步（6.8，SHOULD）：大小限制、开关与协议选择。"""
 
 from __future__ import annotations
 
@@ -9,9 +9,13 @@ from tests.fakes import FakeConfig, FakeDesktop, FakeMask, FakeSession
 class _RecordingSession(FakeSession):
     def __init__(self) -> None:
         super().__init__()
+        self.clipboards: list[tuple[str, bool]] = []
         self.texts: list[str] = []
 
-    def inject_text(self, text: str) -> None:
+    def set_clipboard(self, text: str, *, sequence: int = 0, paste: bool = False) -> None:
+        self.clipboards.append((text, bool(paste)))
+
+    def inject_text(self, text: str) -> None:  # 0.3.14 起不应再走这条路
         self.texts.append(text)
 
 
@@ -25,18 +29,28 @@ def test_inject_clipboard_truncates_to_4kb() -> None:
     session = _RecordingSession()
     router = _router(session)
     assert router.inject_clipboard("a" * 5000) is True
-    assert len(session.texts[0].encode("utf-8")) == 4096
+    assert len(session.clipboards[0][0].encode("utf-8")) == 4096
+    assert session.texts == []
 
 
 def test_inject_clipboard_respects_switch() -> None:
     session = _RecordingSession()
     router = _router(session, enabled=False)
     assert router.inject_clipboard("hello") is False
-    assert session.texts == []
+    assert session.clipboards == []
 
 
 def test_inject_clipboard_ignores_empty() -> None:
     session = _RecordingSession()
     router = _router(session)
     assert router.inject_clipboard("") is False
+    assert session.clipboards == []
+
+
+def test_inject_clipboard_passes_paste_flag() -> None:
+    session = _RecordingSession()
+    router = _router(session)
+    assert router.inject_clipboard("hello") is True
+    assert router.inject_clipboard("hello", paste=True) is True
+    assert session.clipboards == [("hello", False), ("hello", True)]
     assert session.texts == []

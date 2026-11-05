@@ -259,12 +259,20 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_tray()
         self._build_bridge()
-        self.clipboardSyncRequested.connect(self.sync_clipboard, Qt.ConnectionType.QueuedConnection)
+        self.clipboardSyncRequested.connect(
+            self._paste_clipboard, Qt.ConnectionType.QueuedConnection
+        )
         self.deviceActionFinished.connect(self._on_device_action_finished)
         self.addDeviceFinished.connect(self._on_add_device_finished)
         self.locatedFinished.connect(self._on_located)
         self.macKnown.connect(self._on_mac_known)
         self._build_shortcuts()
+        # 自动同步：接管时与每次复制都把文本写进平板剪贴板（0.3.14）。
+        self._clipboard_timer = QTimer(self)
+        self._clipboard_timer.setSingleShot(True)
+        self._clipboard_timer.setInterval(150)
+        self._clipboard_timer.timeout.connect(self.sync_clipboard)
+        self._watch_clipboard()
         self._build_actions()
         self._connect_canvas()
         self.update_device(None)
@@ -778,15 +786,45 @@ class MainWindow(QMainWindow):
         if reason:
             text = f"{text} {reason}"
         self.log_view.append_event("STATE", text)
-        # 接管瞬间**不**自动发剪贴板（6.8 改为仅热键）。INJECT_TEXT 在服务端
-        # 会被 KeyCharacterMap 变成真实按键事件，直接打进平板当前 App：抖音里
-        # 敲到 R 就是「不感兴趣」，也会让输入法/提示闪一下。只在用户按
-        # Ctrl+Alt+V 时同步（main.py 把热键接到 clipboardSyncRequested）。
+        if new_value == "captured":
+            # 接管瞬间同步一次：SET_CLIPBOARD 只写平板剪贴板，不敲键盘，
+            # 所以不会再出现「穿进去先按到某个键」的问题（0.3.14）。
+            self._schedule_clipboard_sync()
 
-    def sync_clipboard(self) -> None:
-        """把 PC 剪贴板文本发给平板（6.8，SHOULD）。
+    # ------------------------------------------------------------------ 剪贴板
+    def _watch_clipboard(self) -> None:
+        """PC 剪贴板一变就排队同步（只在接管期间，节流见 ``_clipboard_timer``）。"""
+        try:
+            clip = QGuiApplication.clipboard()
+        except Exception as exc:  # noqa: BLE001 - 无剪贴板时静默降级
+            log.debug("clipboard unavailable: %r", exc)
+            return
+        if clip is not None:
+            clip.dataChanged.connect(self._on_clipboard_changed)
 
-        只在 ``misc.clipboard_sync`` 打开时执行；图片/富文本不做。
+    def _on_clipboard_changed(self) -> None:
+        if self._state != "captured":
+            return
+        self._schedule_clipboard_sync()
+
+    def _schedule_clipboard_sync(self) -> None:
+        """合并短时间内的多次复制，避免一次复制发多条报文。"""
+        if not bool(getattr(getattr(self.config, "misc", None), "clipboard_sync", False)):
+            return
+        timer = getattr(self, "_clipboard_timer", None)
+        if timer is not None:
+            timer.start()
+
+    def _paste_clipboard(self) -> None:
+        """Ctrl+Alt+V：除了写剪贴板，还让平板在焦点输入框里粘贴一次。"""
+        self.sync_clipboard(paste=True)
+
+    def sync_clipboard(self, *, paste: bool = False) -> None:
+        """把 PC 剪贴板文本写进平板剪贴板（6.8，SHOULD）。
+
+        勾选 ``misc.clipboard_sync`` 时，接管瞬间与每次复制都会自动调用
+        （``paste=False``：只同步剪贴板，不敲键盘）；``Ctrl+Alt+V`` 走
+        ``_paste_clipboard``，额外让平板粘贴一次。图片/富文本不做。
         """
         if not bool(getattr(getattr(self.config, "misc", None), "clipboard_sync", False)):
             return
@@ -801,6 +839,8 @@ class MainWindow(QMainWindow):
         if not callable(inject):
             return
         try:
+            inject(text, paste=paste)
+        except TypeError:  # 兼容只接受一个参数的旧 router 替身
             inject(text)
         except Exception as exc:  # noqa: BLE001
             log.debug("clipboard inject failed: %r", exc)

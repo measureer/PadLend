@@ -307,3 +307,18 @@ def test_real_device_facts() -> None:
     assert facts.width > 0 and facts.height > 0
     assert facts.orientation in (0, 1, 2, 3)
     assert facts.xscale > 0
+
+
+def test_set_clipboard_packs_sequence_paste_and_text() -> None:
+    message = P.set_clipboard("ab", sequence=7, paste=True)
+    assert message[0] == P.MSG_SET_CLIPBOARD == 9
+    assert int.from_bytes(message[1:9], "big") == 7
+    assert message[9] == 1
+    assert int.from_bytes(message[10:14], "big") == 2
+    assert message[14:] == b"ab"
+
+
+def test_set_clipboard_defaults_to_paste_off() -> None:
+    message = P.set_clipboard("x")
+    assert message[9] == 0
+    assert int.from_bytes(message[1:9], "big") == 0

@@ -823,15 +823,19 @@ UHID 键盘被识别为**物理键盘** ⇒ 输入法按物理键位工作，候
 | 项 | 设计 |
 |---|---|
 | 方向 | PC → 平板（主）、平板 → PC（次） |
-| 通道 | `INJECT_TEXT`（UTF-8），长度上限 4KB |
-| 触发 | **仅**热键 `Ctrl+Alt+V`（接管瞬间不发，见下） |
-| 不做 | 图片、富文本、持续监听 |
+| 通道 | `SET_CLIPBOARD`（type 9，UTF-8），长度上限 4KB；**不敲键盘** |
+| 触发 | 勾选 `misc.clipboard_sync` 后自动：进入接管时同步一次 + 接管期间每次复制都同步；`Ctrl+Alt+V` = 立即粘贴一次（`paste=1`） |
+| 不做 | 图片、富文本、平板 → PC |
 
-**为什么接管瞬间不发**（0.3.10 修正）：`INJECT_TEXT` 在服务端会被
-`KeyCharacterMap.getEvents()` 翻译成**真实按键事件**注入当前焦点窗口。接管是
-用户“把鼠标推过去”的高频动作，一旦自动发送，剪贴板里的 ASCII 文本就会当成
-键盘输入打进平板前台 App（刷抖音时命中 `R` 就是「不感兴趣」），并让输入法/
-提示条闪一下。所以只在用户显式按 `Ctrl+Alt+V` 时发送。
+**为什么改用 `SET_CLIPBOARD`**（0.3.14）：0.3.10 曾把自动同步整个关掉，因为当时
+走 `INJECT_TEXT`——服务端用 `KeyCharacterMap.getEvents()` 把它翻译成**真实按键
+事件**注入焦点窗口，接管是高频动作，剪贴板里的 ASCII 就会当键盘打进平板前台
+App（刷抖音时命中 `R` 就是「不感兴趣」）。scrcpy 5.0.1 服务端支持
+`SET_CLIPBOARD`（`classes.dex` 里有 `SET_CLIPBOARD` / `setPrimaryClip`），它只调
+`ClipboardManager.setPrimaryClip()` 写剪贴板，平板当前 App 收不到任何按键，所以
+可以安全地自动同步。`paste=1` 时服务端额外在焦点输入框里粘贴一次，只给热键用。
+
+载荷（9.2）：`sequence(8) paste(1) len(4) utf8(len)`，大端。
 
 ---
 
