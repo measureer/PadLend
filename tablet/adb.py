@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -47,6 +48,48 @@ _VENDOR_ADB_CANDIDATES = (
     C.VENDOR_DIR / "adb" / "platform-tools" / C.ADB_EXE,
     C.VENDOR_DIR / "adb" / C.ADB_EXE,
 )
+
+# 发版审计 P1：kill-server 只能杀 PadLend 自己拉起的 server，否则会把用户
+# 正在用的 Android Studio / logcat 会话一起掐掉。
+_ADB_SERVER_DEFAULT_PORT = 5037
+_SENSITIVE_SUBCOMMANDS = frozenset({"pair"})
+# 设备上报的网卡名会拼进远程 shell 字符串，必须先过白名单（防注入）。
+_IFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
+
+_SERVER_OWNED_BY_PADLEND: bool | None = None
+
+
+def server_owned_by_padlend() -> bool | None:
+    """本进程是否启动过 adb server：None=还没执行过会拉起 server 的命令。"""
+    return _SERVER_OWNED_BY_PADLEND
+
+
+def _adb_server_port() -> int:
+    raw = os.environ.get("ANDROID_ADB_SERVER_PORT", "")
+    try:
+        return int(raw) if raw else _ADB_SERVER_DEFAULT_PORT
+    except ValueError:
+        return _ADB_SERVER_DEFAULT_PORT
+
+
+def _adb_server_listening(timeout: float = 0.2) -> bool:
+    port = _adb_server_port()
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _note_server_ownership(args: Sequence[str]) -> None:
+    global _SERVER_OWNED_BY_PADLEND
+    if _SERVER_OWNED_BY_PADLEND is not None:
+        return
+    if not args or args[0] in {"version", "kill-server", "start-server"}:
+        return
+    _SERVER_OWNED_BY_PADLEND = not _adb_server_listening()
 
 
 def normalize_address(address: str | None) -> str:
@@ -215,7 +258,8 @@ class Adb:
     ) -> subprocess.CompletedProcess[bytes]:
         """执行一次 adb 命令；失败按 ``code`` 映射成 PadLendError。"""
         cmd = self._base_args() + list(args)
-        LOG.debug("adb: %s", " ".join(args))
+        _note_server_ownership(args)
+        LOG.debug("adb: %s", " ".join(self._display_args(args)))
         try:
             proc = subprocess.run(  # noqa: S603 - 列表参数，无 shell
                 cmd,
@@ -232,13 +276,25 @@ class Adb:
                 ErrorCode.ADB_NOT_FOUND, f"adb 不可执行: {cmd[0]}", cause=exc
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise PadLendError(code, f"adb 超时 {timeout:g}s: {' '.join(args)}", cause=exc) from exc
+            raise PadLendError(
+                code,
+                f"adb 超时 {timeout:g}s: {' '.join(self._display_args(args))}",
+                cause=exc,
+            ) from exc
         except OSError as exc:
             raise PadLendError(ErrorCode.ADB_NOT_FOUND, f"无法启动 adb: {exc}", cause=exc) from exc
 
         if check and proc.returncode != 0:
             raise PadLendError(code, self._describe_failure(args, proc))
         return proc
+
+    @staticmethod
+    def _display_args(args: Sequence[str]) -> list[str]:
+        """日志/异常里使用的参数副本：pair 的配对码打码。"""
+        values = [str(item) for item in args]
+        if values and values[0] in _SENSITIVE_SUBCOMMANDS and len(values) >= 3:
+            values[-1] = "<code>"
+        return values
 
     @staticmethod
     def _decode(raw: bytes) -> str:
@@ -252,7 +308,7 @@ class Adb:
         err = cls._decode(proc.stderr).strip()
         out = cls._decode(proc.stdout).strip()
         detail = err or out or f"exit {proc.returncode}"
-        return f"{' '.join(args)} → {detail}"
+        return f"{' '.join(cls._display_args(args))} → {detail}"
 
     def _text(
         self,
@@ -511,17 +567,24 @@ class Adb:
             return ""
         return (self._decode(proc.stdout) + self._decode(proc.stderr)).strip()
 
-    def kill_server(self, *, timeout: float = C.ADB_SERVER_TIMEOUT) -> None:
-        """停掉 adb server（退出时清理，避免 adb.exe 留在后台）。
+    def kill_server(self, *, timeout: float = C.ADB_SERVER_TIMEOUT) -> bool:
+        """停掉 adb server，但只在 PadLend 自己拉起过它时才执行。
 
-        绝不抛：退出路径上失败只记日志。若别的工具也在用同一个 adb，它们会
-        在下次命令时自动重新拉起 server。
+        返回是否真的执行了 kill-server。别的工具（Android Studio / logcat）
+        在共用 5037 端口时不会被我们掐断。
         """
+        global _SERVER_OWNED_BY_PADLEND
+        if _SERVER_OWNED_BY_PADLEND is not True:
+            LOG.info("adb.kill_server skipped reason=not_owned")
+            return False
         try:
             self._run(["kill-server"], timeout=timeout, check=False)
-            LOG.info("adb server 已停止")
+            LOG.info("adb server 已停止（由 PadLend 启动）")
         except PadLendError as exc:
             LOG.debug("adb kill-server 失败（忽略）: %s", exc.detail)
+        finally:
+            _SERVER_OWNED_BY_PADLEND = False
+        return True
 
     # -- shell -------------------------------------------------------------
     def shell(self, *args: str, timeout: float = C.ADB_SHELL_TIMEOUT) -> str:
@@ -563,7 +626,7 @@ class Adb:
         except Exception:  # noqa: BLE001
             return ""
         for iface in listing.split():
-            if iface in candidates:
+            if iface in candidates or not _IFACE_RE.fullmatch(iface):
                 continue
             try:
                 _rc, out = adb.shell_result(
@@ -576,10 +639,10 @@ class Adb:
                 return mac
         return ""
 
-    def shell_ok(self, *args: str) -> bool:
+    def shell_ok(self, *args: str, timeout: float = C.ADB_SHELL_TIMEOUT) -> bool:
         """远端 shell 是否成功（清理步骤用，绝不抛）。"""
         try:
-            rc, _ = self.shell_result(*args)
+            rc, _ = self.shell_result(*args, timeout=timeout)
             return rc == 0
         except PadLendError:
             return False

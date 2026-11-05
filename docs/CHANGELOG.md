@@ -2,6 +2,54 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.0.0] — 2026-11-05
+
+首个正式版本。功能行为与 0.3.19 一致，重点是发布工程、可诊断性与文档。
+
+### 版本与构建
+
+- 版本号收敛到唯一源 `padlend/__init__.py`（`__version__ = "1.0.0"`），
+  `constants.VERSION`、GUI 底栏、向导、关于对话框与 exe 版本资源均从它派生；
+  修正此前 `constants.py`（0.3.19）与 `pyproject.toml` / `padlend/__init__.py`（0.3.18）漂移。
+- 发布物从 onefile 改为 **PyInstaller onedir**：`dist\PadLend\`（exe + `_internal\` + `LICENSES\` +
+  `THIRD_PARTY_NOTICES.md`），发布 zip 约 52 MB；首次启动不再解包到 `%TEMP%` 或 exe 目录。
+- 新增 `tools/release.py`：一条命令完成 onedir 构建、zip、SHA256SUMS、可选 Inno Setup 安装器
+  与可选代码签名（未提供证书时明确跳过并提示未签名）；CI 增加 ruff + pytest，Release 工作流
+  构建并上传 zip / setup / SHA256SUMS.txt。
+- exe 写入版本资源（FileVersion 1.0.0.0、ProductVersion 1.0.0、产品名、版权），
+  Windows 文件属性里不再是空白。
+
+### 稳定性与可诊断性
+
+- 新增崩溃兜底：`sys.excepthook` / `threading.excepthook` 写
+  `logs\crash-YYYYmmdd-HHMMSS-<pid>.log`（版本、argv、异常线程 traceback 与线程名）；
+  `faulthandler` 捕获原生崩溃写 `faulthandler-*.log`（全线程栈）；启动失败弹窗并落盘。
+- 日志轮转：`padlend.log` 单文件 2 MB、保留 3 个轮转文件，长时间运行不再无限增长。
+- 配置损坏恢复：YAML 语法错误、非映射、版本非法/过新、字段越界时，原文件另存为
+  `config.yaml.bad-<YYYYmmdd-HHMMSS>`（不覆盖旧备份）并加载默认值，不再启动即崩。
+- 诊断包脱敏：序列号、IP、MAC、用户名、用户目录默认替换为占位符；导出 zip 含
+  `diagnostics.txt`、`meta.json`、adb 输出、dumpsys 片段与最近 512 KB 日志。
+- adb server 所有权：只停止由 PadLend 自己启动的 adb server，不再误杀用户/IDE 正在用的实例。
+- scrcpy-server jar 在推送前按 `vendor/SHA256SUMS` 校验，不一致抛 E103 并提示重新下载，
+  不带病启动。
+
+### 界面与文档
+
+- 新增「关于 PadLend…」：版本、许可证摘要、第三方许可文件、打开日志目录；托盘菜单增加
+  「打开日志目录…」。
+- 重新生成四张界面截图（1280×820，离屏渲染，脚本 `tools/make_screenshots.py` 可重复执行），
+  替换 0.1.0/0.2.5 时期的旧图。
+- 修复布局页适配视图时的裁剪：平板位于桌面包围盒之外时，自动扩展场景矩形，
+  右侧平板与边缘吸附提示不再被截断。
+- README 按 1.0.0 重写：下载/校验、SmartScreen、onedir 目录、安装器、配置全字段、日志与诊断、
+  已知限制；删除已移除的剪贴板热键与 exe 同级 `.padlend\` 描述，修正 `exit_overflow_px` 默认值。
+- UHID 文案改为硬条件：不可写就无法创建虚拟鼠标/键盘，删除“退回绝对坐标模式”的旧说法。
+- 修复 `device.auto_connect` 与向导完成页复选框此前不生效的问题：关闭自动连接后启动停留在设备页，
+  向导里的“自动连接 / 关闭时收进托盘”会写回配置。
+- TROUBLESHOOTING / VERIFICATION / DESIGN 同步：补 SmartScreen、jar 校验失败、日志路径与
+  脱敏说明；删除不存在的“释放鼠标捕获”入口与 `ui.tray_hint_shown`；新增 1.0.0 发布验收清单。
+- 新增 `THIRD_PARTY_NOTICES.md` 与 `LICENSES/`，随发布包分发第三方许可证原文。
+
 ## [0.3.19] — 2026-11-05
 
 ### 变更
@@ -234,7 +282,7 @@
 
 ### 修复
 
-- **「未检测到设备」时无从下手**：无线调试的端口每次重启平板都会变，旧版只会对着配置里失效的 `192.168.67.8:37495` 每 40s 重连失败。现在可手动添加/改地址，失败原因直接显示在设备页顶部。
+- **「未检测到设备」时无从下手**：无线调试的端口每次重启平板都会变，旧版只会对着配置里失效的 `192.0.2.10:37495` 每 40s 重连失败。现在可手动添加/改地址，失败原因直接显示在设备页顶部。
 - **顶栏与系统标题栏重复**：删掉顶栏的「—」「×」（系统标题栏本来就有最小化/关闭），标题栏图标由绿色状态圆点换成品牌标；顶栏只留菜单、设置、明暗切换三个按钮。
 - **退出后仍有后台残留**：
   - 关闭主窗口现在等于退出应用（原先只是藏到托盘，进程、Raw Input 线程、adb 一直留着），托盘「退出 PadLend」走同一条路径；

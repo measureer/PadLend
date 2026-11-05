@@ -276,6 +276,10 @@ class DesktopCanvas(QGraphicsView):
         rect = self._fit_rect()
         if rect is None or rect.isEmpty():
             return
+        # 平板可能位于桌面包围盒之外；sceneRect 只含显示器时，fitInView
+        # 的滚动范围会被夹回桌面内，布局页右侧的平板就会被裁掉。
+        if self._scene.sceneRect() != rect:
+            self._scene.setSceneRect(rect)
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
         self._auto_fit = True
 

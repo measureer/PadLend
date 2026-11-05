@@ -228,8 +228,9 @@ class UhidPage(CheckPage):
             "PadLend 通过 /dev/uhid 创建虚拟鼠标（无需 root 的机型可直接用）。",
             "<p>检测 adb shell 是否属于 <code>uhid</code> 组，以及能否打开 "
             "<code>/dev/uhid</code>。</p>"
-            "<p>如果失败：部分机型需要 Magisk 模块或厂商开放 uhid 权限；"
-            "否则 PadLend 会退回 scrcpy 的绝对坐标模式。</p>",
+            "<p>如果失败：部分机型需要 Magisk 模块或厂商开放 uhid 权限。"
+            "UHID 是硬条件：不可写时 PadLend 无法创建虚拟鼠标/键盘，"
+            "平板不会出现系统光标，键鼠输入也无法接管。</p>",
             parent,
         )
 
@@ -248,7 +249,7 @@ class UhidPage(CheckPage):
         )
         if opened:
             return True, detail + "\n相对鼠标注入可用。"
-        return False, detail + "\n将退回绝对坐标模式，功能不受影响。"
+        return False, detail + "\nUHID 不可用：无法创建虚拟鼠标/键盘，不能接管。"
 
 
 class JarPage(CheckPage):
@@ -405,6 +406,17 @@ class SetupWizard(QWizard):
     def _on_finished(self, result: int) -> None:
         self.stop_all()
         if result == int(QDialog.DialogCode.Accepted):
+            if self._config is not None:
+                device = getattr(self._config, "device", None)
+                ui = getattr(self._config, "ui", None)
+                if device is not None:
+                    device.auto_connect = bool(
+                        self.finish_page.config_check.isChecked()
+                    )
+                if ui is not None:
+                    ui.close_to_tray = bool(
+                        self.finish_page.next_check.isChecked()
+                    )
             self.completed.emit()
             log.info("setup wizard completed")
 

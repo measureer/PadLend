@@ -100,7 +100,7 @@ def _print_diagnostics(diag: dict[str, str]) -> None:
     if "OPEN_OK" in uhid_open:
         print("  [OK]   /dev/uhid 可写（F1 成立）")
     else:
-        print("  [FAIL] /dev/uhid 不可写 —— 只能走降级模式（E102）")
+        print("  [FAIL] /dev/uhid 不可写 —— 无法创建虚拟鼠标/键盘（E102）")
     if "uhid" in groups:
         print("  [OK]   shell 用户在 uhid 组（3011）")
     else:

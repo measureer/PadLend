@@ -45,6 +45,109 @@ _DEVICE_STATES = frozenset(
 _XSCALE_RE = re.compile(r"XScale\s*:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 _UHID_GROUP_RE = re.compile(r"\buhid\b")
 
+# 诊断包会离开用户机器，以下内容默认打码（发版审计 P0-3）。
+_MAX_LOG_TAIL_BYTES = 512 * 1024
+_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b")
+_MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
+_WIN_USER_RE = re.compile(r"([A-Za-z]:\\Users\\)[^\\\r\n\t ]+", re.IGNORECASE)
+_POSIX_USER_RE = re.compile(r"((?:/Users|/home)/)[^/\s]+")
+
+
+def redact_text(text: str, *, serials: Sequence[str] = ()) -> str:
+    """抹掉序列号、IP/MAC、用户名与用户目录路径。"""
+    if not text:
+        return text
+    out = text
+    for serial in sorted({s for s in serials if s}, key=len, reverse=True):
+        if len(serial) >= 4:
+            out = out.replace(serial, "<serial>")
+    out = _IP_RE.sub("<IP>", out)
+    out = _MAC_RE.sub("<MAC>", out)
+    out = _WIN_USER_RE.sub(r"\1<user>", out)
+    out = _POSIX_USER_RE.sub(r"\1<user>", out)
+    return out
+
+
+def redact_adb_devices(raw: str, *, serials: Sequence[str] = ()) -> str:
+    """把 adb devices -l 的 serial 列逐行打码。"""
+    if not raw:
+        return raw
+    masked = redact_text(raw, serials=serials)
+    lines = []
+    for line in masked.splitlines(keepends=True):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("List of devices", "*")):
+            lines.append(line)
+            continue
+        parts = line.split(maxsplit=1)
+        if parts and len(parts[0]) >= 4 and not parts[0].startswith("<"):
+            line = "<serial>" + ((" " + parts[1]) if len(parts) > 1 else "")
+        lines.append(line)
+    return "".join(lines)
+
+
+def _read_crash_latest(limit: int = 256 * 1024) -> tuple[str, str]:
+    """最近一次崩溃日志 (文件名, 内容)；没有返回 ('', '')。"""
+    try:
+        log_dir = C.log_dir()
+        candidates = sorted(log_dir.glob("crash-*.log"), key=lambda p: p.stat().st_mtime)
+    except Exception:  # noqa: BLE001 - 诊断绝不能因日志目录失败而崩
+        return "", ""
+    if not candidates:
+        return "", ""
+    path = candidates[-1]
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "", ""
+    if len(data) > limit:
+        data = data[-limit:]
+    return path.name, data.decode("utf-8", errors="replace")
+
+
+def _read_log_tail(limit: int = _MAX_LOG_TAIL_BYTES) -> str:
+    """读取最近日志尾部（超过 512 KB 只保留最后一段完整行）。"""
+    try:
+        log_dir = C.log_dir()
+    except Exception:  # noqa: BLE001 - 诊断绝不能因日志目录失败而崩
+        return ""
+    path = log_dir / "padlend.log"
+    try:
+        if not path.is_file():
+            rotated = [item for item in log_dir.glob("padlend.log.*") if item.is_file()]
+            if not rotated:
+                return ""
+            # 轮转文件是 padlend.log.1/.2/.3，字典序最后一个反而最旧；
+            # 日志被清空时取 mtime 最新的一份。
+            path = max(rotated, key=lambda item: item.stat().st_mtime)
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > limit:
+                fh.seek(size - limit)
+                data = fh.read()
+                cut = data.find(b"\n")
+                data = data[cut + 1 :] if cut >= 0 else data
+            else:
+                data = fh.read()
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+_README = """PadLend 诊断包
+==============
+包含：
+  diagnostics.txt      概要 + adb devices + dumpsys 节选（已脱敏）
+  dumpsys-input.txt    dumpsys input 原文节选（已脱敏）
+  adb-devices.txt      adb devices -l（序列号已打码）
+  logs/padlend-tail.log  最近 512 KB 运行日志（已脱敏）
+  logs/crash-latest.log  最近一次崩溃日志（如有，已脱敏）
+  meta.json            机器可读摘要（不含序列号/绝对路径）
+
+已自动隐藏：设备序列号、IP/MAC 地址、Windows 用户名与用户目录路径。
+如仍看到隐私内容，请先自行删除再分享。
+"""
+
 DIAGNOSTIC_STEPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("adb devices -l", ("devices", "-l")),
     ("dumpsys input", ("shell", "dumpsys", "input")),
@@ -289,9 +392,12 @@ class DiagnosticsReport:
                 return entry
         return self.devices[0] if self.devices else None
 
+    def serials(self) -> list[str]:
+        return [entry.serial for entry in self.devices if entry.serial]
+
     def summary(self) -> list[str]:
         device = self.primary_device()
-        device_text = "未检测到设备" if device is None else f"{device.serial}（{device.state}）"
+        device_text = "未检测到设备" if device is None else f"<serial>（{device.state}）"
         xscale = self.xscale
         return [
             f"设备：{device_text}",
@@ -303,34 +409,36 @@ class DiagnosticsReport:
         ]
 
     def to_text(self) -> str:
+        serials = self.serials()
         lines = [
             f"{C.APP_NAME} {C.VERSION} 诊断报告",
+            "（设备序列号、IP/MAC、用户名与用户目录路径已自动打码）",
             f"生成时间：{self.collected_at or datetime.now().isoformat(timespec='seconds')}",
             f"Python：{sys.version.split()[0]}",
             f"平台：{sys.platform}",
-            f"配置：{C.config_path()}",
+            "配置：config.yaml（位于应用配置目录）",
             "",
             "== 概要 ==",
             *self.summary(),
         ]
         if self.errors:
-            lines.extend(["", "== 错误 ==", *self.errors])
+            lines.extend(["", "== 错误 ==", redact_text("\n".join(self.errors), serials=serials)])
         lines.extend(
             [
                 "",
                 "== adb devices -l ==",
-                self.devices_raw.strip() or "（空）",
+                redact_adb_devices(self.devices_raw, serials=serials).strip() or "（空）",
                 "",
                 "== UHID 原始输出 ==",
                 f"组：{'uhid' if self.uhid_group else '（未包含 uhid）'}",
                 f"打开：{'OPEN_OK' if self.uhid_open else '（未成功）'}",
             ]
         )
-        dumpsys = self.dumpsys_input.strip()
+        dumpsys = redact_text(self.dumpsys_input.strip(), serials=serials)
         truncated = len(dumpsys) > _MAX_DUMPSYS_CHARS
         if truncated:
             dumpsys = dumpsys[:_MAX_DUMPSYS_CHARS] + "\n…（已截断）"
-        lines.extend(["", "== dumpsys input（节选） ==", dumpsys or "（空）"])
+        lines.extend(["", "== dumpsys input（节选，已脱敏） ==", dumpsys or "（空）"])
         return "\n".join(lines)
 
 
@@ -369,33 +477,56 @@ def build_report(
 
 
 def export_report(report: DiagnosticsReport, *, directory: Path | None = None) -> Path:
-    """把报告写成 zip，返回文件路径。"""
+    """把报告写成 zip，返回文件路径。
+
+    发版审计 P0-3：导出物默认脱敏（serial / IP / MAC / 用户名 / 用户目录），
+    并额外附带最近 512 KB 日志；旧版只写原始 dumpsys 与原始 adb devices。
+    """
     target_dir = Path(directory) if directory is not None else desktop_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = target_dir / f"padlend-diagnostics-{stamp}.zip"
+    serials = report.serials()
+    jar_name = Path(report.server_jar).name if report.server_jar else ""
     meta = {
         "app": C.APP_NAME,
         "version": C.VERSION,
         "collected_at": report.collected_at,
         "platform": sys.platform,
         "python": sys.version.split()[0],
-        "config_path": str(C.config_path()),
+        "config_path": "config.yaml",
         "xscale": report.xscale,
         "pointer_speed": report.pointer_speed,
         "uhid_group": report.uhid_group,
         "uhid_open": report.uhid_open,
-        "server_jar": report.server_jar,
+        "server_jar": jar_name,
         "devices": [
-            {"serial": entry.serial, "state": entry.state, "extra": entry.extra}
+            {
+                "serial": "<serial>" if entry.serial else "",
+                "state": entry.state,
+                "extra": redact_text(entry.extra, serials=serials),
+            }
             for entry in report.devices
         ],
-        "errors": report.errors,
+        "errors": [redact_text(item, serials=serials) for item in report.errors],
+        "log_tail": "logs/padlend-tail.log",
+        "redacted": True,
     }
+    dumpsys = redact_text(report.dumpsys_input, serials=serials)
+    devices = redact_adb_devices(report.devices_raw, serials=serials)
+    tail = redact_text(_read_log_tail(), serials=serials)
+    _, crash_text = _read_crash_latest()
+    crash_text = redact_text(crash_text, serials=serials)
+    meta["crash_log"] = "logs/crash-latest.log" if crash_text.strip() else None
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("README.txt", _README)
         archive.writestr("diagnostics.txt", report.to_text())
-        archive.writestr("dumpsys-input.txt", report.dumpsys_input)
-        archive.writestr("adb-devices.txt", report.devices_raw)
+        archive.writestr("dumpsys-input.txt", dumpsys)
+        archive.writestr("adb-devices.txt", devices)
+        if tail.strip():
+            archive.writestr("logs/padlend-tail.log", tail)
+        if crash_text.strip():
+            archive.writestr("logs/crash-latest.log", crash_text)
         archive.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
     return path
 
@@ -441,7 +572,8 @@ class DiagnosticsDialog(QDialog):
         title.setObjectName("sectionTitle")
         hint = QLabel(
             "采集 adb devices / dumpsys input / pointer_speed / UHID 状态；"
-            "采集在后台执行，不会卡住界面。",
+            "采集在后台执行，不会卡住界面。导出的 zip 会附带最近 512 KB 日志，"
+            "并自动隐藏序列号、IP/MAC、用户名与用户目录路径。",
             self,
         )
         hint.setObjectName("hintText")
@@ -525,7 +657,11 @@ class DiagnosticsDialog(QDialog):
         self.status_label.setText(f"采集完成 · {state}" if ok else f"采集完成（有错误）· {state}")
         self.collect_button.setEnabled(True)
         self.export_button.setEnabled(True)
-        log.info("diagnostics collected ok=%s device=%s", ok, state)
+        log.info(
+            "diagnostics collected ok=%s device_state=%s",
+            ok,
+            device.state if device else "none",
+        )
 
     def _on_export_clicked(self) -> None:
         self.export()

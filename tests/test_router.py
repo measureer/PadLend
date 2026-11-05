@@ -986,6 +986,25 @@ def test_disconnect_device_suspends_auto_reconnect_until_user_connects() -> None
     assert rig.config.device.serial == "serial-2"
 
 
+def test_auto_connect_off_waits_for_explicit_device_connect() -> None:
+    rig = make_rig()
+    rig.config.device.auto_connect = False
+    try:
+        rig.router.start()
+        time.sleep(0.05)
+        assert rig.session.start_calls == 0
+        assert rig.router.state is State.IDLE
+        assert rig.router.facts is None
+
+        rig.router.connect_device("serial-1")
+        rig.router._supervisor_tick()
+        _wait_until(lambda: rig.router.facts is not None)
+        assert rig.router.connected is True
+        assert rig.config.device.serial == "serial-1"
+    finally:
+        rig.router.stop()
+
+
 def test_cursor_query_failure_does_not_accumulate_raw_counts():
     """``cursor_pos()`` 存在但返回 None 时，保持绝对位置而不是累加鼠标计数。"""
     rig = make_rig()
@@ -1038,7 +1057,7 @@ def test_press_in_captured_logs_cursor_diagnose(caplog) -> None:
     capture_manually(rig)
     assert rig.router.state is State.CAPTURED
 
-    with caplog.at_level(logging.INFO, logger="router"):
+    with caplog.at_level(logging.DEBUG, logger="router"):
         rig.router.on_raw(raw(0, 0, buttons=1))
         rig.router.on_raw(raw(0, 0, buttons=0))
 

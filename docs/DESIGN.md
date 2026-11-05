@@ -884,7 +884,7 @@ hotkeys:
   panic: "Ctrl+Alt+Q"
 
 ui:
-  language: zh_CN
+  language: zh_CN          # 预留字段：1.0.0 仅中文界面，本值不生效（保留以兼容旧配置）
   theme: dark
   tray_notifications: true
   show_pointer_ghost: true
@@ -1006,9 +1006,9 @@ QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
 
 | 元素 | 行为 |
 |---|---|
-| 图标 | 灰=未连接 / 绿=空闲 / **红=接管中** / 黄=故障 |
+| 图标 | 灰=未连接 / 绿=空闲 / 黄=ARMING·RETURNING / **红=接管中** / 红（错误色）=故障 |
 | 左键 | 显隐主窗口 |
-| 右键 | 手动接管·交还 / 重连 / 打开配置 / 复制诊断 / 退出 |
+| 右键 | 手动接管·交还 / 重连 / 打开配置 / 复制诊断 / 打开日志目录 / 关于 PadLend / 退出 |
 | 气泡 | 仅首次连接、断连、重锚定（可关） |
 
 图标 = 品牌标（P）+ 右下角状态点；16/20px 只留品牌标（通知区 100% 缩放就是
@@ -1026,7 +1026,7 @@ Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区；�
 
 - **首次向导**：检查 adb → USB 调试 → UHID 可写 → server jar → 完成
 - **诊断页**：`adb devices`、`dumpsys input` 关键段、`XScale`/`pointer_speed`、UHID 注册情况、一键导出诊断包
-- **关于**：版本 / 许可 / 致谢（scrcpy、InputShare）
+- **关于**：版本 / 许可摘要 / 第三方许可文件 / 打开日志目录 / 检查更新（发行地址配置后启用）；致谢 scrcpy、InputShare
 
 ---
 
@@ -1539,9 +1539,9 @@ while running:
 
 ```
 UHID 不可写（E102）
-  → 降级：INJECT_KEYCODE + INJECT_TOUCH_EVENT（绝对坐标）
-  → 明确告知："当前为降级模式，平板不会有系统指针"
-  → 累加器仍工作（用于边缘判定），但指针不可见
+  → 1.0.0 未实现绝对坐标降级：没有系统指针、无法接管输入
+  → 明确告知：UHID 是硬条件，需修复 /dev/uhid 权限或更换机型/ROM
+  → 未来若要实现 INJECT_KEYCODE + INJECT_TOUCH_EVENT，必须先通过可用性验收
 ```
 
 ## 12.3 崩溃兜底（三层）

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "padlend"
-version = "0.3.18"
+dynamic = ["version"]
 description = "PadLend — use an Android tablet as a seamless side screen with a real system pointer"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,9 @@ padlend = "main:main"
 
 [tool.setuptools]
 py-modules = ["main", "config", "constants"]
+
+[tool.setuptools.dynamic]
+version = { attr = "padlend.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["core*", "win*", "tablet*", "ui*", "padlend*"]

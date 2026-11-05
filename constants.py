@@ -1,6 +1,6 @@
 """全局常量、超时、HID 描述符（设计文档 7.1 / 9.3 / 9.4 / 附录 A）。
 
-本模块是依赖图的最底层：只允许 import 标准库，不得 import 本项目其它模块。
+本模块是依赖图的最底层：只允许 import 标准库与 ``padlend`` 包的版本声明。
 魔法数字统一收在这里，业务代码通过名字引用。
 """
 
@@ -10,12 +10,14 @@ import os
 import sys
 from pathlib import Path
 
+from padlend import __version__
+
 # ---------------------------------------------------------------------------
 # 应用标识
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
 APP_ID = "PadLend"
-VERSION = "0.3.19"
+VERSION = __version__  # 唯一版本源：padlend/__init__.py
 LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。

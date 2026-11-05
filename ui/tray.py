@@ -3,7 +3,7 @@
 - 图标 = 品牌标 + 右下角状态点（灰未连接 / 绿空闲 / 红接管中 / 黄故障），
   不依赖外部资源；0.3.16 之前只有一个状态色圆点，通知区里认不出是哪个程序。
 - 左键（Trigger/DoubleClick）显隐主窗；右键菜单：手动接管·交还、重连、
-  打开配置、复制诊断、退出。
+  打开配置、复制诊断、打开日志、关于、退出。
 - 托盘不可用时（无桌面会话、RDP、部分 offscreen 平台）不创建
   ``QSystemTrayIcon``，但菜单与 ``QAction`` 仍可用，主窗把它挂到顶栏 ☰
   上，即"降级为菜单动作"。
@@ -107,6 +107,8 @@ class TrayController(QObject):
     reconnectRequested = Signal()
     openConfigRequested = Signal()
     copyDiagnosticsRequested = Signal()
+    openLogsRequested = Signal()
+    aboutRequested = Signal()
     quitRequested = Signal()
     visibilityToggled = Signal()
 
@@ -130,6 +132,8 @@ class TrayController(QObject):
         self.copy_diagnostics_action = self._add_action(
             "复制诊断信息", self.copyDiagnosticsRequested
         )
+        self.open_logs_action = self._add_action("打开日志目录…", self.openLogsRequested)
+        self.about_action = self._add_action("关于 PadLend…", self.aboutRequested)
         self.menu.addSeparator()
         self.quit_action = self._add_action("退出 PadLend", self.quitRequested)
 

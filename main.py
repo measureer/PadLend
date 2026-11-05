@@ -39,6 +39,22 @@ LOG = logging.getLogger("padlend.main")
 _HEADLESS_CONNECT_WAIT_S = float(C.INITIAL_RETRY_WINDOW_S)
 
 
+def _safe_print(message: str) -> None:
+    """console=False 打包后 stdout/stderr 可能是 None，输出失败不能二次崩溃。"""
+    try:
+        if sys.stderr is not None:
+            print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+def _safe_log_dir() -> Path | None:
+    try:
+        return C.log_dir()
+    except Exception:  # noqa: BLE001 - 日志目录失败也要能启动
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 命令行
 # ---------------------------------------------------------------------------
@@ -147,6 +163,28 @@ def _stale_cleanup(cfg: Config) -> None:
     """``exit.clean`` 缺失 = 上次没正常退出；先清理幽灵设备/指针速度（12.3）。"""
     marker = C.clean_exit_marker()
     had_config = C.config_path().exists()
+    try:
+        from tablet.adb import Adb
+        from tablet.session import force_cleanup, load_pointer_state, restore_pending_pointer_speed
+    except Exception as exc:  # noqa: BLE001 - adb 都不可用时照常启动
+        LOG.debug("adb 后端不可用，跳过残留清理: %r", exc)
+        return
+
+    adb = None
+    pending = load_pointer_state()
+    if pending is not None or (marker.exists() and had_config):
+        try:
+            adb = Adb(serial=cfg.device.serial or None)
+        except PadLendError as exc:
+            LOG.warning("adb 不可用，跳过残留清理：%s", exc.user_message)
+            adb = None
+
+    # 无条件恢复上次没还原的 pointer_speed：exit.clean 在也照样查（崩溃点可能在
+    # session._teardown 之前），恢复成功会清掉状态文件。
+    if adb is not None and pending is not None:
+        with contextlib.suppress(Exception):
+            restore_pending_pointer_speed(adb)
+
     if marker.exists() or not had_config:
         # 首次运行没有历史残留；写一次标记，避免第一次崩溃被误判。
         try:
@@ -156,11 +194,9 @@ def _stale_cleanup(cfg: Config) -> None:
             pass
         return
     LOG.warning("检测到上次未正常退出，执行强制清理")
+    if adb is None:
+        return
     try:
-        from tablet.adb import Adb
-        from tablet.session import force_cleanup
-
-        adb = Adb(serial=cfg.device.serial or None)
         force_cleanup(
             adb,
             cfg.device.serial,
@@ -510,14 +546,40 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
                 hotkeys.stop()
             except Exception as exc:  # noqa: BLE001
                 LOG.debug("hotkeys.stop failed: %r", exc)
-        try:
-            runtime.stop()
-        finally:
-            # 托盘/窗口可能已经销毁，不再触碰 Qt 对象。
-            with contextlib.suppress(Exception):
-                window._shutdown()  # noqa: SLF001 - 组合根负责最终清理
+        # 先藏窗口，让用户立刻看到“已经关了”，再把可能卡 10s+ 的 adb 清理
+        # 挪到后台线程；GUI 线程在这里最多等 _SHUTDOWN_CLEANUP_WAIT_S。
+        with contextlib.suppress(Exception):
+            window.hide()
+        done = threading.Event()
+
+        def _clean() -> None:
+            try:
+                runtime.stop()
+            except Exception:  # noqa: BLE001 - 退出路径不能抛
+                LOG.exception("退出清理异常")
+            finally:
+                done.set()
+
+        started = time.monotonic()
+        worker = threading.Thread(target=_clean, name="padlend-shutdown", daemon=True)
+        worker.start()
+        finished = done.wait(_SHUTDOWN_CLEANUP_WAIT_S)
+        elapsed = time.monotonic() - started
+        if finished:
+            LOG.info("退出清理完成（%.1fs）", elapsed)
+        else:
+            # 不清 exit.clean：下次启动走强制清理（force_cleanup 会处理半截状态）。
+            LOG.warning(
+                "退出清理超过 %.0fs 未完成，保持未清理标记，下次启动强制清理",
+                _SHUTDOWN_CLEANUP_WAIT_S,
+            )
+            _mark_running()
+        # 托盘/窗口可能已经销毁，不再触碰 Qt 对象。
+        with contextlib.suppress(Exception):
+            window._shutdown()  # noqa: SLF001 - 组合根负责最终清理
+        if finished:
             _mark_clean_exit()
-            LOG.info("已退出")
+        LOG.info("已退出（清理 %s，%.1fs）", "完成" if finished else "未完成", elapsed)
 
     app.aboutToQuit.connect(_shutdown)
 
@@ -543,15 +605,44 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+_SHUTDOWN_CLEANUP_WAIT_S = 8.0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_console()
     args = _parse_args(sys.argv[1:] if argv is None else argv)
+    from core.crash import install_crash_handlers, report_crash, show_startup_error
+
+    log_dir = _safe_log_dir()
+    try:
+        install_crash_handlers(log_dir, version=C.VERSION)
+    except Exception:  # noqa: BLE001 - 崩溃钩子失败不能阻断启动
+        LOG.debug("崩溃钩子安装失败", exc_info=True)
+    try:
+        return _run(args)
+    except PadLendError as exc:
+        LOG.error("%s", exc.user_message)
+        _safe_print(f"[error] {exc.user_message}")
+        report_crash(exc, kind="startup", notify=False)
+        show_startup_error(exc.user_message)
+        return 1
+    except KeyboardInterrupt:
+        return 0
+    except BaseException as exc:  # noqa: BLE001 - 最外层兜底，保证有日志/弹窗
+        LOG.exception("未捕获异常，程序即将退出")
+        report_crash(exc, kind="main", notify=False)
+        show_startup_error(f"程序遇到未处理的错误：{exc!r}")
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     # 必须在任何窗口/Raw Input 之前。
     _set_dpi_awareness()
 
+    log_dir = _safe_log_dir()
     setup_logging(
         level=getattr(logging, args.log_level, logging.INFO),
-        log_file=C.log_dir() / "padlend.log",
+        log_file=(log_dir / "padlend.log") if log_dir is not None else None,
     )
     LOG.info("%s %s 启动 (pid=%d)", C.APP_NAME, C.VERSION, os.getpid())
 
@@ -590,7 +681,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_gui(cfg, args, first_run)
     except PadLendError as exc:
         LOG.error("%s", exc.user_message)
-        print(f"[error] {exc.user_message}", file=sys.stderr)
+        _safe_print(f"[error] {exc.user_message}")
         return 1
     except KeyboardInterrupt:
         return 0

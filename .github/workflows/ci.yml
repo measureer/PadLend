@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python }}"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install -r requirements-build.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+      - name: Build onedir (3.13 only)
+        if: matrix.python == '3.13'
+        run: python tools/release.py --build
+
+      - name: Package + checksums (3.13 only)
+        if: matrix.python == '3.13'
+        run: python tools/release.py --zip --sha256
+
+      - name: Upload artifact (3.13 only)
+        if: matrix.python == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PadLend-win64-ci
+          path: |
+            dist/PadLend-*-win64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -39,6 +40,8 @@ KILL_PATTERNS = (
 KILL_PATTERN = KILL_PATTERNS[0]  # 兼容旧引用与日志
 # 幽灵校验命令（附录 C.4），期望输出 0。
 VERIFY_CMD = "dumpsys input | grep -c scrcpy"
+# 退出清理每步的 adb shell 上限：原来的 5 s × 多步会把关窗拖到 40 s。
+_CLEANUP_TIMEOUT = 2.0
 
 
 def file_md5(path: Path, *, chunk: int = 1 << 20) -> str:
@@ -48,6 +51,49 @@ def file_md5(path: Path, *, chunk: int = 1 << 20) -> str:
         for block in iter(lambda: fh.read(chunk), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def file_sha256(path: Path, *, chunk: int = 1 << 20) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def expected_jar_sha256(jar: Path, sums: Path | None = None) -> str | None:
+    """从 vendor/SHA256SUMS 里找 jar 的期望哈希；找不到返回 None。"""
+    sums_path = Path(sums) if sums is not None else C.VENDOR_DIR / "SHA256SUMS"
+    try:
+        lines = sums_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        LOG.warning("读取 %s 失败，跳过 jar 完整性校验: %r", sums_path, exc)
+        return None
+    name = Path(jar).name
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2 or parts[0].startswith("#"):
+            continue
+        entry = parts[-1].lstrip("*")
+        if entry == name or entry.endswith("/" + name):
+            return parts[0].lower()
+    LOG.warning("SHA256SUMS 中没有 %s 的条目，跳过完整性校验", name)
+    return None
+
+
+def verify_local_jar(jar: Path) -> None:
+    """推送前校验 jar 与 vendor/SHA256SUMS 一致；不匹配抛 E103。"""
+    expected = expected_jar_sha256(jar)
+    if expected is None:
+        return
+    actual = file_sha256(jar)
+    if actual != expected:
+        LOG.error("jar.sha256_mismatch file=%s expected=%s actual=%s", jar.name, expected, actual)
+        raise PadLendError(
+            ErrorCode.SERVER_START_FAILED,
+            f"服务端 jar 完整性校验失败：{jar.name} 与 vendor/SHA256SUMS 不一致，"
+            "安装包可能损坏或被替换，请重新下载 PadLend 发行包",
+        )
 
 
 class ScrcpyServer:
@@ -93,11 +139,18 @@ class ScrcpyServer:
         jar 缺失是硬错误（E103）：没有 jar 一定起不来，不要静默重试。
         """
         if not self.jar.is_file():
+            if getattr(sys, "frozen", False):
+                detail = "安装包不完整，请重新下载 PadLend 发行包"
+            else:
+                detail = (
+                    f"从 scrcpy v{C.SCRCPY_VERSION} 发布包提取 scrcpy-server "
+                    "并放到 vendor/ 目录"
+                )
             raise PadLendError(
                 ErrorCode.SERVER_START_FAILED,
-                f"找不到 {self.jar}（从 scrcpy v{C.SCRCPY_VERSION} 发布包提取 "
-                f"scrcpy-server 并放到该路径）",
+                f"找不到 scrcpy-server jar（{self.jar.name}）：{detail}",
             )
+        verify_local_jar(self.jar)
         local = file_md5(self.jar)
         remote = None
         try:
@@ -177,10 +230,10 @@ class ScrcpyServer:
         return self.forward()
 
     # -- 清理 --------------------------------------------------------------
-    def kill(self) -> None:
+    def kill(self, *, timeout: float = C.ADB_SHELL_TIMEOUT) -> None:
         """pkill 远端 + 收掉本地 adb shell（F7）。"""
         for pattern in KILL_PATTERNS:
-            self._adb.shell_ok("pkill", "-9", "-f", pattern)
+            self._adb.shell_ok("pkill", "-9", "-f", pattern, timeout=timeout)
         self._reap_local()
         LOG.info("已执行 pkill -9 -f %s", " / ".join(KILL_PATTERNS))
 
@@ -203,10 +256,10 @@ class ScrcpyServer:
         except OSError as exc:  # pragma: no cover - 进程已消失
             LOG.debug("收尾本地 adb shell 失败: %s", exc)
 
-    def verify_clean(self) -> bool:
+    def verify_clean(self, *, timeout: float = C.ADB_SHELL_TIMEOUT) -> bool:
         """``dumpsys input | grep -c scrcpy`` 必须为 0（6.1.3）。"""
         try:
-            rc, out = self._adb.shell_result(VERIFY_CMD)
+            rc, out = self._adb.shell_result(VERIFY_CMD, timeout=timeout)
         except PadLendError as exc:
             self._verify_detail = f"无法执行校验命令: {exc.detail}"
             return False
@@ -233,13 +286,13 @@ class ScrcpyServer:
         except PadLendError as exc:  # pkill 失败也要继续收转发
             LOG.warning("kill 失败: %s", exc.detail)
         self.forward_remove()
-        if self.verify_clean():
+        if self.verify_clean(timeout=_CLEANUP_TIMEOUT):
             return True
         LOG.warning("清理校验失败：%s；重试一次 pkill", self._verify_detail)
         time.sleep(0.2)
         for pattern in KILL_PATTERNS:
-            self._adb.shell_ok("pkill", "-9", "-f", pattern)
-        return self.verify_clean()
+            self._adb.shell_ok("pkill", "-9", "-f", pattern, timeout=_CLEANUP_TIMEOUT)
+        return self.verify_clean(timeout=_CLEANUP_TIMEOUT)
 
     def __repr__(self) -> str:  # pragma: no cover - 调试输出
         return f"ScrcpyServer(port={self.port}, proc_alive={self.proc_alive})"

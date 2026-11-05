@@ -1,7 +1,7 @@
 """系统级保命热键（设计文档 6.2.3 / 6.7.5）。
 
-``RegisterHotKey`` 注册 ``Ctrl+Alt+S``（切换）、``Ctrl+Alt+Q``（急停）、
-``Ctrl+Alt+V``（剪贴板），专用命名线程跑消息循环，``WM_HOTKEY`` 分发回调。
+``RegisterHotKey`` 注册 ``Ctrl+Alt+S``（切换）、``Ctrl+Alt+Q``（急停），
+专用命名线程跑消息循环，``WM_HOTKEY`` 分发回调。
 不依赖键盘钩子是否正常：钩子被系统卸载时，保命键仍然可用。
 
 ``import`` 本模块不注册任何热键；只有 :meth:`HotkeyManager.start` 有副作用。

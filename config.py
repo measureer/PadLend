@@ -3,7 +3,7 @@
 路径：``%APPDATA%\\PadLend\\config.yaml``
 - GUI 写入；手改后热加载（UI 层负责监听 mtime，本模块只负责解析/校验/落盘）。
 - 非法值 → 回退默认 + 记录 issue（GUI 标红）+ 日志告警。
-- ``version`` 驱动迁移；无法识别则备份 ``config.yaml.bak`` 并重置。
+- ``version`` 驱动迁移；无法识别则备份 ``config.yaml.bad-<时间戳>`` 并重置。
 """
 
 from __future__ import annotations
@@ -85,6 +85,8 @@ class HotkeyCfg:
 
 @dataclass
 class UiCfg:
+    # 预留字段：1.0.0 只有中文界面，本值不生效；保留是为了兼容
+    # 0.3.x 已写出的 config.yaml（删键会让旧配置触发“未知配置项”告警）。
     language: str = "zh_CN"
     theme: str = "dark"
     tray_notifications: bool = True
@@ -139,6 +141,8 @@ class Config:
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())  # 断电也不留半截配置
             os.replace(tmp, path)
         finally:
             if os.path.exists(tmp):
@@ -154,17 +158,30 @@ class Config:
             return cfg
 
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as exc:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            # read_text 解不开非 UTF-8：以前这里直接抛出，GUI 启动即崩。
+            log.error("cfg.decode_failed path=%s err=%r", path, exc)
+            backup = _backup(path, reason="encoding")
+            cfg.add_issue(_reset_message("配置文件不是 UTF-8 编码", backup))
+            return cfg
+        except OSError as exc:
+            log.error("cfg.read_failed path=%s err=%r", path, exc)
+            cfg.add_issue("配置文件无法读取，本次使用默认值（文件未改动）")
+            return cfg
+
+        try:
+            raw = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
             log.error("cfg.parse_failed path=%s err=%r", path, exc)
-            _backup(path)
-            cfg.add_issue("配置文件无法解析，已重置为默认值")
+            backup = _backup(path, reason="parse")
+            cfg.add_issue(_reset_message("配置文件无法解析", backup))
             return cfg
 
         if not isinstance(raw, dict):
             log.error("cfg.not_mapping path=%s", path)
-            _backup(path)
-            cfg.add_issue("配置文件根节点不是映射，已重置为默认值")
+            backup = _backup(path, reason="not-mapping")
+            cfg.add_issue(_reset_message("配置文件根节点不是映射", backup))
             return cfg
 
         version = raw.get("version", CURRENT_VERSION)
@@ -172,15 +189,31 @@ class Config:
             version_int = int(version)
         except (TypeError, ValueError):
             log.error("cfg.bad_version value=%r", version)
-            _backup(path)
-            cfg.add_issue(f"无法识别的配置版本 {version!r}，已重置为默认值")
+            backup = _backup(path, reason="bad-version")
+            cfg.add_issue(_reset_message(f"无法识别的配置版本 {version!r}", backup))
             return cfg
 
         if version_int > CURRENT_VERSION:
             log.error("cfg.future_version value=%s current=%s", version_int, CURRENT_VERSION)
-            _backup(path)
-            cfg.add_issue(f"配置版本 {version_int} 高于当前程序，已重置为默认值")
+            backup = _backup(path, reason="future-version")
+            cfg.add_issue(_reset_message(f"配置版本 {version_int} 高于当前程序", backup))
             return cfg
+
+        known_sections = {
+            "version",
+            "device",
+            "placement",
+            "motion",
+            "keyboard",
+            "hotkeys",
+            "ui",
+            "misc",
+        }
+        unknown = sorted(set(raw) - known_sections)
+        if unknown:
+            # 未知键只告警不阻断：可能是新版本写回、也可能是手拍错。
+            log.warning("cfg.unknown_keys keys=%s", unknown)
+            cfg.add_issue(f"未知配置项已忽略：{', '.join(unknown)}")
 
         migrated = _migrate(raw, version_int, cfg)
         cls._fill(migrated, cfg)
@@ -419,6 +452,9 @@ def _section(cls: type, raw: Any, field_types: dict[str, type]) -> Any:
         elif expected is float and isinstance(default, float):
             coerced = float(coerced)
         setattr(obj, name, coerced)
+    unknown = sorted(set(raw) - set(field_types))
+    if unknown:
+        log.warning("cfg.unknown_fields section=%s keys=%s", cls.__name__, unknown)
     return obj
 
 
@@ -444,12 +480,29 @@ def _migrate(raw: dict[str, Any], version: int, cfg: Config) -> dict[str, Any]:
 _MIGRATIONS: dict[int, Any] = {}
 
 
-def _backup(path: Path) -> None:
+def _reset_message(reason: str, backup: Path | None) -> str:
+    if backup is None:
+        return f"{reason}，已重置为默认值（备份失败，请检查目录权限）"
+    return f"{reason}，已备份为 {backup.name} 并重置为默认值"
+
+
+def _backup(path: Path, *, reason: str = "invalid") -> Path | None:
+    """把损坏配置另存为 config.yaml.bad-<时间戳>，返回备份路径。
+
+    旧版只写 .bak 且会覆盖，用户连续两次损坏后原始内容就丢了；带时间戳
+    的文件可以一直保留，便于用户发回来定位问题。
+    """
+    from datetime import datetime
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = path.with_name(f"{path.name}.bad-{stamp}")
     try:
-        shutil.copy2(path, path.with_name(path.name + ".bak"))
-        log.warning("cfg.backup path=%s", path.with_name(path.name + ".bak"))
+        shutil.copy2(path, target)
+        log.warning("cfg.backup path=%s reason=%s", target, reason)
+        return target
     except OSError as exc:  # pragma: no cover
         log.error("cfg.backup_failed path=%s err=%r", path, exc)
+        return None
 
 
 def default_config() -> Config:

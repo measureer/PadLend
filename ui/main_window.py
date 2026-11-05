@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 import constants as C
 from tablet.locator import STATUS_MOVED, STATUS_ONLINE, Located, locate
+from ui.about_dialog import AboutDialog
 from ui.add_device_dialog import AddDeviceDialog
 from ui.bridge import RouterBridge, state_value
 from ui.device_page import DevicePage
@@ -602,6 +603,8 @@ class MainWindow(QMainWindow):
         self.tray.reconnectRequested.connect(self.reconnect)
         self.tray.openConfigRequested.connect(self.open_config)
         self.tray.copyDiagnosticsRequested.connect(self.copy_diagnostics)
+        self.tray.openLogsRequested.connect(self.open_logs)
+        self.tray.aboutRequested.connect(self.show_about)
         self.tray.quitRequested.connect(self.quit_app)
         self.tray.visibilityToggled.connect(self.toggle_window)
         self.tray.set_notifications(
@@ -990,6 +993,33 @@ class MainWindow(QMainWindow):
             log.error("open config failed: %r", exc)
             self.log_view.append_event("CONFIG", f"打开配置失败：{exc}")
 
+    def open_logs(self) -> None:
+        """打开配置目录下的 logs（托盘菜单与关于对话框共用）。"""
+        path = C.log_dir()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.error("prepare log dir failed: %r", exc)
+            self.log_view.append_event("LOG", f"无法创建日志目录：{exc}")
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        except OSError as exc:
+            log.error("open log dir failed: %r", exc)
+            self.log_view.append_event("LOG", f"打开日志目录失败：{exc}")
+
+    def show_about(self) -> AboutDialog:
+        dialog = AboutDialog(self)
+        self._about = dialog
+        dialog.exec()
+        return dialog
+
     def copy_diagnostics(self) -> None:
         text = static_summary()
         try:
@@ -1010,9 +1040,16 @@ class MainWindow(QMainWindow):
     def show_wizard(self) -> SetupWizard:
         wizard = SetupWizard(self, config=self.config)
         self._wizard = wizard
-        wizard.completed.connect(lambda: self.log_view.append_event("SETUP", "首次设置已完成"))
+        wizard.completed.connect(self._on_wizard_completed)
         wizard.exec()
         return wizard
+
+    def _on_wizard_completed(self) -> None:
+        self.log_view.append_event("SETUP", "首次设置已完成")
+        if self._save_config():
+            log.info("wizard choices saved auto_connect=%s close_to_tray=%s",
+                     getattr(self.config.device, "auto_connect", None),
+                     getattr(self.config.ui, "close_to_tray", None))
 
     def quit_app(self) -> None:
         self.request_quit()

@@ -250,6 +250,9 @@ class Router:
         **非阻塞**：设备连接（可能耗时数十秒的 ``session.start()``）交给
         supervisor 线程执行。这里只读取已有的 ``DeviceFacts``；没有设备时立即
         IDLE→FAULT 并让 supervisor 马上发起首连，GUI 线程不会被 ADB 卡住。
+
+        ``device.auto_connect=false`` 时启动后保持 IDLE、不发起连接，等用户
+        在设备页显式连接；这与 ``disconnect_device()`` 的挂起语义一致。
         """
         with self._lock:
             if self._started:
@@ -257,22 +260,36 @@ class Router:
             self._started = True
             self._stopped = False
             self._stop_event.clear()
+        auto_connect = bool(
+            getattr(getattr(self._cfg, "device", None), "auto_connect", True)
+        )
         with self._lock:
-            self._facts = self._read_facts() or self._facts
-            try:
-                self._ensure_estimator_locked()
-                self._desktop_sig = self._monitor_signature()
-                if self._pc_cursor is None:
-                    self._pc_cursor = self._query_cursor_pos() or self._default_cursor()
-            except PadLendError as exc:
-                log.warning("router.start_waiting code=%s detail=%s", exc.code.value, exc.detail)
-                self._fault(exc.code, f"启动等待设备: {exc.detail}")
-                self._next_reconnect_at = self._clock()
-            except Exception as exc:  # pragma: no cover - 防御性兜底
-                wrapped = wrap_unexpected(exc, detail="router.start")
-                log.exception("router.start_unexpected")
-                self._fault(wrapped.code, f"启动失败: {wrapped.detail}")
-                self._next_reconnect_at = self._clock()
+            if not auto_connect:
+                self._device_suspended = True
+                self._next_reconnect_at = float("inf")
+                self._facts = None
+                self._estimator = None
+                log.info("router.start auto_connect=false，等待用户连接设备")
+            else:
+                self._facts = self._read_facts() or self._facts
+                try:
+                    self._ensure_estimator_locked()
+                    self._desktop_sig = self._monitor_signature()
+                    if self._pc_cursor is None:
+                        self._pc_cursor = self._query_cursor_pos() or self._default_cursor()
+                except PadLendError as exc:
+                    log.warning(
+                        "router.start_waiting code=%s detail=%s",
+                        exc.code.value,
+                        exc.detail,
+                    )
+                    self._fault(exc.code, f"启动等待设备: {exc.detail}")
+                    self._next_reconnect_at = self._clock()
+                except Exception as exc:  # pragma: no cover - 防御性兜底
+                    wrapped = wrap_unexpected(exc, detail="router.start")
+                    log.exception("router.start_unexpected")
+                    self._fault(wrapped.code, f"启动失败: {wrapped.detail}")
+                    self._next_reconnect_at = self._clock()
 
         self._sender_thread = threading.Thread(
             target=self._sender_loop,
@@ -516,13 +533,14 @@ class Router:
         previous_buttons = self._buttons
         self._buttons = int(ev.buttons)
         if self._buttons != previous_buttons:
-            log_event(log, "cap.btn", buttons=f"0x{self._buttons:02x}")
+            # 发版审计 P1：按键变化可能每秒多次，INFO 会把日志刷满，降为 DEBUG。
+            log.debug("cap.btn buttons=0x%02x", self._buttons)
             # 按下/抬起是"电脑上冒出鼠标"的现场：把遮罩、锁、光标可见性一起
             # 写进日志，事后能区分是遮罩被拆、锁被系统收回，还是外部程序把
             # 光标显示回来了（用户报的问题只在真实点击时出现）。
             if self._state is State.CAPTURED:
                 try:
-                    log.info("cap.cursor %s", self._mask.diagnose())
+                    log.debug("cap.cursor %s", self._mask.diagnose())
                 except Exception:  # pragma: no cover - 诊断不应影响输入
                     log.debug("cap.cursor diagnose failed", exc_info=True)
         self._track_pc_cursor(ev)

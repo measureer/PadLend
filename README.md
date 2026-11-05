@@ -1,134 +1,143 @@
 # PadLend
 
-把 Android 平板变成 Windows 的第二块屏幕输入设备：鼠标从 PC 屏幕边缘"穿"进平板，平板出现系统鼠标指针并接受真实的鼠标/键盘输入；从平板边缘划回时，指针交还给 PC 原位置。无需 root、无需装驱动、无需在平板上安装 App。
+把 Android 平板当成 Windows 的第二块屏幕。鼠标移到电脑屏幕边缘时会穿到平板上，平板出现系统指针，可以直接用鼠标和键盘操作；从平板边缘划回来，指针回到电脑上原来的位置。
 
-> 设计文档：[docs/DESIGN.md](docs/DESIGN.md)；故障排查：[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)；变更记录：[docs/CHANGELOG.md](docs/CHANGELOG.md)。
+一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-## 特性
+当前版本 1.0.0，Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
-- **位置感知**：维护一个"平板指针估计器"，进入时按吸附位置 warp 到对应点，之后 1:1 跟随，回程时按估计器位置交还给 PC。
-- **边缘穿越**：以虚拟桌面外轮廓边段为唯一吸附目标；支持多显示器、负坐标、混合 DPI、跨屏同侧合并、角落裁决（Shift 切换）。
-- **系统指针**：通过 UHID 注册虚拟鼠标/键盘，平板显示真实的系统指针，支持 Android 原生光标、右键、滚轮、侧键。
-- **可拖拽画布**：可视化摆放平板（吸附到合法外轮廓段），实时预览入口/落点。
-- **键盘转发**：低级键盘钩子 + VK→HID 全表，6KRO，修饰键同步，中文输入法可用；`Ctrl+Alt+S` 接管/交还、`Ctrl+Alt+Q` 急停。
-- **崩溃兜底**：三层清理（异常路径 / 看门狗 / 下次启动检测 `exit.clean`），不会留下锁死的 ClipCursor 或幽灵 UHID。
-- **无侵入**：不修改系统设置（仅临时归零 `pointer_speed`，退出还原）；不安装驱动；不需要管理员权限。
-- **设备管理**：启动即列出 adb 设备，型号/序列号/传输方式/授权状态一目了然；用户显式连接/断开，未连接时不假设平板分辨率。
-- **昼 / 夜双主题**：顶栏右侧太阳/月亮按钮一键切换，选择写入配置并在下次启动恢复；亮色与深色共用同一套布局与控件。
-- **设置项自带说明**：每个摆位/手感/键盘/快捷键/杂项控件下方都有一行中文解释；进入保护等关键手感参数可直接调，不用手改 YAML。
+![桌面布局页](docs/screenshots/ui-layout.png)
 
-## 界面
+*界面截图使用演示设备数据；布局页可把平板拖到任意显示器边缘。*
 
-![设备管理](docs/screenshots/ui-devices.png)
+## 功能
 
-![桌面布局](docs/screenshots/ui-layout.png)
-
-![亮色主题](docs/screenshots/ui-light.png)
-
-![设置项与说明](docs/screenshots/ui-settings.png)
+- 平板作为 Windows 扩展屏，支持多显示器、负坐标和混合 DPI。
+- 鼠标从屏幕边缘进入平板后 1:1 移动；从平板边缘继续外推，交还给 PC。
+- 通过 UHID 创建虚拟鼠标/键盘，平板显示真实的系统指针，右键、滚轮、侧键都能用。
+- 键盘转发，支持中文输入法；`Ctrl+Alt+S` 手动接管/交还，`Ctrl+Alt+Q` 急停。
+- 布局页可视化摆位，拖到合法边缘即可；角落按 `Shift` 切换优先边，双击平板切换横竖屏。
+- 日间/夜间主题、托盘菜单、日志查看、脱敏诊断包。
+- 退出时恢复平板指针速度，并清理遮罩、ClipCursor 和 UHID 设备。
 
 ## 环境要求
 
-| 项目 | 要求 |
+| | |
 |---|---|
-| PC | Windows 10/11 x64，Python 3.11+（开发用 3.13） |
-| 平板 | Android 8.0+（UHID 可用；本项目在 Honor MagicPad 3 / Android 17 上验证） |
-| 工具 | 打包版已内置 adb；源码运行需 Android platform-tools（`adb` 在 PATH 或设置 `PADLEND_ADB`） |
-| 连接 | USB 数据线（推荐）或无线 adb；平板已开启"USB 调试" |
+| PC | Windows 10/11 x64 |
+| 平板 | Android 8.0+，且 `/dev/uhid` 可写 |
+| 连接 | USB 数据线（推荐）或无线 adb |
+| 开发 | Python 3.11+（开发使用 3.13） |
 
-> UHID 需要平板的 `uhid` 组权限；主流厂商系统默认允许 `adb shell` 访问 `/dev/uhid`。若 `probe` 报告不可写，见故障排查。
+已在 Honor MagicPad 3（CGA-W00，Android 17，3200×2136）上验证。其他机型只要 UHID 可用，首次连接会读取真实分辨率、朝向和输入参数，不按型号写死。
 
-## 安装
+UHID 是硬条件。`/dev/uhid` 不可写时无法创建虚拟鼠标/键盘，平板不会出现系统光标，键鼠输入也无法接管。可以先在电脑上执行：
 
-普通用户：直接双击 `dist\PadLend.exe`，无需安装 Python、adb 或任何驱动。
-配置、日志与退出标记会写在该 exe 同目录的 `.padlend\` 中，可整体拷贝运行。
-
-源码开发：
-
-```powershell
-git clone <repo> C:\Code\PadLend
-cd C:\Code\PadLend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -U pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```bash
+adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 ```
 
-`vendor/scrcpy-server-v5.0.1.jar` 已随仓库提供（SHA-256 见 `vendor/SHA256SUMS`）。缺失时程序会给出明确提示。
+返回 `OPEN_OK` 才说明可用。失败时需要换支持 UHID 的机型/ROM，或在 userdebug 固件上 `adb root` 后再试。详见[故障排查](docs/TROUBLESHOOTING.md)。
+
+## 下载与安装
+
+到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载：
+
+- `PadLend-1.0.0-win64.zip`：免安装包，解压即用。
+- `PadLend-1.0.0-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
+- `SHA256SUMS.txt`：下载后建议核对。
+
+### 校验
+
+```powershell
+Get-FileHash .\PadLend-1.0.0-win64.zip -Algorithm SHA256
+```
+
+把结果和 `SHA256SUMS.txt` 中对应行比对即可。
+
+### 免安装包
+
+解压到任意可写目录，运行 `PadLend.exe`。不要只把 exe 单独挪走，`_internal\` 里是运行时：
+
+```text
+PadLend\
+├─ PadLend.exe
+├─ _internal\
+├─ LICENSES\
+└─ THIRD_PARTY_NOTICES.md
+```
+
+整个目录约 129 MB，zip 约 51 MB。配置和日志默认写在 `%APPDATA%\PadLend\`，所以换新版时直接覆盖程序目录，配置还在。
+
+### 安装器
+
+安装器默认装到 `%LOCALAPPDATA%\Programs\PadLend`。卸载程序不会删除 `%APPDATA%\PadLend\` 里的配置和日志。
+
+### SmartScreen
+
+当前构建没有代码签名，Windows 可能提示“Windows 已保护你的电脑”。点“更多信息 → 仍要运行”即可。个别杀软会把 PyInstaller 打包的 exe 误报为可疑程序，可以核对 SHA-256，或者按[从源码构建](#从源码构建)自己打包。
 
 ## 快速开始
 
-打包版：双击 `dist\PadLend.exe`，在「设备」页刷新并选择平板 → 连接 → 切到「布局」页拖到屏幕边缘。
-首次连接会读取设备真实分辨率、朝向与输入参数，不再假设固定型号尺寸。
+1. 运行 `PadLend.exe`。第一次启动会打开向导，依次检查 adb、USB 调试、UHID 和 scrcpy-server，最后可以设置是否自动连接、关闭窗口时是否收进托盘。
+2. 在平板上打开“开发者选项 → USB 调试”，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。
+3. 选中平板，点「连接此设备」。
+4. 切到「布局」页，把平板拖到某个屏幕边缘的红色虚线区域，松手保存。角落位置按 `Shift` 切换优先边，双击平板切换横竖屏。
+5. 把鼠标移到该边缘并继续往外推，进入接管：PC 光标隐藏，平板出现指针。把指针推到平板对应边缘再往外推，交还给 PC。
 
-源码运行：
+### 热键
 
-```powershell
-# 1. 确认设备
-adb devices -l
+| 热键 | 作用 |
+|---|---|
+| `Ctrl+Alt+S` | 手动接管 / 交还 |
+| `Ctrl+Alt+Q` | 急停，立即释放鼠标、键盘和 ClipCursor |
 
-# 2. 读取平板事实（分辨率 / 朝向 / XScale / pointer_speed / UHID 可写）
-.\.venv\Scripts\python.exe tools\probe.py
-
-# 3. 启动 GUI
-.\.venv\Scripts\python.exe -m padlend
-
-# 4. 无 GUI 模式（开发/诊断用；连接后把鼠标位移 1:1 送到平板）
-.\.venv\Scripts\python.exe -m padlend --headless
-```
-
-首次启动会显示向导（可跳过）：选择设备 → 确认 USB 调试 → 检查 UHID → 校验 jar；也可以跳过向导，直接在「设备」页连接平板，再到「布局」页拖到屏幕边缘。源码运行配置默认在 `%APPDATA%\PadLend\config.yaml`（不可写时回退 `%LOCALAPPDATA%` 或项目 `.padlend\`）；打包版固定使用 exe 同目录 `.padlend\config.yaml`。
-
-## 使用
-
-1. 打开「设备」页，刷新并选择平板，点「连接此设备」；没有可用设备时点右上角「添加设备」，填平板「无线调试」里的 IP 与端口（首次配对再填 6 位配对码）。未连接时画布只显示占位，不显示任何分辨率。
-2. 连接成功后切到「布局」页，把平板拖到某个**外轮廓边段**（红色虚线高亮），松手即保存；角落可按住 `Shift` 切换优先边。
-3. 鼠标移到该边缘并继续向外推 → 进入**接管**（托盘变红，PC 光标隐藏，平板出现指针）。
-4. 在平板上正常使用鼠标/键盘；把指针推到平板对应边缘并继续外推 → **交还**，PC 光标回到进入点附近。
-5. 热键：
-   - `Ctrl+Alt+S` 手动接管/交还
-   - `Ctrl+Alt+Q` 急停（立刻释放鼠标/键盘/ClipCursor）
-   - `Ctrl+Alt+V` 剪贴板同步（可选）
-6. 顶栏右侧的太阳/月亮按钮切换白天/黑夜主题，选择会保存并在下次启动时恢复。
+热键可以在设置里改，对应 `hotkeys.toggle` 和 `hotkeys.panic`。
 
 ### 状态颜色
 
-| 状态 | 托盘/顶栏 | 含义 |
+| 颜色 | 状态 | 含义 |
 |---|---|---|
-| 灰 | 未连接 | 设备未连上，输入归 PC |
-| 绿 | IDLE | 已连接、未接管 |
-| 黄 | ARMING / RETURNING | 边缘外推观察窗口 / 正在交还 |
+| 灰 | 未连接 | 设备未连接，输入归 PC |
+| 绿 | IDLE | 已连接，未接管 |
+| 黄 | ARMING / RETURNING | 正在判断是否进入，或正在交还 |
 | 红 | CAPTURED | 接管中 |
-| 红（错误色） | FAULT | 连接/钩子异常，输入已全部交还系统 |
+| 红（错误色） | FAULT | 连接或钩子异常，输入已交还系统 |
 
 ## 配置
 
-配置文件：`%APPDATA%\PadLend\config.yaml`（日志在 `%APPDATA%\PadLend\logs\`）。
-受限环境若 `%APPDATA%` 不可写，会依次回退到 `%LOCALAPPDATA%\PadLend`、项目下 `.padlend/`；`PADLEND_HOME` 可显式覆盖配置根目录。
+配置文件在 `%APPDATA%\PadLend\config.yaml`，日志在同目录的 `logs\` 下。设置 `PADLEND_HOME` 可以换一个根目录；`%APPDATA%` 不可写时会依次回退到 `%LOCALAPPDATA%\PadLend` 和程序目录下的 `.padlend\`。
+
+首次启动会自动生成配置。常用字段：
 
 ```yaml
 version: 1
 device:
-  serial: ""            # 空 = 自动选择第一台
+  serial: ""              # 空 = 自动选择第一台
   prefer_usb: true
-  auto_connect: true
-  server_port: 1234
+  auto_connect: true      # false = 启动后不自动连接，在设备页手动连接
+  server_port: 1234       # 1024–65535
+  known: []               # 最近连接过的序列号（自动维护）
+  mac: ""                 # 上次设备的 Wi-Fi MAC（自动维护）
 placement:
-  monitor: ""           # 空 = 主屏
-  edge: right           # left/right/top/bottom
+  monitor: ""             # 空 = 主屏
+  edge: right             # left / right / top / bottom
   span_start: 0
   span_end: 1600
-  offset: 0.5
-  align: proportional   # proportional/center/one_to_one
-  corner_priority: right
+  offset: 0.5             # 0–1，该边段内的相对落点
+  align: proportional     # proportional / center / one_to_one
+  corner_priority: right  # 角落争夺时优先的边
 motion:
-  gain: 1.0
-  report_hz: 1000
+  gain: 1.0               # 0.25–3.0
+  report_hz: 1000         # 125 / 250 / 500 / 1000
+  hid_clamp: 127          # 1–127，单次 HID 位移上限
+  entry_margin_px: 2
+  exit_overflow_px: 120   # 交还所需的外推距离
+  debounce_ms: 250
   arm_px: 40
   arm_window_ms: 80
-  exit_overflow_px: 24
-  debounce_ms: 250
   edge_band_px: 1
-  boundary_inset_px: 0
+  boundary_inset_px: 0    # 平板拦截边缘手势时可调 8–16
 keyboard:
   forward: true
   suppress_pc: true
@@ -137,97 +146,128 @@ keyboard:
 hotkeys:
   toggle: "Ctrl+Alt+S"
   panic: "Ctrl+Alt+Q"
-  clipboard: "Ctrl+Alt+V"
 ui:
-  language: zh_CN
-  theme: dark            # dark / light
+  language: zh_CN         # 预留字段，1.0.0 仅中文界面
+  theme: dark             # dark / light
   tray_notifications: true
   show_pointer_ghost: true
+  close_to_tray: false    # 关闭主窗时收进托盘继续运行
 misc:
   clipboard_sync: true
   keep_screen_on: true
   restore_pointer_speed: -3
 ```
 
-修改配置后可在设置面板点"保存"，或在托盘菜单选"重载配置"。
+设置页能改大部分选项；画布拖动会写 `placement.offset`，角落优先边用 `Shift` 在画布上切换。需要精确数值时再直接改 YAML。
 
-## 开发
+改完点“保存设置”，或者重启程序。YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `config.yaml.bad-<时间戳>`，恢复默认值，并在设置页底部显示原因。
+
+## 日志与诊断
+
+- `%APPDATA%\PadLend\logs\padlend.log`：运行日志，2 MB 轮转，保留 3 个文件。
+- `logs\crash-YYYYmmdd-HHMMSS-<pid>.log`：未捕获异常的 traceback、版本和启动参数。
+- `logs\faulthandler-*.log`：原生崩溃时的全线程栈。
+- 托盘菜单的「打开日志目录…」可以直接打开上述目录。
+- 顶栏 `⋯` →「运行诊断…」会采集 adb 设备、dumpsys input、pointer_speed、UHID 状态和最近 512 KB 日志，并可导出 zip。序列号、IP、MAC、用户名和用户目录默认打码。
+- 托盘菜单的「复制诊断信息」只复制版本、系统、jar 状态等静态摘要，不会跑 adb。
+
+## 常见问题
+
+| 现象 | 先看 |
+|---|---|
+| SmartScreen 提示“未知发布者” | 点“更多信息 → 仍要运行”，或核对 SHA-256 |
+| 找不到 scrcpy-server jar，或校验失败 | 重新解压发布包；`vendor/scrcpy-server-v5.0.1.jar` 缺失或与 `vendor/SHA256SUMS` 不符 |
+| 平板不显示光标，键鼠没反应 | UHID 不可写，先按上面的命令自检 |
+| 设备页显示 unauthorized | 在平板上点“允许 USB 调试”，勾选“始终允许”，再刷新 |
+| 无线 adb 连不上 | 确认平板和电脑在同一网段，无线调试端口没被路由器隔离；重新配对 |
+| 边缘手势被平板抢走 | 调大 `motion.boundary_inset_px`（8–16） |
+| 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 120）或 `debounce_ms` |
+
+更完整的排障步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+
+## 从源码构建
 
 ```powershell
-# 单元测试（不需要平板/显示器）
+git clone https://github.com/measureer/PadLend.git C:\Code\PadLend
+cd C:\Code\PadLend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+# 直接运行
+.\.venv\Scripts\python.exe -m padlend
+```
+
+`vendor/scrcpy-server-v5.0.1.jar` 和 `vendor/adb/platform-tools/` 随仓库提供，校验和见 `vendor/SHA256SUMS`。adb 的查找顺序是：`PADLEND_ADB` → 内置 `vendor/adb/platform-tools/` → PATH → 常见 SDK 目录。
+
+打包：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\.venv\Scripts\python.exe tools\release.py --build --zip --sha256
+```
+
+输出在 `dist\`：`PadLend\`（onedir）、`PadLend-1.0.0-win64.zip`、`SHA256SUMS.txt`。加 `--installer` 需要预装 Inno Setup 6.3+；加 `--sign` 需要设置 `PADLEND_SIGN_CERT` 和 `PADLEND_SIGN_PASSWORD`，没有证书时会跳过并提示未签名。这个脚本只生成本地产物，上传由 GitHub Release 工作流完成。
+
+## 开发与验收
+
+```powershell
+# 单元测试，不需要平板或显示器
 .\.venv\Scripts\python.exe -m pytest -q
 
 # 代码风格
 .\.venv\Scripts\python.exe -m ruff check .
 
-# 真实设备探测
+# 探测真实设备
 .\.venv\Scripts\python.exe tools\probe.py
-```
 
-### 没有平板时怎么验收
-
-真机流程（进边缘 → 穿透 → 点击/拖动 → 交还）可以完全在没有平板、也不用鼠标的机器上跑：
-
-```powershell
-# 端到端验收：假平板 + 真实遮罩/ClipCursor/状态机，32 项断言，退出码即结论
+# 端到端验收：假平板 + 真实遮罩/ClipCursor/状态机
 .\.venv\Scripts\python.exe tools\acceptance.py
 
-# 想自己看界面：用假平板启动 GUI（设备页会列出 Simulated Tablet）
+# 用假平板启动 GUI
 .\.venv\Scripts\python.exe main.py --simulate
 
-# 改了品牌图标后重新生成 exe 用的 .ico（与运行时同一份画法）
-.\.venv\Scripts\python.exe tools\make_icon.py
+# 重新生成截图
+.\.venv\Scripts\python.exe tools\make_screenshots.py
 ```
 
-`acceptance.py` 只驱动真实代码路径，不 mock 被测逻辑：进入接管后检查遮罩窗口确实吞掉
-`WM_SETCURSOR`、`ClipCursor` 确实钉在屏幕边缘的 1px 条上，再用真实输入事件走单击/连点/
-双击/拖动，断言平板端收到按下+抬起、状态机没被踢出 CAPTURED、遮罩与裁剪区都还在，最后
-交还并断言遮罩销毁、`ClipCursor` 解除。本机光标不可观测（远程桌面/无头会话）时相关三项
-会明确标成 SKIP，而不是假装通过。
+`acceptance.py` 走真实代码路径，不 mock 被测逻辑。进入接管后会检查遮罩是否吞掉 `WM_SETCURSOR`、`ClipCursor` 是否钉在屏幕边缘的 1px 条上，再用真实输入事件验证单击、连点、双击和拖动，最后交还并检查遮罩销毁、`ClipCursor` 解除。本机光标不可观测（远程桌面或无头会话）时，相关检查会标成 SKIP。
 
-排查「穿透时电脑上又冒出鼠标」用 `docs/VERIFICATION.md` 里的 `cap.cursor` 日志：
-接管期每次按下/抬起都会记录 `visible=… clip=… windows=… active=…`。
+排查“接管时电脑上又冒出鼠标”，可以看 `docs/VERIFICATION.md` 里的 `cap.cursor` 日志：接管期间每次按下/抬起都会记录 `visible=… clip=… windows=… active=…`。
 
-目录结构：
+### 目录结构
 
-```
+```text
 PadLend/
-├─ main.py                 # 组合根 / 生命周期
-├─ constants.py            # 全部常量、HID 描述符、超时
-├─ config.py               # 配置数据类、校验、迁移
-├─ core/                   # 状态机、几何、估计器、错误、日志、指标
-├─ win/                    # DPI、桌面几何、Raw Input、遮罩、钩子、热键、单实例
-├─ tablet/                 # adb、协议、UHID、server、session、keymap、估计器
-├─ ui/                     # 主窗、画布、设置、日志、托盘、向导、诊断、主题
-├─ tools/                  # probe / calibrate
-├─ tests/                  # 单元 + 集成（fake 设备）
-└─ vendor/                 # scrcpy-server jar、内置 adb、SHA256SUMS
+├─ main.py                 # 组合根、生命周期、CLI
+├─ constants.py            # 常量、HID 描述符、路径
+├─ config.py               # 配置、校验、损坏恢复
+├─ core/                   # 状态机、几何、估计器、错误、日志、崩溃
+├─ win/                    # DPI、桌面几何、Raw Input、遮罩、钩子、热键
+├─ tablet/                 # adb、协议、UHID、server、session、键盘映射
+├─ ui/                     # 主窗、画布、设置、日志、托盘、向导、诊断
+├─ tools/                  # probe / calibrate / acceptance / release / 截图
+├─ installer/              # Inno Setup 脚本
+├─ vendor/                 # scrcpy-server jar、内置 adb、SHA256SUMS
+├─ LICENSES/               # 第三方许可证原文
+└─ THIRD_PARTY_NOTICES.md  # 第三方组件说明
 ```
 
-线程模型：T1 GUI、T2 Raw Input、T3 键盘钩子、T4 Router、T5 发送、T6 监督；队列满时丢最老并计入 `drop_pct`。
-
-## 打包
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install pyinstaller
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm PadLend.spec
-```
-
-输出单文件 `dist\PadLend.exe`（约 51MB，含 PySide6 运行时、`vendor/scrcpy-server-v5.0.1.jar`
-与内置 adb），双击即可运行，不依赖本机 Python/adb。
-
-- `PadLend.spec` 使用 `runtime_tmpdir="."`：受限 Windows 配置下 `%TEMP%` 不可写时，
-  单文件解包目录放在 exe 同目录。
-- 首次运行校验 `vendor/` 完整性；配置/日志/`exit.clean` 写在 exe 同目录 `.padlend\`。
+线程模型：GUI、Raw Input、键盘钩子、Router、发送、监督各一个线程；发送队列满时丢最老的输入，并计入 `drop_pct`。
 
 ## 已知限制
 
-- 单文件 exe 未做代码签名，Windows SmartScreen 可能提示“未知发布者”；选择“更多信息 → 仍要运行”即可。
-- 以管理员权限运行的窗口（UAC 提权程序）收不到本程序的钩子注入，这是 Windows 低级钩子的固有限制。
-- 多显示器 A4–A6 场景需要在双屏环境复验；逻辑已由 fixture 单测覆盖。
-- 平板系统若拦截边缘手势（MagicOS 等），可把 `boundary_inset_px` 调大 2–4px。
-- 无线 adb 抖动时建议降低 `motion.report_hz` 或改用 USB。
+- 未签名：没有代码签名证书，SmartScreen 会提示“未知发布者”。
+- 管理员窗口收不到输入：以管理员权限运行的窗口（UAC 提权程序）收不到本程序的低级键盘/鼠标钩子，这是 Windows 的限制。
+- UHID 是硬条件：`/dev/uhid` 不可写时无法创建虚拟鼠标/键盘，不能接管输入。
+- 多显示器组合（负坐标、跨屏同侧、角落裁决）有 fixture 单测覆盖，但仍需要双屏实机复验。
+- 边缘手势：MagicOS 等系统可能拦截边缘滑动，可以调大 `boundary_inset_px`。
+- 无线性能：adbd 抖动时降低 `report_hz` 或改用 USB；部分路由器开了 AP 隔离时无线调试不可用。
+- 无自动更新：1.0.0 没有内置更新器；升级时下载新 Release，覆盖程序目录即可，配置会保留。
+- 当前只有中文界面。
 
 ## 许可
 
-Apache-2.0。使用/借鉴了 [scrcpy](https://github.com/Genymobile/scrcpy)（Apache-2.0）的 server jar 与控制协议；协议实现为独立编写。
+Apache-2.0。PySide6/Qt、scrcpy、Android platform-tools、PyYAML、psutil、PyInstaller 等第三方组件的许可证和归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，发布包的 `LICENSES/` 目录里有许可证原文。程序内「关于 PadLend…」可以查看版本、许可摘要并打开该文件。
+
+平板端的 scrcpy server jar 和协议来自 [scrcpy](https://github.com/Genymobile/scrcpy)（Apache-2.0），PadLend 侧的协议实现是独立编写的。

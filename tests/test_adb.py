@@ -174,9 +174,13 @@ def test_pair_rejects_missing_code() -> None:
         _RunStub("").pair("192.168.1.8:37001", "")
 
 
-def test_kill_server_never_raises() -> None:
+def test_kill_server_never_raises(monkeypatch) -> None:
+    from tablet import adb as adb_mod
+
+    # 发版审计 P1：只在 PadLend 自己拉起 adb server 时才 kill。
+    monkeypatch.setattr(adb_mod, "_SERVER_OWNED_BY_PADLEND", True)
     adb = _RunStub("", 1)
-    adb.kill_server()
+    assert adb.kill_server() is True
     assert adb.calls[-1] == ["kill-server"]
 
 

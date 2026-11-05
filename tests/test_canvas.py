@@ -9,7 +9,7 @@ import os
 from collections import Counter
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
@@ -146,9 +146,11 @@ def test_scene_items_built(canvas: DesktopCanvas) -> None:
     assert len(canvas.monitor_items()) == 2
 
 
-def test_scene_rect_uses_physical_pixels(canvas: DesktopCanvas) -> None:
+def test_scene_rect_covers_desktop_and_tablet(canvas: DesktopCanvas) -> None:
+    # 场景矩形会被 fit_view 扩到平板摆位，导航范围必须同时覆盖桌面与平板。
     rect = canvas.sceneRect()
-    assert (rect.left(), rect.top(), rect.width(), rect.height()) == (0.0, 0.0, 3200.0, 900.0)
+    assert rect.contains(QRectF(0.0, 0.0, 3200.0, 900.0))
+    assert rect.contains(canvas._tablet_item.sceneBoundingRect())
 
 
 def test_scene_rect_handles_negative_coordinates(qapp: QApplication) -> None:
@@ -160,9 +162,7 @@ def test_scene_rect_handles_negative_coordinates(qapp: QApplication) -> None:
     view.resize(800, 600)
     try:
         rect = view.sceneRect()
-        assert rect.left() == pytest.approx(-1280.0)
-        assert rect.width() == pytest.approx(2880.0)
-        assert rect.height() == pytest.approx(1024.0)
+        assert rect.contains(QRectF(-1280.0, 0.0, 2880.0, 1024.0))
     finally:
         view.close()
 

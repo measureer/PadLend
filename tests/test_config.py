@@ -117,7 +117,7 @@ def test_corrupt_yaml_backs_up_and_resets(tmp_path):
     cfg = Config.load(path)
     assert cfg.validate() == []
     assert cfg.issues
-    assert (tmp_path / "broken.yaml.bak").exists()
+    assert list(tmp_path.glob("broken.yaml.bad-*")), "损坏配置必须先备份再重置"
 
 
 def test_future_version_resets(tmp_path):
@@ -126,7 +126,7 @@ def test_future_version_resets(tmp_path):
 
     cfg = Config.load(path)
     assert cfg.issues
-    assert (tmp_path / "future.yaml.bak").exists()
+    assert list(tmp_path.glob("future.yaml.bad-*"))
     assert cfg.validate() == []
 
 

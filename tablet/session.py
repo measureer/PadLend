@@ -19,12 +19,15 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import os
 import re
 import socket
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import constants as C
@@ -512,6 +515,9 @@ class TabletSession:
             self._dev_adb.shell("settings", "get", "system", "pointer_speed")
         )
         self._orig_pointer_speed = original
+        # 崩溃兜底：先把原值落盘，下次启动即使没有 exit.clean 也能还原。
+        serial = self._facts.serial if self._facts is not None else ""
+        save_pointer_state(serial, original)
         if not self._dev_adb.shell_ok("settings", "put", "system", "pointer_speed", "0"):
             raise PadLendError(
                 ErrorCode.DEVICE_OFFLINE, "无法把 pointer_speed 归零（settings put 失败）"
@@ -531,11 +537,13 @@ class TabletSession:
         target = self._orig_pointer_speed
         if target == 0:
             # 我们把它归零了；原值就是 0 时无需再写。
+            clear_pointer_state()
             return
         if self._dev_adb.shell_ok("settings", "put", "system", "pointer_speed", str(target)):
             LOG.info("pointer_speed 已还原为 %d", target)
+            clear_pointer_state()
         else:
-            LOG.warning("pointer_speed 还原失败（原值 %d）", target)
+            LOG.warning("pointer_speed 还原失败（原值 %d），保留状态待下次启动", target)
 
     def _keep_screen_on(self) -> None:
         """``svc power stayon true``（6.1.2），并记录原值以便退出还原。"""
@@ -723,7 +731,7 @@ class TabletSession:
         server = self._server
         if server is not None:
             try:
-                server.kill()
+                server.kill(timeout=2.0)
                 server.forward_remove()
             except PadLendError as exc:
                 LOG.warning("服务端清理失败: %s", exc.detail)
@@ -733,7 +741,7 @@ class TabletSession:
 
         if server is not None:
             try:
-                if not server.verify_clean():
+                if not server.verify_clean(timeout=2.0):
                     LOG.warning("清理校验失败：%s", server.verify_detail)
                     log_event(LOG, C.EVENT_TABLET_CLEANUP_GHOST,
                               detail=server.verify_detail)
@@ -757,6 +765,72 @@ class TabletSession:
 
 
 # ---------------------------------------------------------------------------
+# pointer_speed 崩溃兜底：原值落盘，下次启动恢复
+# ---------------------------------------------------------------------------
+_POINTER_STATE_NAME = "pointer_speed_state.json"
+
+
+def _pointer_state_path() -> Path:
+    return C.config_dir() / _POINTER_STATE_NAME
+
+
+def save_pointer_state(serial: str, value: int | None) -> None:
+    """记录归零前的原值（原子写；失败只告警，绝不阻断会话）。"""
+    if value is None:
+        return
+    try:
+        cfg_dir = C.config_dir()
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        path = _pointer_state_path()
+        tmp = path.with_suffix(".tmp")
+        payload = json.dumps(
+            {"serial": serial or "", "value": int(value), "saved_at": time.time()},
+            ensure_ascii=False,
+        )
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except Exception as exc:  # noqa: BLE001 - 状态文件失败不能影响主流程
+        LOG.warning("保存 pointer_speed 状态失败: %r", exc)
+
+
+def load_pointer_state() -> tuple[str, int] | None:
+    try:
+        raw = json.loads(_pointer_state_path().read_text(encoding="utf-8"))
+        value = int(raw["value"])
+        serial = str(raw.get("serial") or "")
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    return serial, value
+
+
+def clear_pointer_state() -> None:
+    with contextlib.suppress(OSError):
+        _pointer_state_path().unlink(missing_ok=True)
+
+
+def restore_pending_pointer_speed(adb: Adb | None) -> int | None:
+    """启动时恢复上次崩溃残留的 pointer_speed；成功返回恢复值。
+
+    与 exit.clean 无关：只要状态文件还在就尝试恢复（设备可能没插，
+    此时保留文件，下次再试）。
+    """
+    state = load_pointer_state()
+    if state is None or adb is None:
+        return None
+    serial, value = state
+    dev = adb.with_serial(serial) if serial else adb
+    if value != 0 and not dev.shell_ok("settings", "put", "system", "pointer_speed", str(value)):
+        LOG.warning("启动恢复 pointer_speed=%d 失败（设备未连接？），保留状态", value)
+        return None
+    clear_pointer_state()
+    LOG.info("启动恢复 pointer_speed=%d serial=%s", value, serial or "(默认)")
+    return value
+
+
+# ---------------------------------------------------------------------------
 # 12.3 下次启动 / 崩溃兜底：强制清理
 # ---------------------------------------------------------------------------
 def force_cleanup(
@@ -772,14 +846,22 @@ def force_cleanup(
     """
     if adb is None:
         return
+    # 持久化的原值优先于配置里的 -3（-3 只是"恢复出厂"保底）。
+    pending = load_pointer_state()
+    if pending is not None:
+        pending_serial, pending_value = pending
+        if not serial or not pending_serial or pending_serial == serial:
+            serial = serial or pending_serial
+            restore_pointer_speed = pending_value
     dev = adb.with_serial(serial) if serial else adb
     try:
         dev.shell_ok("pkill", "-9", "-f", KILL_PATTERN)
         if port is not None:
             dev.forward_remove(port)
         if serial:
-            dev.shell_ok("settings", "put", "system", "pointer_speed",
-                         str(restore_pointer_speed))
+            if dev.shell_ok("settings", "put", "system", "pointer_speed",
+                            str(restore_pointer_speed)):
+                clear_pointer_state()
             dev.shell_ok("settings", "put", "system", "pointer_location", "0")
     except PadLendError as exc:  # pragma: no cover - shell_ok 已吞
         LOG.warning("force_cleanup 失败: %s", exc.detail)

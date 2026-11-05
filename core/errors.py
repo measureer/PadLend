@@ -32,7 +32,7 @@ class ErrorCode(StrEnum):
 MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.ADB_NOT_FOUND: "找不到 adb，请在设置中配置 platform-tools 路径",
     ErrorCode.DEVICE_OFFLINE: "平板不在线或未授权 USB 调试",
-    ErrorCode.UHID_UNAVAILABLE: "平板 /dev/uhid 不可写，只能使用降级模式",
+    ErrorCode.UHID_UNAVAILABLE: "平板 /dev/uhid 不可写，无法创建虚拟鼠标/键盘",
     ErrorCode.SERVER_START_FAILED: "平板端 scrcpy-server 启动失败",
     ErrorCode.FORWARD_FAILED: "adb forward 失败（端口可能被占用）",
     ErrorCode.HANDSHAKE_FAILED: "与服务端握手失败（版本不匹配）",

@@ -3,6 +3,43 @@
 > 环境：Windows 11、Python 3.13.14、PySide6 6.12.0、adb 37.0.1；平板 Honor MagicPad 3（CGA-W00，Android 17 / SDK 37，3200×2136，420 dpi）。
 > 记录原则：每条都写命令、期望、实际、结论；无硬件时明确标"待复验"，不得默认为通过。
 
+## 0. 1.0.0 发布验收（2026-11-05）
+
+> 本节针对 **onedir** 发布物。第 1–23 节是 0.3.x 期间的历史记录，其中的 onefile 体积、
+> `PadLend.exe --version`、`ui.tray_hint_shown`、收进托盘气泡等已不适用于 1.0.0，仅作回归对照。
+
+构建命令（标准库脚本，封装 onedir / zip / 可选安装器 / 签名 / 校验和）：
+
+```powershell
+.\.venv\Scripts\python.exe tools\release.py --build --zip --sha256
+```
+
+| 项 | 命令 / 检查 | 期望 | 状态 |
+|---|---|---|---|
+| 产物结构 | `ls dist\PadLend\` | `PadLend.exe` + `_internal\` + `LICENSES\` + `THIRD_PARTY_NOTICES.md` | ✅ 129 MB 目录 |
+| 发布 zip | `dist\PadLend-1.0.0-win64.zip` | 约 52 MB，解压即可运行 | ✅ |
+| 版本资源 | PowerShell `(Get-Item dist\PadLend\PadLend.exe).VersionInfo` | FileVersion `1.0.0.0`、ProductVersion `1.0.0`、FileDescription/CompanyName 非空 | ✅ |
+| 版本单一源 | `python -c "import padlend, constants; print(padlend.__version__, constants.VERSION)"` | 两处均为 `1.0.0`；`pyproject.toml` 动态读取 | 待执行（代码核对通过） |
+| 任意 CWD 启动 | `cd $env:TEMP; & 'C:\...\dist\PadLend\PadLend.exe'` | 窗口出现；配置/日志写到 `%APPDATA%\PadLend`，**不写 exe 目录** | 待执行（GUI） |
+| 状态栏/关于版本 | 主窗底栏、托盘「关于 PadLend…」 | 均显示 `v1.0.0`；向导底部同样 | 待执行（GUI） |
+| SHA256SUMS | `Get-FileHash .\dist\PadLend-1.0.0-win64.zip -Algorithm SHA256` | 与 `dist\SHA256SUMS.txt` 对应行的 64 位十六进制一致 | 待执行 |
+| 崩溃日志 | 临时 `PADLEND_HOME`；`python -c "from core.crash import install_crash_handlers, report_crash; ..."` 后触发 `report_crash` | 生成 `logs\crash-<时间>-<pid>.log`，含版本、argv、traceback、线程栈 | 待执行 |
+| 原生崩溃栈 | 同上，检查 `faulthandler-*.log` | 存在且非空 | 待执行 |
+| 配置损坏恢复 | 临时 `PADLEND_HOME` 写坏 YAML 后启动 | 原文件备份为 `config.yaml.bad-<时间戳>`，加载默认值，日志 `cfg.backup` | 待执行 |
+| 损坏可重复 | 连续两次写坏并启动 | 生成两个不同时间戳的 `.bad-` 文件，不互相覆盖 | 待执行 |
+| 日志轮转 | 运行至 `padlend.log` > 2 MB，或复制大日志后重启 | `padlend.log.1`…`.3`，单文件 ≤ 2 MB，不无限增长 | 待执行 |
+| 诊断脱敏 | 顶栏右侧菜单（⋯）→「运行诊断…」→ 导出 zip，解压检查 | `diagnostics.txt` 无完整序列号/IP/MAC/用户名；`meta.json` 的 `redacted: true` | 待执行（GUI） |
+| About 许可 | 托盘/顶栏菜单（⋯）→「关于 PadLend…」 | 显示 1.0.0、Apache-2.0、PySide6 LGPLv3 说明；「第三方许可…」能打开 `THIRD_PARTY_NOTICES.md`；「打开日志目录…」有效 | 待执行（GUI） |
+| 安装器（可选） | `tools\release.py --installer` 后运行 `PadLend-1.0.0-setup.exe` | 每用户安装到 `%LOCALAPPDATA%\Programs\PadLend`，无需 UAC；卸载保留 `%APPDATA%\PadLend` | 待执行（需 Inno Setup 6.3+） |
+| 内置 adb | 临时清空 PATH 后启动 headless | 仍能执行 `adb devices`；日志 adb 路径指向 `_internal\vendor\adb\platform-tools\adb.exe` | 待执行 |
+| vendor 校验 | 临时改动 jar 的一个字节后连接设备 | 推送前抛 E103「与 vendor/SHA256SUMS 不一致」，不启动 server；恢复后可连 | 待执行（破坏性，需副本） |
+| SmartScreen | 在未加白名单的机器运行 zip 内 exe | 出现「未知发布者」；「更多信息 → 仍要运行」后可启动 | 待执行（干净机） |
+| 截图 | `python tools\make_screenshots.py` | 4 张 1280×820，设备页/布局/设置/浅色；无缺字、无旧控件 | ✅ 已生成 |
+
+**发布前必须清零**：上表所有「待执行」项，以及 `python -m pytest -q`、`ruff check .`、`tools/acceptance.py` 三条门禁。
+当前 pytest 有 3 个失败（`test_kill_server_never_raises`、`test_corrupt_yaml_backs_up_and_resets`、`test_future_version_resets`），
+在修复前不得打 tag。
+
 ## 1. 单元/集成（无硬件）
 
 | 项 | 命令 | 期望 | 状态 |
@@ -100,7 +137,7 @@ adb devices -l
 
 真机点击“连接此设备” → 画布出现真实尺寸 → 边缘穿越的交互链路，待平板重新连接后按 A1–A13 复验。
 
-## 7. 打包（2026-11-02 实测）
+## 7. 打包（0.2.x onefile 历史，2026-11-02 实测）
 
 | 项 | 命令 | 实际 | 结论 |
 |---|---|---|---|
@@ -273,7 +310,7 @@ adb devices -l
 | 设备记忆存盘 | `test_known_devices_roundtrip` / `test_known_devices_default_empty_and_coerced` | `device.known` 顺序往返、缺省 `[]`、`[7, XYZ]` → `["7","XYZ"]` | ✅ |
 | 设备页列记忆行 | `test_device_page_lists_remembered_devices` | 扫不到时列出 2 行「上次连接的设备」，扫到后不重复，提示 `1 台设备` | ✅ |
 | 记住上次设备 | `test_window_remembers_the_last_device` | 新的在前、去重、≤8 条，`device.serial` 同步 | ✅ |
-| 记忆行实机渲染 | 打包版 GUI（`build/home-0311-gui/config.yaml` 预置 `serial` + `known`） | 列表出现「192.168.67.8:37495 上次连接的设备 · 无线」「ABC123USB · USB」，右卡可点「连接此设备」，右上「2 台已记住」 | ✅ |
+| 记忆行实机渲染 | 打包版 GUI（`build/home-0311-gui/config.yaml` 预置 `serial` + `known`） | 列表出现「192.0.2.10:37495 上次连接的设备 · 无线」「ABC123USB · USB」，右卡可点「连接此设备」，右上「2 台已记住」 | ✅ |
 | 无线重连补 adb connect | `_connect_worker` 对含 `:` 的 serial 先 `adb.connect` | 失败仅 `log.info`，结论仍由 45s 超时给出 | ✅ |
 | 全量回归 | `pytest -o addopts="" -q` | 375 passed, 3 skipped | ✅ |
 | 静态检查 | `ruff check .` | All checks passed | ✅ |
@@ -295,7 +332,7 @@ adb devices -l
 | 勾选后点 X | 打包版 GUI（`close_to_tray: true`）+ `ps-close-check.ps1` | `padlend_alive=True`、`window_visible=False`，日志 `window hidden to tray` | ✅ |
 | 不勾选点 X | 打包版 GUI（默认配置）+ `ps-close-check.ps1` | `alive=False`，PadLend.exe 归零 | ✅ |
 | 托盘不可用时 | 单测 `test_request_close_quits_when_tray_is_missing` | 即使勾选也走真退出 | ✅ |
-| 重复触发幂等 | 原生 `WM_CLOSE` 与 `closeEvent` 同时到达 | 只隐藏一次、只弹一次气泡（`isHidden()` 守卫） | ✅ |
+| 重复触发幂等 | 原生 `WM_CLOSE` 与 `closeEvent` 同时到达 | 只隐藏一次（`isHidden()` 守卫） | ✅ |
 | 全量回归 | `pytest -o addopts="" -q` | 380 passed, 3 skipped | ✅ |
 | 静态检查 | `ruff check .` | All checks passed | ✅ |
 | 验收工具 | `tools/acceptance.py` | 32 项，0 失败，3 跳过 | ✅ |
@@ -426,7 +463,6 @@ adb devices -l
 | 启动后复核 | 同上，1.2 秒后 | `tray registration rejected by the shell (err=5)` + `tray recheck after startup -> False` | ✅ |
 | 图标被拒时退化成最小化 | 打包版 `WM_CLOSE`（`build/ps-close-check.ps1 -Hwnd 6558056 -ProcId 92180`） | `alive=True`、窗口最小化、日志 `tray icon rejected by the shell; minimized instead of hiding (ui.close_to_tray err=5)`，**只出现一次**（原生 WM_CLOSE 与 closeEvent 已去重） | ✅ |
 | 底栏告知原因 | 恢复窗口截图 | 底栏显示「系统托盘没有接受图标，已改为最小化到任务栏，可在设置里关闭「关闭窗口时最小化到托盘」」 | ✅ |
-| 首次启动的位置提示只弹一次 | 启动后读配置 | 日志 `tray location hint shown once (ui.tray_hint_shown)`，`config.yaml` 写入 `ui.tray_hint_shown: true` | ✅ |
 | 单元测试 | `pytest -o addopts="" -q` | 411 passed, 3 skipped（新增探针判定、退化文案、首次提示三例） | ✅ |
 | 无硬件验收 | `python tools/acceptance.py` | 33 项 0 失败 3 跳过 | ✅ |
 | 0.3.18 构建 | `python -m PyInstaller --noconfirm PadLend.spec` | 53,196,978 B，sha256 `f92ed0260b7771127ca2a5d47e9caaeb61b5a9a81eafc5d7c108a75e1aef4732`，`--version` → `PadLend 0.3.18` | ✅ |

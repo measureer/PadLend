@@ -109,6 +109,10 @@ class FakeDesktop:
     def monitors(self) -> tuple[MonitorInfo, ...]:
         return self._monitors
 
+    @property
+    def bounding_box(self) -> Rect:
+        return Rect(0, 0, 3840, 1080)
+
     def exterior_segments(self) -> tuple[EdgeSegment, ...]:
         return self._segments
 
@@ -213,6 +217,25 @@ def test_canvas_programmatic_calls_are_guarded(window: Any) -> None:
     window._canvas_call("set_tablet_pointer", 5.0, 6.0)
     window._canvas_call("does_not_exist", 1)
     assert window._canvas_call("missing_method") is None
+
+
+def test_canvas_fits_tablet_that_sits_outside_the_desktop(
+    window: Any, qapp: QApplication
+) -> None:
+    """平板在桌面包围盒之外时，适配视图不能把它裁掉。"""
+    window.show()
+    for _ in range(3):
+        qapp.processEvents()
+    canvas = window.canvas
+    canvas.refresh_desktop()
+    window._switch_page(1)  # noqa: SLF001
+    canvas.fit_view()
+    qapp.processEvents()
+    tablet = canvas._tablet_item.sceneBoundingRect()  # noqa: SLF001
+    assert tablet.width() > 0
+    assert canvas._scene.sceneRect().contains(tablet)  # noqa: SLF001
+    view_rect = canvas.mapFromScene(tablet).boundingRect()
+    assert canvas.viewport().rect().adjusted(-1, -1, 1, 1).contains(view_rect)
 
 
 # ---------------------------------------------------------------------------
@@ -472,13 +495,22 @@ def test_diagnostics_report_and_export(tmp_path: Path) -> None:
     text = report.to_text()
     assert "PadLend" in text
     assert "1.312" in text
-    assert "R58M12345" in text
+    # 序列号在导出的诊断文本里必须打码（发版审计 P0-3）。
+    assert "R58M12345" not in text
+    assert "<serial>" in text
 
     archive = export_report(report, directory=tmp_path)
     assert archive.is_file()
     with zipfile.ZipFile(archive) as handle:
         names = set(handle.namelist())
-    assert {"diagnostics.txt", "dumpsys-input.txt", "adb-devices.txt", "meta.json"} <= names
+    expected = {
+        "README.txt",
+        "diagnostics.txt",
+        "dumpsys-input.txt",
+        "adb-devices.txt",
+        "meta.json",
+    }
+    assert expected <= names
 
 
 def test_static_summary_does_not_need_adb() -> None:
@@ -908,7 +940,7 @@ def test_device_page_is_called_a_device_list(window: Any) -> None:
 def test_remembered_device_can_be_removed(window: Any) -> None:
     from PySide6.QtCore import Qt
 
-    first = "192.168.67.8:37495"
+    first = "192.0.2.10:37495"
     second = "10.0.0.9:5555"
     window.config.device.serial = first
     window.config.device.known = [first, second]
@@ -929,7 +961,7 @@ def test_remembered_device_can_be_removed(window: Any) -> None:
 
 
 def test_remembered_device_shows_the_probe_result(window: Any) -> None:
-    serial = "192.168.67.8:37495"
+    serial = "192.0.2.10:37495"
     page = window.device_page
     page.set_known([serial])
     page.set_located(serial, "offline", "在局域网里找不到这台平板")
