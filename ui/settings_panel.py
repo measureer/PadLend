@@ -415,8 +415,7 @@ class SettingsPanel(QWidget):
 
         self.toggle_edit = QKeySequenceEdit(box)
         self.panic_edit = QKeySequenceEdit(box)
-        self.clipboard_edit = QKeySequenceEdit(box)
-        for edit in (self.toggle_edit, self.panic_edit, self.clipboard_edit):
+        for edit in (self.toggle_edit, self.panic_edit):
             edit.setClearButtonEnabled(True)
 
         layout.addWidget(
@@ -434,19 +433,9 @@ class SettingsPanel(QWidget):
                 "出问题时立即脱身：松开所有按住的键、释放遮罩、把光标还给 PC，不用先退出接管。",
             )
         )
-        layout.addWidget(
-            self._labeled_row(
-                "剪贴板",
-                self.clipboard_edit,
-                "立即把 PC 剪贴板贴到平板当前输入框（纯文本，超过 4 KB 会截断）。"
-                "平时不用按它：勾选下面的「剪贴板同步」后，接管期间会自动同步"
-                "（直接写平板剪贴板，不会敲键盘）；这个快捷键只是手动粘贴一次。",
-            )
-        )
 
         self._field_widgets["hotkeys.toggle"] = self.toggle_edit
         self._field_widgets["hotkeys.panic"] = self.panic_edit
-        self._field_widgets["hotkeys.clipboard"] = self.clipboard_edit
         return box
 
     def _build_misc_group(self) -> QGroupBox:
@@ -518,7 +507,7 @@ class SettingsPanel(QWidget):
                       self.ghost_check, self.close_tray_check, self.clipboard_check,
                       self.keepawake_check):
             check.toggled.connect(self._on_control_changed)
-        for edit in (self.toggle_edit, self.panic_edit, self.clipboard_edit):
+        for edit in (self.toggle_edit, self.panic_edit):
             edit.keySequenceChanged.connect(self._on_control_changed)
         self.save_button.clicked.connect(self.save)
 
@@ -672,7 +661,6 @@ class SettingsPanel(QWidget):
 
         cfg.hotkeys.toggle = self._sequence_text(self.toggle_edit)
         cfg.hotkeys.panic = self._sequence_text(self.panic_edit)
-        cfg.hotkeys.clipboard = self._sequence_text(self.clipboard_edit)
 
         cfg.ui.tray_notifications = self.tray_check.isChecked()
         cfg.ui.show_pointer_ghost = self.ghost_check.isChecked()
@@ -729,7 +717,6 @@ class SettingsPanel(QWidget):
         cfg = self._config.hotkeys
         self.toggle_edit.setKeySequence(QKeySequence(cfg.toggle))
         self.panic_edit.setKeySequence(QKeySequence(cfg.panic))
-        self.clipboard_edit.setKeySequence(QKeySequence(cfg.clipboard))
 
     def _fill_misc(self) -> None:
         cfg = self._config

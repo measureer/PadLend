@@ -81,7 +81,6 @@ class KeyboardCfg:
 class HotkeyCfg:
     toggle: str = "Ctrl+Alt+S"
     panic: str = "Ctrl+Alt+Q"
-    clipboard: str = "Ctrl+Alt+V"
 
 
 @dataclass
@@ -247,7 +246,7 @@ class Config:
         cfg.hotkeys = _section(
             HotkeyCfg,
             raw.get("hotkeys"),
-            {"toggle": str, "panic": str, "clipboard": str},
+            {"toggle": str, "panic": str},
         )
         cfg.ui = _section(
             UiCfg,
@@ -326,7 +325,7 @@ class Config:
             k.passthrough_keys = ["VK_LWIN", "VK_RWIN"]
         k.passthrough_keys = [str(x) for x in k.passthrough_keys]
 
-        for name in ("toggle", "panic", "clipboard"):
+        for name in ("toggle", "panic"):
             value = getattr(self.hotkeys, name)
             if not isinstance(value, str) or not value.strip():
                 self.add_issue(f"hotkeys.{name} 为空，已恢复默认")
@@ -375,7 +374,7 @@ class Config:
             problems.append("keyboard.layout 不能为空")
         if not isinstance(k.passthrough_keys, list):
             problems.append("keyboard.passthrough_keys 必须是列表")
-        for name in ("toggle", "panic", "clipboard"):
+        for name in ("toggle", "panic"):
             if not getattr(self.hotkeys, name).strip():
                 problems.append(f"hotkeys.{name} 不能为空")
         return problems

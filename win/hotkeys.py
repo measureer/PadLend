@@ -32,11 +32,9 @@ PM_NOREMOVE = 0x0000
 
 HOTKEY_TOGGLE_ID = 0x1001
 HOTKEY_PANIC_ID = 0x1002
-HOTKEY_CLIPBOARD_ID = 0x1003
 
 VK_Q = 0x51
 VK_S = 0x53
-VK_V = 0x56
 
 _CTRL_ALT = MOD_CONTROL | MOD_ALT
 _START_TIMEOUT_S = 2.0
@@ -116,14 +114,11 @@ class HotkeyManager:
         self,
         on_toggle: Callable[[], None],
         on_panic: Callable[[], None],
-        on_clipboard: Callable[[], None] | None = None,
     ) -> None:
         self._callbacks: dict[int, Callable[[], None]] = {
             HOTKEY_TOGGLE_ID: on_toggle,
             HOTKEY_PANIC_ID: on_panic,
         }
-        if on_clipboard is not None:
-            self._callbacks[HOTKEY_CLIPBOARD_ID] = on_clipboard
 
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -226,8 +221,6 @@ class HotkeyManager:
 
     def _register_all(self, user32: Any) -> tuple[int, ...]:
         entries = [(HOTKEY_TOGGLE_ID, VK_S), (HOTKEY_PANIC_ID, VK_Q)]
-        if HOTKEY_CLIPBOARD_ID in self._callbacks:
-            entries.append((HOTKEY_CLIPBOARD_ID, VK_V))
 
         registered: list[int] = []
         for hotkey_id, vk in entries:

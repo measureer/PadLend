@@ -165,7 +165,7 @@ adb shell dumpsys input | grep -c scrcpy    # 期望输出 0
 
 - 确认 `keyboard.forward: true` 且当前状态为 CAPTURED（顶栏红灯）；
 - `dumpsys input` 中应有 `PadLend Keyboard`；
-- 某些输入法只接受 `INJECT_TEXT`，中文可先用剪贴板同步（`Ctrl+Alt+V`）兜底。
+- 某些输入法只接受 `INJECT_TEXT`，中文可先勾选「⚙ 杂项 → 剪贴板同步」，再在平板输入框里长按粘贴兜底。
 
 ### PC 上某些键被吞/卡键
 

@@ -824,7 +824,7 @@ UHID 键盘被识别为**物理键盘** ⇒ 输入法按物理键位工作，候
 |---|---|
 | 方向 | PC → 平板（主）、平板 → PC（次） |
 | 通道 | `SET_CLIPBOARD`（type 9，UTF-8），长度上限 4KB；**不敲键盘** |
-| 触发 | 勾选 `misc.clipboard_sync` 后自动：进入接管时同步一次 + 接管期间每次复制都同步；`Ctrl+Alt+V` = 立即粘贴一次（`paste=1`） |
+| 触发 | 勾选 `misc.clipboard_sync` 后自动：进入接管时同步一次 + 接管期间每次复制都同步（0.3.15 起没有单独的剪贴板热键） |
 | 不做 | 图片、富文本、平板 → PC |
 
 **为什么改用 `SET_CLIPBOARD`**（0.3.14）：0.3.10 曾把自动同步整个关掉，因为当时
@@ -833,7 +833,7 @@ UHID 键盘被识别为**物理键盘** ⇒ 输入法按物理键位工作，候
 App（刷抖音时命中 `R` 就是「不感兴趣」）。scrcpy 5.0.1 服务端支持
 `SET_CLIPBOARD`（`classes.dex` 里有 `SET_CLIPBOARD` / `setPrimaryClip`），它只调
 `ClipboardManager.setPrimaryClip()` 写剪贴板，平板当前 App 收不到任何按键，所以
-可以安全地自动同步。`paste=1` 时服务端额外在焦点输入框里粘贴一次，只给热键用。
+可以安全地自动同步。`paste` 字节恒为 0（只写剪贴板，不触发粘贴）。
 
 载荷（9.2）：`sequence(8) paste(1) len(4) utf8(len)`，大端。
 
@@ -882,7 +882,6 @@ keyboard:
 hotkeys:
   toggle: "Ctrl+Alt+S"
   panic: "Ctrl+Alt+Q"
-  clipboard: "Ctrl+Alt+V"
 
 ui:
   language: zh_CN

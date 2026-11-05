@@ -73,8 +73,8 @@ class FakeRouter:
     def resync_pointer(self) -> None:
         self.calls.append(("resync_pointer", None))
 
-    def inject_clipboard(self, text: str, *, paste: bool = False) -> bool:
-        self.calls.append(("clipboard", (text, bool(paste))))
+    def inject_clipboard(self, text: str) -> bool:
+        self.calls.append(("clipboard", text))
         return True
 
 
@@ -243,22 +243,6 @@ def test_bridge_forwards_state_and_metrics(
     assert "captured" in window.log_view.text()
 
 
-def test_entering_capture_does_not_push_the_clipboard(
-    window: Any, router: FakeRouter, qapp: QApplication
-) -> None:
-    """进接管不能自动发剪贴板（0.3.10）。
-
-    ``INJECT_TEXT`` 会被服务端翻成真实按键事件：接管瞬间发送等于把剪贴板
-    当键盘输入打进平板前台 App（抖音里命中 R 就是「不感兴趣」）。
-    """
-    fired: list[None] = []
-    window.clipboardSyncRequested.connect(lambda: fired.append(None))
-    router.on_state_changed(State.IDLE, State.CAPTURED, "smoke")
-    qapp.processEvents()
-    assert window._state == "captured"
-    assert fired == []
-
-
 def test_entering_capture_syncs_the_clipboard_when_enabled(
     window: Any, router: FakeRouter, qapp: QApplication
 ) -> None:
@@ -271,7 +255,7 @@ def test_entering_capture_syncs_the_clipboard_when_enabled(
     window._on_state(State.IDLE, State.CAPTURED, "smoke")
     assert window._clipboard_timer.isActive()
     window._clipboard_timer.timeout.emit()
-    assert ("clipboard", ("hello tablet", False)) in router.calls
+    assert ("clipboard", "hello tablet") in router.calls
 
 
 def test_entering_capture_does_not_queue_clipboard_when_switched_off(
@@ -765,6 +749,13 @@ def test_settings_panel_close_to_tray_checkbox(window: Any, config_path: Path) -
     assert window.config.ui.close_to_tray is True
     again = Config.load(config_path)
     assert again.ui.close_to_tray is True
+
+
+def test_settings_panel_has_no_clipboard_hotkey(window: Any) -> None:
+    """0.3.15 删掉了「剪贴板」快捷键：设置页只剩接管/交还与急停两行。"""
+    panel = window.settings
+    assert not hasattr(panel, "clipboard_edit")
+    assert "hotkeys.clipboard" not in panel._field_widgets
 
 
 def test_request_close_hides_when_close_to_tray(window: Any) -> None:

@@ -205,7 +205,6 @@ class MainWindow(QMainWindow):
     placementChanged = Signal(object)
     settingsSaved = Signal(object)
     # 供热键线程/非 GUI 线程请求“把 PC 剪贴板发给平板”；排队回 GUI 线程读取。
-    clipboardSyncRequested = Signal()
     # 设备连接/断开在后台线程执行，完成后经队列信号回到 GUI 线程。
     deviceActionFinished = Signal(bool, str)
     # 「添加无线设备」：adb connect/pair 也在后台线程跑。
@@ -259,9 +258,6 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_tray()
         self._build_bridge()
-        self.clipboardSyncRequested.connect(
-            self._paste_clipboard, Qt.ConnectionType.QueuedConnection
-        )
         self.deviceActionFinished.connect(self._on_device_action_finished)
         self.addDeviceFinished.connect(self._on_add_device_finished)
         self.locatedFinished.connect(self._on_located)
@@ -815,16 +811,11 @@ class MainWindow(QMainWindow):
         if timer is not None:
             timer.start()
 
-    def _paste_clipboard(self) -> None:
-        """Ctrl+Alt+V：除了写剪贴板，还让平板在焦点输入框里粘贴一次。"""
-        self.sync_clipboard(paste=True)
-
-    def sync_clipboard(self, *, paste: bool = False) -> None:
+    def sync_clipboard(self) -> None:
         """把 PC 剪贴板文本写进平板剪贴板（6.8，SHOULD）。
 
         勾选 ``misc.clipboard_sync`` 时，接管瞬间与每次复制都会自动调用
-        （``paste=False``：只同步剪贴板，不敲键盘）；``Ctrl+Alt+V`` 走
-        ``_paste_clipboard``，额外让平板粘贴一次。图片/富文本不做。
+        （只写剪贴板、不敲键盘）。图片/富文本不做。
         """
         if not bool(getattr(getattr(self.config, "misc", None), "clipboard_sync", False)):
             return
@@ -839,8 +830,6 @@ class MainWindow(QMainWindow):
         if not callable(inject):
             return
         try:
-            inject(text, paste=paste)
-        except TypeError:  # 兼容只接受一个参数的旧 router 替身
             inject(text)
         except Exception as exc:  # noqa: BLE001
             log.debug("clipboard inject failed: %r", exc)

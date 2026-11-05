@@ -96,15 +96,15 @@ def inject_text(text: str) -> bytes:
     return struct.pack(">BI", MSG_INJECT_TEXT, _u32(len(payload), "text 长度")) + payload
 
 
-def set_clipboard(text: str, *, sequence: int = 0, paste: bool = False) -> bytes:
+def set_clipboard(text: str, *, sequence: int = 0) -> bytes:
     """直接写平板剪贴板（type 9，6.8）。
 
-    载荷：``sequence(8) paste(1) len(4) utf8(len)``，大端。
+    载荷：``sequence(8) paste(1) len(4) utf8(len)``，大端。``paste`` 恒为 0：
+    只写剪贴板、不触发粘贴，也不产生任何按键事件。
 
     和 ``inject_text`` 的区别是它**不会敲键盘**：服务端调
     ``ClipboardManager.setPrimaryClip()``，平板当前 App 收不到任何按键，
-    所以可以安全地在接管瞬间与每次复制时自动同步。``paste=True`` 时服务端
-    还会在焦点输入框里执行一次粘贴（快捷键路径用）。
+    所以可以安全地在接管瞬间与每次复制时自动同步。
     """
     payload = text.encode("utf-8")
     return (
@@ -112,7 +112,7 @@ def set_clipboard(text: str, *, sequence: int = 0, paste: bool = False) -> bytes
             ">BQBI",
             MSG_SET_CLIPBOARD,
             _u64(sequence, "sequence"),
-            1 if paste else 0,
+            0,
             _u32(len(payload), "text 长度"),
         )
         + payload

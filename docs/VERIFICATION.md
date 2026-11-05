@@ -355,6 +355,28 @@ adb devices -l
 仍需真机确认：接管时复制一段文字后，在平板输入框长按应能粘贴出同一段文字；
 刷抖音时穿过屏幕不应再触发「不感兴趣」。
 
+---
+
+## 第 20 节：0.3.15 删除剪贴板快捷键（2026-11-05）
+
+| 项 | 命令 / 检查 | 实际 | 结论 |
+|---|---|---|---|
+| 快捷键组只剩两行 | 打包版 `--simulate` → 设置页 UIA | 「⚡ 快捷键」组 = 接管/交还、急停；无「剪贴板」行 | ✅ |
+| 设置面板无残留控件 | `tests/test_ui_smoke.py::test_settings_panel_has_no_clipboard_hotkey` | `hasattr(panel, "clipboard_edit")` 为假，`_field_widgets` 无 `hotkeys.clipboard` | ✅ |
+| 配置字段移除 | `config.py` 的 `HotkeyCfg` / `_fill` / 默认补齐 / 校验 | 只剩 `toggle`、`panic`；旧 yaml 里的 `clipboard:` 被忽略 | ✅ |
+| 热键注册只在两处 | `win/hotkeys.py` | `HotkeyManager(_toggle, _panic)`；无 `HOTKEY_CLIPBOARD_ID`、无 `VK_V` | ✅ |
+| 剪贴板仍只写不敲键 | `tools/acceptance.py` 第 33 项 | `clipboards` 收到文本，`texts=[]`、`keys=[]` | ✅ |
+| 全量回归 | `pytest -o addopts="" -q` | 404 passed, 3 skipped | ✅ |
+| 静态检查 | `ruff check .` | All checks passed | ✅ |
+| 验收工具 | `tools/acceptance.py` | 33 项，0 失败，3 跳过 | ✅ |
+| 0.3.15 构建 | `python -m PyInstaller --noconfirm --distpath build/dist-0315 --workpath build/pyi-0315 PadLend.spec` | 53,187,231 B，sha256 `511f84362138fab862437a3bc8239504118b0c7e51e6eefc79c8f7b00af18cf4`，`--version` → `PadLend 0.3.15` | ✅ |
+| 打包版 headless | `--simulate --headless --duration 2 --no-wizard --no-single-instance` | exit 0，`[device] sim:5555 1707x1067` | ✅ |
+| 打包版 GUI | `--simulate` + UIA + `ps-close-check.ps1` | 设备页仍是「设备列表」；设置页快捷键组无剪贴板行；`v0.3.15`；`WM_CLOSE` 后日志 `已退出` | ✅ |
+
+仍需真机确认：旧的 `config.yaml` 里若有 `hotkeys.clipboard`，保存一次后该行应消失且
+不影响接管/急停热键。截图：`build/padlend-0.3.15-settings.png`。
+
+
 
 
 

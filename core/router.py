@@ -1635,14 +1635,13 @@ class Router:
             log.exception("router.fault_handler_failed code=%s", code.value)
 
     # -- 剪贴板（6.8，SHOULD） ------------------------------------------------
-    def inject_clipboard(self, text: str, *, paste: bool = False) -> bool:
+    def inject_clipboard(self, text: str) -> bool:
         """把 PC 剪贴板文本写进平板剪贴板（UTF-8，最多 4KB）。
 
         只在 ``misc.clipboard_sync`` 打开时生效；不改变状态机。走
         ``SET_CLIPBOARD``（type 9）而不是 ``INJECT_TEXT``：服务端只调
         ``setPrimaryClip()``，平板当前 App 收不到按键，所以接管瞬间和每次
-        复制都能安全地自动同步。``paste=True`` 额外在焦点输入框里粘贴一次
-        （Ctrl+Alt+V 用）。调用方负责在 GUI 线程读取剪贴板。
+        复制都能安全地自动同步。调用方负责在 GUI 线程读取剪贴板。
         """
         if not bool(self._cfg.misc.clipboard_sync) or not text:
             return False
@@ -1650,14 +1649,14 @@ class Router:
         if not payload:
             return False
         try:
-            self._session.set_clipboard(payload, paste=paste)
+            self._session.set_clipboard(payload)
         except PadLendError as exc:
             log.debug("router.clipboard_skipped code=%s detail=%s", exc.code.value, exc.detail)
             return False
         except Exception as exc:  # noqa: BLE001 - 剪贴板失败不应影响接管
             log.warning("router.clipboard_failed %r", exc)
             return False
-        log.info("router.clipboard_sent chars=%d paste=%d", len(payload), int(bool(paste)))
+        log.info("router.clipboard_sent chars=%d", len(payload))
         return True
 
     # -- 键盘 ---------------------------------------------------------------

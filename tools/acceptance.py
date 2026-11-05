@@ -306,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         pushed = router.inject_clipboard("acceptance clipboard")
         report.check(
             pushed
-            and sim.clipboards == [("acceptance clipboard", False)]
+            and "acceptance clipboard" in sim.clipboards
             and not sim.texts
             and not sim.keys,
             "剪贴板同步只写平板剪贴板（不敲键盘）",

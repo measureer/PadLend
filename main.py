@@ -461,7 +461,7 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
                 with contextlib.suppress(Exception):
                     runtime.mask.release()
 
-        hotkeys = HotkeyManager(_toggle, _panic, window.clipboardSyncRequested.emit)
+        hotkeys = HotkeyManager(_toggle, _panic)
         try:
             hotkeys.start()
         except PadLendError as exc:

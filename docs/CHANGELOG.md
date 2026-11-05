@@ -2,6 +2,21 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.15] — 2026-11-05
+
+### 修改
+
+- **删掉「剪贴板」快捷键（Ctrl+Alt+V）**：0.3.14 起剪贴板同步已经在勾选后自动工作，这个热键只是把同一段文本再写一次，留着反而让人以为同步要手动按。
+- `hotkeys.clipboard` 配置字段一并移除；旧 `config.yaml` 里残留的 `clipboard:` 行会被忽略（不会报错），下次保存时自然消失。
+- 设置页「⚡ 快捷键」组只剩「接管/交还」「急停」两行。
+- `SET_CLIPBOARD` 的 `paste` 字节固定为 0：只写剪贴板、不触发粘贴，也不产生任何按键事件。
+
+### 测试
+
+- 删除与新行为冲突的旧断言；`tests/test_clipboard.py` 断言写剪贴板后 `inject_text` 从未被调用。
+- 新增 `tests/test_ui_smoke.py::test_settings_panel_has_no_clipboard_hotkey`（设置页没有 `clipboard_edit`、`_field_widgets` 里没有 `hotkeys.clipboard`）。
+- `tools/acceptance.py` 33 项，0 失败，3 跳过。
+
 ## [0.3.14] — 2026-11-05
 
 ### 修复 / 改进

@@ -429,12 +429,12 @@ class TabletSession:
         self._ensure_connected()
         self._send(protocol.inject_text(text))
 
-    def set_clipboard(self, text: str, *, sequence: int = 0, paste: bool = False) -> None:
+    def set_clipboard(self, text: str, *, sequence: int = 0) -> None:
         """写平板剪贴板（6.8）：不敲键盘，因此可以自动同步。"""
         if not text:
             return
         self._ensure_connected()
-        self._send(protocol.set_clipboard(text, sequence=sequence, paste=paste))
+        self._send(protocol.set_clipboard(text, sequence=sequence))
 
     def health(self) -> HealthReport:
         """健康快照；不调用 adb（10.4）。"""
