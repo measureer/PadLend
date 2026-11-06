@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
-from tablet.locator import STATUS_MOVED, STATUS_ONLINE, Located, locate
+from tablet.locator import STATUS_MOVED, STATUS_ONLINE, Located, arp_table, locate, normalize_mac
 from ui.about_dialog import AboutDialog
 from ui.add_device_dialog import AddDeviceDialog
 from ui.bridge import RouterBridge, state_value
@@ -211,7 +211,10 @@ class MainWindow(QMainWindow):
     # 「添加无线设备」：adb connect/pair 也在后台线程跑。
     addDeviceFinished = Signal(bool, str)
     locatedFinished = Signal(object)
-    macKnown = Signal(str)
+    # 刷新按钮的批量局域网查找结果：[(原地址, Located), ...]
+    locatedBatchFinished = Signal(object)
+    # 后台拿到某台无线设备的 MAC 后回到 GUI 线程（serial, mac）。
+    macKnown = Signal(str, str)
 
     def __init__(
         self,
@@ -254,6 +257,7 @@ class MainWindow(QMainWindow):
         self._connecting = False
         self._last_wireless_address = ""
         self._probe_thread: threading.Thread | None = None
+        self._locate_thread: threading.Thread | None = None
         self._shutdown_done = False
         self._tray_fallback_at = 0.0
 
@@ -263,6 +267,7 @@ class MainWindow(QMainWindow):
         self.deviceActionFinished.connect(self._on_device_action_finished)
         self.addDeviceFinished.connect(self._on_add_device_finished)
         self.locatedFinished.connect(self._on_located)
+        self.locatedBatchFinished.connect(self._on_located_batch)
         self.macKnown.connect(self._on_mac_known)
         self._build_shortcuts()
         # 自动同步：接管时与每次复制都把文本写进平板剪贴板（0.3.14）。
@@ -299,6 +304,7 @@ class MainWindow(QMainWindow):
         self.device_page.addRequested.connect(self._on_add_device_requested)
         self.device_page.set_known(self._known_devices())
         self.device_page.removeRequested.connect(self._forget_device)
+        self.device_page.refreshRequested.connect(self._locate_known_devices)
 
         self.log_view = LogView(self)
         self.metrics_panel = MetricsPanel(self)
@@ -1366,18 +1372,36 @@ class MainWindow(QMainWindow):
                 known.append(text)
         return known
 
-    def _remember_device(self, serial: str) -> None:
-        """把设备写进 known（去重、新的在前、最多 8 条）并落盘。"""
+    def _remember_device(self, serial: str, *, mac: str = "") -> None:
+        """把设备写进 known（去重、新的在前、最多 8 条）并落盘。
+
+        ``mac`` 是这台设备的 Wi-Fi MAC；不传时保留 macs 里已有的值，没有就
+        在后台问一次平板。每次连接都会走到这里，所以设备列表里的每台无线
+        设备都能各自留下 MAC，而不是只记最后一台。
+        """
         text = str(serial or "").strip()
         if not text:
             return
+        learned = normalize_mac(mac)
+        if learned:
+            self.config.device.macs[text] = learned
         known = [text, *(s for s in self._known_devices() if s != text)]
         self.config.device.known = known[:8]
-        if str(getattr(self.config.device, "serial", "") or "") != text:
-            self.config.device.serial = text
+        self.config.device.serial = text
+        self._prune_macs()
         self.device_page.set_known(self._known_devices())
         self._save_config()
-        self._capture_mac(text)
+        if not self.config.device.macs.get(text):
+            self._capture_mac(text)
+
+    def _prune_macs(self) -> None:
+        """只保留仍在设备列表里的 MAC，避免地址换多了 map 无限长。"""
+        keep = set(self._known_devices())
+        self.config.device.macs = {
+            key: value
+            for key, value in (self.config.device.macs or {}).items()
+            if key in keep and value
+        }
 
     def _forget_device(self, serial: str) -> None:
         """从记忆列表里删掉一台设备（0.3.13：设备列表可删除）。"""
@@ -1386,6 +1410,7 @@ class MainWindow(QMainWindow):
             return
         known = [s for s in (self.config.device.known or []) if str(s) != text]
         self.config.device.known = known
+        self.config.device.macs.pop(text, None)
         if str(getattr(self.config.device, "serial", "") or "") == text:
             self.config.device.serial = known[0] if known else ""
         self.device_page.set_located(text, "")
@@ -1407,7 +1432,7 @@ class MainWindow(QMainWindow):
             return  # 假平板没有局域网，别去探
         if getattr(self, "_probe_thread", None) is not None:
             return
-        mac = str(getattr(self.config.device, "mac", "") or "")
+        mac = str((self.config.device.macs or {}).get(serial, "") or "")
         thread = threading.Thread(
             target=self._probe_worker,
             args=(serial, mac),
@@ -1426,11 +1451,33 @@ class MainWindow(QMainWindow):
                 serial,
                 mac,
                 services=services if callable(services) else None,
+                arp=arp_table,
             )
         except Exception as exc:  # noqa: BLE001 - 探测失败按离线处理
             log.info("locate failed: %r", exc)
             located = Located(detail=f"探测失败：{exc}")
         self.locatedFinished.emit(located)
+
+    def _adopt_address(self, previous: str, located: Located) -> None:
+        """把一台设备的记录从旧地址挪到新地址，并带上它的 MAC。
+
+        设备列表里只保留新地址：旧地址已经不可用，继续留着会让用户以为
+        列表里还有第二台平板。
+        """
+        previous = str(previous or "").strip()
+        target = str(located.address or "").strip()
+        if not target or target == previous:
+            return
+        old_mac = normalize_mac((self.config.device.macs or {}).get(previous, ""))
+        learned = normalize_mac(located.mac) or old_mac
+        if previous:
+            self.config.device.macs.pop(previous, None)
+        self.config.device.known = [
+            target,
+            *(s for s in (self.config.device.known or []) if s not in (previous, target)),
+        ][:8]
+        self.config.device.serial = target
+        self._remember_device(target, mac=learned)
 
     def _on_located(self, located: object) -> None:
         self._probe_thread = None
@@ -1440,8 +1487,7 @@ class MainWindow(QMainWindow):
         log.info("device.locate status=%s detail=%s", located.status, located.detail)
         if located.status == STATUS_MOVED and located.address:
             previous = serial
-            self.device_page.set_located(previous, "moved", located.detail)
-            self._remember_device(located.address)
+            self._adopt_address(previous, located)
             self.device_page.set_located(located.address, "online", "启动时在局域网里找到")
             self.log_view.append_event(
                 "DEVICE", f"平板换了地址：{previous} → {located.address}"
@@ -1451,9 +1497,100 @@ class MainWindow(QMainWindow):
             return
         self.device_page.set_located(serial, located.status, located.detail)
         if located.status == STATUS_ONLINE:
+            if not self.config.device.macs.get(serial):
+                self._capture_mac(serial)
             self.log_view.append_event("DEVICE", f"上次的设备仍在线：{serial}")
         elif located.detail:
             self.log_view.append_event("DEVICE", f"设备探测：{located.detail}")
+
+    # -------------------------------------------------------- 刷新时批量查找
+    def _locate_known_devices(self) -> None:
+        """用户点「刷新设备」时，按每台无线设备保存的 MAC 再找一遍。
+
+        常规 adb 扫描由 DevicePage 自己做；这里只处理扫不到、但可能换了
+        IP/端口的设备。探测放在后台线程，结果经 ``locatedBatchFinished``
+        回 GUI 线程逐条更新。
+        """
+        if self._adb is None:
+            return
+        if getattr(self._adb, "path", "") == "simulated-adb":
+            return
+        if self._locate_thread is not None or self._probe_thread is not None:
+            return
+        targets = [
+            (serial, str((self.config.device.macs or {}).get(serial, "") or ""))
+            for serial in self._known_devices()
+            if ":" in serial
+        ]
+        if not targets:
+            return
+        thread = threading.Thread(
+            target=self._locate_all_worker,
+            args=(targets,),
+            name="padlend-locate-all",
+            daemon=True,
+        )
+        self._locate_thread = thread
+        self.log_view.append_event("DEVICE", f"正在局域网里查找 {len(targets)} 台设备…")
+        try:
+            thread.start()
+        except RuntimeError:
+            self._locate_thread = None
+            log.info("locate-all thread could not start")
+
+    def _locate_all_worker(self, targets: list[tuple[str, str]]) -> None:
+        results: list[tuple[str, Located]] = []
+        try:
+            services = getattr(self._adb, "mdns_services", None)
+            for serial, mac in targets:
+                located = Located(detail="查找失败")
+                try:
+                    located = locate(
+                        serial,
+                        mac,
+                        services=services if callable(services) else None,
+                        arp=arp_table,
+                    )
+                except Exception as exc:  # noqa: BLE001 - 单台失败不影响其它设备
+                    log.info("locate %s failed: %r", serial, exc)
+                    located = Located(detail=f"查找失败：{exc}")
+                results.append((serial, located))
+        finally:
+            # 线程无论怎么结束都要让 GUI 清掉 _locate_thread，否则以后点刷新
+            # 会被「已有查找在跑」永久挡住。
+            self.locatedBatchFinished.emit(results)
+
+    def _on_located_batch(self, results: object) -> None:
+        self._locate_thread = None
+        if not isinstance(results, list):
+            return
+        moved = 0
+        online = 0
+        for item in results:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            serial = str(item[0] or "").strip()
+            located = item[1]
+            if not serial or not isinstance(located, Located):
+                continue
+            if located.status == STATUS_MOVED and located.address:
+                self._adopt_address(serial, located)
+                self.device_page.set_located(
+                    located.address, "online", "刷新时在局域网里找到"
+                )
+                moved += 1
+                continue
+            self.device_page.set_located(serial, located.status, located.detail)
+            if located.status == STATUS_ONLINE:
+                online += 1
+                if not self.config.device.macs.get(serial):
+                    self._capture_mac(serial)
+        if moved or online:
+            self.log_view.append_event(
+                "DEVICE", f"局域网查找：{online} 台在线，{moved} 台换了地址"
+            )
+        else:
+            self.log_view.append_event("DEVICE", "局域网查找：没有找到在线的无线设备")
 
     def _capture_mac(self, serial: str) -> None:
         """后台问一次平板 Wi-Fi 的 MAC（只在无线设备上问，失败无所谓）。"""
@@ -1476,15 +1613,21 @@ class MainWindow(QMainWindow):
             log.info("wifi_mac failed: %r", exc)
             return
         if mac:
-            self.macKnown.emit(mac)
+            self.macKnown.emit(serial, mac)
 
-    def _on_mac_known(self, mac: str) -> None:
-        text = str(mac or "").strip().lower()
-        if not text or text == str(getattr(self.config.device, "mac", "") or ""):
+    def _on_mac_known(self, serial: str, mac: str) -> None:
+        serial = str(serial or "").strip()
+        text = normalize_mac(mac)
+        if not serial or not text:
             return
-        self.config.device.mac = text
+        # 后台读 MAC 期间用户可能已经把这台设备从列表里删掉，别把记录写回去。
+        if serial not in self._known_devices():
+            return
+        if (self.config.device.macs or {}).get(serial) == text:
+            return
+        self.config.device.macs[serial] = text
         self._save_config()
-        log.info("device.mac learned %s", text)
+        log.info("device.mac learned serial=%s mac=%s", serial, text)
 
     # ------------------------------------------------------------------ 几何
     def center_on_screen(self) -> None:

@@ -731,6 +731,163 @@ def test_window_remembers_the_last_device(window: Any) -> None:
     assert len(window.config.device.known) <= 8
 
 
+def test_remember_device_keeps_a_mac_per_device(window: Any) -> None:
+    """每台无线设备各记各的 MAC，不能互相覆盖。"""
+    first = "192.0.2.10:37495"
+    second = "192.0.2.11:5555"
+    window.config.device.serial = ""
+    window.config.device.known = []
+    window.config.device.macs = {}
+
+    window._remember_device(first, mac="AA-BB-CC-DD-EE-01")  # noqa: SLF001
+    window._remember_device(second, mac="aa:bb:cc:dd:ee:02")  # noqa: SLF001
+
+    assert window.config.device.macs == {
+        first: "aa:bb:cc:dd:ee:01",
+        second: "aa:bb:cc:dd:ee:02",
+    }
+    assert window.config.device.serial == second
+    assert window._known_devices() == [second, first]  # noqa: SLF001
+
+
+def test_forget_device_drops_only_its_mac(window: Any) -> None:
+    first = "192.0.2.10:37495"
+    second = "192.0.2.11:5555"
+    window.config.device.serial = first
+    window.config.device.known = [first, second]
+    window.config.device.macs = {
+        first: "aa:bb:cc:dd:ee:01",
+        second: "aa:bb:cc:dd:ee:02",
+    }
+
+    window._forget_device(first)  # noqa: SLF001
+
+    assert first not in window.config.device.macs
+    assert window.config.device.macs[second] == "aa:bb:cc:dd:ee:02"
+    assert window.config.device.serial == second
+
+
+def test_mac_known_updates_the_matching_serial(window: Any) -> None:
+    first = "192.0.2.10:37495"
+    second = "192.0.2.11:5555"
+    window.config.device.known = [first, second]
+    window.config.device.macs = {first: "aa:bb:cc:dd:ee:01"}
+
+    window._on_mac_known(second, "AA-BB-CC-DD-EE-02")  # noqa: SLF001
+
+    assert window.config.device.macs == {
+        first: "aa:bb:cc:dd:ee:01",
+        second: "aa:bb:cc:dd:ee:02",
+    }
+    window._forget_device(second)  # noqa: SLF001
+    window._on_mac_known(second, "AA-BB-CC-DD-EE-03")  # noqa: SLF001
+    assert second not in window.config.device.macs
+
+
+def test_device_page_refresh_button_requests_a_lan_lookup(qapp: QApplication) -> None:
+    from ui.device_page import DevicePage
+
+    page = DevicePage(None, None)
+    calls: list[int] = []
+    page.refreshRequested.connect(lambda: calls.append(1))
+    try:
+        page.refresh_button.click()
+        qapp.processEvents()
+        assert calls == [1]
+    finally:
+        page.deleteLater()
+        qapp.processEvents()
+
+
+def test_startup_probe_uses_the_arp_table(
+    window: Any, qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """启动探测也要把系统 ARP 表交给 locate，否则换 IP 的第三步永远走不到。"""
+    from tablet.locator import STATUS_OFFLINE, Located
+
+    address = "192.0.2.10:37495"
+    window.config.device.serial = address
+    seen: list[Any] = []
+
+    def fake_locate(host: str, mac: str = "", **kwargs: Any) -> Located:
+        seen.append(kwargs.get("arp"))
+        return Located(status=STATUS_OFFLINE, detail="不在线")
+
+    monkeypatch.setattr(mw, "locate", fake_locate)
+    window._probe_worker(address, "aa:bb:cc:dd:ee:01")  # noqa: SLF001
+    qapp.processEvents()
+
+    assert seen == [mw.arp_table]
+
+
+def test_refresh_request_starts_a_lan_lookup(
+    window: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """设备页的刷新按钮要真的把主窗的批量查找拉起来。"""
+    first = "192.0.2.10:37495"
+    second = "192.0.2.11:5555"
+    window.config.device.serial = first
+    window.config.device.known = [first, second]
+    window.config.device.macs = {first: "aa:bb:cc:dd:ee:01"}
+
+    class _Adb:
+        path = "adb"
+
+        def mdns_services(self) -> list[str]:
+            return []
+
+    window._adb = _Adb()  # noqa: SLF001
+    seen: list[list[tuple[str, str]]] = []
+    monkeypatch.setattr(
+        mw.MainWindow,
+        "_locate_all_worker",
+        lambda _self, targets: seen.append(list(targets)),
+    )
+
+    window.device_page.refreshRequested.emit()
+    thread = window._locate_thread  # noqa: SLF001
+    assert thread is not None
+    thread.join(2.0)
+    assert seen == [[(first, "aa:bb:cc:dd:ee:01"), (second, "")]]
+
+
+def test_refresh_batch_moves_device_and_carries_its_mac(
+    window: Any, qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """刷新时按旧 MAC 找到新地址：列表里只留新地址，MAC 跟过去。"""
+    from tablet.locator import STATUS_MOVED, Located
+
+    previous = "192.0.2.10:37495"
+    moved = "192.0.2.88:41000"
+    mac = "88:a4:79:1a:2b:3c"
+    window.config.device.serial = previous
+    window.config.device.known = [previous, "192.0.2.11:5555"]
+    window.config.device.macs = {previous: mac}
+
+    class _Adb:
+        path = "adb"
+
+        def mdns_services(self) -> list[str]:
+            return []
+
+    window._adb = _Adb()  # noqa: SLF001
+
+    def fake_locate(address: str, mac: str = "", **kwargs: Any) -> Located:
+        assert address == previous
+        assert mac == "88:a4:79:1a:2b:3c"
+        assert kwargs.get("arp") is mw.arp_table
+        return Located(status=STATUS_MOVED, address=moved, mac=mac, detail="IP 换了")
+
+    monkeypatch.setattr(mw, "locate", fake_locate)
+    window._locate_all_worker([(previous, mac)])  # noqa: SLF001
+    qapp.processEvents()
+
+    assert window.config.device.serial == moved
+    assert window.config.device.known[0] == moved
+    assert previous not in window.config.device.known
+    assert window.config.device.macs == {moved: mac}
+
+
 def test_center_on_screen_puts_the_window_in_the_middle(window: Any, qapp: QApplication) -> None:
     from PySide6.QtGui import QGuiApplication
 

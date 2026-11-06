@@ -40,8 +40,9 @@ class DeviceCfg:
     server_port: int = C.DEFAULT_SERVER_PORT
     # 最近连接过的设备（新的在前，最多 8 条）：设备页用它在离线时也列出来。
     known: list[str] = field(default_factory=list)
-    # 上次那台平板的 Wi-Fi MAC：路由器换了 IP 之后靠它在局域网里找回来（0.3.13）。
-    mac: str = ""
+    # 每台无线设备的 Wi-Fi MAC（地址 → MAC）：路由器换了 IP 之后靠它在局域网里
+    # 找回来（0.3.13 只记最后一台，此后按设备分别保存）。
+    macs: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -225,16 +226,30 @@ class Config:
     # -- 填充与修复 --------------------------------------------------------
     @classmethod
     def _fill(cls, raw: dict[str, Any], cfg: Config) -> None:
+        device_raw = raw.get("device")
+        if isinstance(device_raw, dict):
+            # 0.3.13–1.0.0 只存了最后一台设备的 MAC；读旧配置时把它挪进
+            # macs[serial]，用户升级后仍能用原来的地址找回平板。
+            device_raw = dict(device_raw)
+            legacy_mac = str(device_raw.pop("mac", "") or "").strip()
+            serial = str(device_raw.get("serial", "") or "").strip()
+            if legacy_mac and serial:
+                macs = device_raw.get("macs")
+                if not isinstance(macs, dict):
+                    macs = {}
+                macs = dict(macs)
+                macs.setdefault(serial, legacy_mac)
+                device_raw["macs"] = macs
         cfg.device = _section(
             DeviceCfg,
-            raw.get("device"),
+            device_raw,
             {
                 "serial": str,
                 "prefer_usb": bool,
                 "auto_connect": bool,
                 "server_port": int,
                 "known": list,
-                "mac": str,
+                "macs": dict,
             },
         )
         cfg.placement = _section(
@@ -442,6 +457,14 @@ def _section(cls: type, raw: Any, field_types: dict[str, type]) -> Any:
                 if not isinstance(value, list):
                     raise TypeError("not a list")
                 coerced = [str(x) for x in value]
+            elif expected is dict:
+                if not isinstance(value, dict):
+                    raise TypeError("not a mapping")
+                coerced = {
+                    str(key).strip(): str(item).strip()
+                    for key, item in value.items()
+                    if str(key).strip() and str(item).strip()
+                }
             else:
                 coerced = str(value)
         except (TypeError, ValueError):

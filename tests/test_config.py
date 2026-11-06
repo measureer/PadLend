@@ -180,8 +180,64 @@ def test_known_devices_roundtrip(tmp_path):
 def test_known_devices_default_empty_and_coerced(tmp_path):
     """缺省是空列表；配置文件里写了怪类型也不能炸。"""
     assert DeviceCfg().known == []
+    assert DeviceCfg().macs == {}
 
     path = tmp_path / "config.yaml"
     path.write_text("version: 1\ndevice:\n  known: [7, XYZ]\n", encoding="utf-8")
     cfg = Config.load(path)
     assert cfg.device.known == ["7", "XYZ"]
+
+
+def test_device_macs_roundtrip(tmp_path):
+    """每台无线设备的 MAC 都要各自存盘、读回，不能再挤在一个 mac 字段里。"""
+    path = tmp_path / "config.yaml"
+    cfg = Config()
+    first = "192.168.1.9:5555"
+    second = "192.168.1.10:5555"
+    cfg.device.serial = first
+    cfg.device.known = [first, second]
+    cfg.device.macs = {
+        first: "88:a4:79:1a:2b:3c",
+        second: "88:a4:79:1a:2b:4d",
+    }
+    cfg.save(path)
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert "mac" not in raw["device"]
+    assert raw["device"]["macs"] == cfg.device.macs
+
+    again = Config.load(path)
+    assert again.device.macs == cfg.device.macs
+    assert again.device.known == [first, second]
+    assert again.validate() == []
+
+
+def test_legacy_single_mac_is_migrated_to_device_map(tmp_path):
+    """1.0.0 及更早的 device.mac 要挪到 macs[serial]，升级后仍能找回平板。"""
+    path = tmp_path / "config.yaml"
+    serial = "192.168.1.9:5555"
+    path.write_text(
+        "version: 1\n"
+        "device:\n"
+        f"  serial: {serial}\n"
+        "  known: []\n"
+        "  mac: 88:a4:79:1a:2b:3c\n",
+        encoding="utf-8",
+    )
+    cfg = Config.load(path)
+    assert cfg.device.macs == {serial: "88:a4:79:1a:2b:3c"}
+    assert not hasattr(cfg.device, "mac")
+
+    cfg.save(path)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert raw["device"]["macs"] == {serial: "88:a4:79:1a:2b:3c"}
+    assert "mac" not in raw["device"]
+
+
+def test_macs_invalid_type_falls_back_to_default(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "version: 1\ndevice:\n  macs: [not, a, mapping]\n", encoding="utf-8"
+    )
+    cfg = Config.load(path)
+    assert cfg.device.macs == {}

@@ -128,6 +128,9 @@ class DevicePage(QWidget):
     disconnectRequested = Signal()
     addRequested = Signal()
     removeRequested = Signal(str)
+    # 用户主动点「刷新设备」时额外发一次：主窗用它按已保存的 MAC 在局域网里
+    # 找地址变了的平板（程序内部的 refresh() 调用不触发，避免启动时到处探测）。
+    refreshRequested = Signal()
 
     def __init__(
         self,
@@ -174,7 +177,8 @@ class DevicePage(QWidget):
         self.refresh_button.setObjectName("ghostButton")
         self.refresh_button.setIcon(make_icon("refresh", tokens.COLORS["text_primary"], 16))
         self.refresh_button.setIconSize(QSize(16, 16))
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.setToolTip("重新扫描 adb，并按已保存的 MAC 在局域网里查找平板")
+        self.refresh_button.clicked.connect(self._on_refresh_clicked)
 
         self.add_button = QPushButton("添加设备")
         self.add_button.setObjectName("ghostButton")
@@ -365,6 +369,11 @@ class DevicePage(QWidget):
     # ------------------------------------------------------------------ 扫描
     def set_adb(self, adb: Any | None) -> None:
         self._adb = adb
+
+    def _on_refresh_clicked(self) -> None:
+        """按钮入口：先做常规 adb 扫描，再请主窗做一次局域网查找。"""
+        self.refresh()
+        self.refreshRequested.emit()
 
     def refresh(self) -> None:
         if self._adb is None:

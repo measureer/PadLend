@@ -1,5 +1,8 @@
 # PadLend 1.0.0 发版就绪报告
 
+> 这是 1.0.0 首发时的报告。1.0.1 是设备地址发现相关的补丁版本，变更与产物见
+> [CHANGELOG](CHANGELOG.md) 和 [Releases](https://github.com/measureer/PadLend/releases)。
+
 - 目标版本：1.0.0
 - 评估与修复日期：2026-11-05
 - 发布渠道：GitHub Releases（Windows x64，个人玩家为主）

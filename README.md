@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前版本 1.0.0，Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前版本 1.0.1，Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ![桌面布局页](docs/screenshots/ui-layout.png)
 
@@ -43,14 +43,14 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载：
 
-- `PadLend-1.0.0-win64.zip`：免安装包，解压即用。
-- `PadLend-1.0.0-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
+- `PadLend-1.0.1-win64.zip`：免安装包，解压即用。
+- `PadLend-1.0.1-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
 - `SHA256SUMS.txt`：下载后建议核对。
 
 ### 校验
 
 ```powershell
-Get-FileHash .\PadLend-1.0.0-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.0.1-win64.zip -Algorithm SHA256
 ```
 
 把结果和 `SHA256SUMS.txt` 中对应行比对即可。
@@ -80,7 +80,7 @@ PadLend\
 ## 快速开始
 
 1. 运行 `PadLend.exe`。第一次启动会打开向导，依次检查 adb、USB 调试、UHID 和 scrcpy-server，最后可以设置是否自动连接、关闭窗口时是否收进托盘。
-2. 在平板上打开“开发者选项 → USB 调试”，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。
+2. 在平板上打开“开发者选项 → USB 调试”，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。设备页的「刷新设备」会重新扫描 adb，并用每台无线设备保存的 MAC 在局域网里找一次，平板换了 IP 或无线调试端口也能重新出现。
 3. 选中平板，点「连接此设备」。
 4. 切到「布局」页，把平板拖到某个屏幕边缘的红色虚线区域，松手保存。角落位置按 `Shift` 切换优先边，双击平板切换横竖屏。
 5. 把鼠标移到该边缘并继续往外推，进入接管：PC 光标隐藏，平板出现指针。把指针推到平板对应边缘再往外推，交还给 PC。
@@ -118,7 +118,7 @@ device:
   auto_connect: true      # false = 启动后不自动连接，在设备页手动连接
   server_port: 1234       # 1024–65535
   known: []               # 最近连接过的序列号（自动维护）
-  mac: ""                 # 上次设备的 Wi-Fi MAC（自动维护）
+  macs: {}                # 每台无线设备的 Wi-Fi MAC，键为地址（自动维护）
 placement:
   monitor: ""             # 空 = 主屏
   edge: right             # left / right / top / bottom
@@ -147,7 +147,7 @@ hotkeys:
   toggle: "Ctrl+Alt+S"
   panic: "Ctrl+Alt+Q"
 ui:
-  language: zh_CN         # 预留字段，1.0.0 仅中文界面
+  language: zh_CN         # 预留字段，目前仅中文界面
   theme: dark             # dark / light
   tray_notifications: true
   show_pointer_ghost: true
@@ -207,7 +207,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe tools\release.py --build --zip --sha256
 ```
 
-输出在 `dist\`：`PadLend\`（onedir）、`PadLend-1.0.0-win64.zip`、`SHA256SUMS.txt`。加 `--installer` 需要预装 Inno Setup 6.3+；加 `--sign` 需要设置 `PADLEND_SIGN_CERT` 和 `PADLEND_SIGN_PASSWORD`，没有证书时会跳过并提示未签名。这个脚本只生成本地产物，上传由 GitHub Release 工作流完成。
+输出在 `dist\`：`PadLend\`（onedir）、`PadLend-<版本>-win64.zip`、`SHA256SUMS.txt`。加 `--installer` 需要预装 Inno Setup 6.3+；加 `--sign` 需要设置 `PADLEND_SIGN_CERT` 和 `PADLEND_SIGN_PASSWORD`，没有证书时会跳过并提示未签名。这个脚本只生成本地产物，上传由 GitHub Release 工作流完成。
 
 ## 开发与验收
 
@@ -263,7 +263,7 @@ PadLend/
 - 多显示器组合（负坐标、跨屏同侧、角落裁决）有 fixture 单测覆盖，但仍需要双屏实机复验。
 - 边缘手势：MagicOS 等系统可能拦截边缘滑动，可以调大 `boundary_inset_px`。
 - 无线性能：adbd 抖动时降低 `report_hz` 或改用 USB；部分路由器开了 AP 隔离时无线调试不可用。
-- 无自动更新：1.0.0 没有内置更新器；升级时下载新 Release，覆盖程序目录即可，配置会保留。
+- 无自动更新：当前版本没有内置更新器；升级时下载新 Release，覆盖程序目录即可，配置会保留。
 - 当前只有中文界面。
 
 ## 许可

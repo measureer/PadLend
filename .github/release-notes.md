@@ -1,11 +1,11 @@
-# PadLend 1.0.0
+# PadLend 1.0.1
 
 把 Android 平板变成 Windows 的第二块输入屏：平板显示扩展桌面，鼠标/键盘在屏幕边缘无缝穿到平板，并在平板上使用真实的系统指针。
 
 ## 下载
 
-- `PadLend-1.0.0-win64.zip` — Windows x64，解压后运行 `PadLend.exe`，无需安装
-- `PadLend-1.0.0-setup.exe` — 可选安装器（CI 成功编译时提供；安装到当前用户目录，保留配置）
+- `PadLend-1.0.1-win64.zip` — Windows x64，解压后运行 `PadLend.exe`，无需安装
+- `PadLend-1.0.1-setup.exe` — 可选安装器（CI 成功编译时提供；安装到当前用户目录，保留配置）
 - `SHA256SUMS.txt` — 下载后请核对 ZIP 的 SHA-256
 
 ## 首次使用
@@ -16,17 +16,15 @@
 
 要求：Windows 10/11 x64；平板 `/dev/uhid` 可写。UHID 是硬条件，不可写时无法创建虚拟鼠标/键盘，程序不能接管输入。
 
-## 1.0.0 主要变化
+## 1.0.1 主要变化
 
-- 版本号收敛到唯一来源，exe 写入文件版本/产品版本资源。
-- 发布形态改为 onedir：不再按当前工作目录解包，可放在 Program Files 或只读目录运行。
-- 新增崩溃日志、日志轮转、配置损坏自动备份恢复、诊断包脱敏。
-- 只停止 PadLend 自己启动的 adb server，不再误杀 IDE/其他工具的 adb 会话。
-- 推送 scrcpy-server 前校验哈希；补齐第三方许可与 Qt LGPLv3 说明。
-- 修复布局页在平板位于桌面包围盒外时被裁切的问题。
-- 修复 `device.auto_connect` 与向导完成页复选框不生效的问题。
+- 每台无线设备分别保存 Wi-Fi MAC（`device.macs`），不再只记最近一台；旧的 `device.mac` 会自动迁移。
+- 设备页的“刷新设备”现在会先重新扫描 adb，再用保存的 MAC 在局域网里逐台查找。
+- 平板换了 IP 或无线调试端口时，列表里的旧地址会被新地址替换，MAC 一起带过去。
+- 修正定位器没有使用 ARP 表的问题：设备换 IP 后可以通过 ARP 表匹配到新地址，不再只靠 mDNS。
+- 后台读取 MAC 期间设备被删除时，不再把 MAC 写回配置。
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+1.0.0 的发布形态与修复（onedir、崩溃日志、日志轮转、配置恢复、诊断脱敏、adb 所有权、第三方许可等）保持不变，完整记录见 [CHANGELOG](https://github.com/measureer/PadLend/blob/master/docs/CHANGELOG.md)。
 
 ## 已知限制
 
