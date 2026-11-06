@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 1.0.3，最新发布 1.0.1；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前源码版本 1.0.3，最新发布 1.0.3；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ![桌面布局页](docs/screenshots/ui-layout.png)
 
@@ -44,14 +44,14 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载最新发布：
 
-- `PadLend-1.0.1-win64.zip`：免安装包，解压即用。
-- `PadLend-1.0.1-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
+- `PadLend-1.0.3-win64.zip`：免安装包，解压即用。
+- `PadLend-1.0.3-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
 - `SHA256SUMS.txt`：下载后建议核对。
 
 ### 校验
 
 ```powershell
-Get-FileHash .\PadLend-1.0.1-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.0.3-win64.zip -Algorithm SHA256
 ```
 
 把结果和 `SHA256SUMS.txt` 中对应行比对即可。

@@ -39,11 +39,11 @@
 
 上表是 1.0.0 首发时的记录，部分 GUI / 干净机 / 破坏性项后续没有逐条回填；1.0.2 / 1.0.3 的自动化门禁如下。
 
-**1.0.3 本地验收（2026-11-06，未发布）**：`ruff check .` 通过；`pytest -o addopts="" -q`
+**1.0.3 发布验收（2026-11-06）**：`ruff check .` 通过；`pytest -o addopts="" -q`
 为 `474 passed, 3 skipped`。本版改动包括按设备与横/竖屏保存布局、常驻 adb shell
 监听真实朝向并自动切换、移除双击伪造横竖屏；详见 `docs/CHANGELOG.md`。
 
-**1.0.2 本地验收（2026-11-06，未发布）**：`ruff check .` 通过；`pytest -o addopts="" -q` 为
+**1.0.2 本地验收（2026-11-06，随 1.0.3 发布）**：`ruff check .` 通过；`pytest -o addopts="" -q` 为
 `452 passed, 3 skipped`。本版改动包括无线调试端口 mDNS 发现、第二实例唤起已有窗口、
 布局吸附边改由画布决定、布局页「保存布局」、按实际接触段判定边缘穿越；详见 `docs/CHANGELOG.md`。
 
