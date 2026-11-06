@@ -38,6 +38,16 @@ def test_parse_mdns_and_port_lookup() -> None:
     assert locator.mdns_port_for("10.0.0.1", services) == 0
 
 
+def test_parse_mdns_can_filter_to_connect_service() -> None:
+    lines = [
+        "adb-ABC._adb-tls-connect._tcp	192.168.1.8:41234",
+        "adb-XYZ._adb-tls-pairing._tcp	192.168.1.9:37000",
+    ]
+    assert locator.parse_mdns(lines, service="_adb-tls-connect._tcp") == [
+        ("192.168.1.8", 41234)
+    ]
+
+
 def test_locate_reports_online_when_address_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(locator, "tcp_open", lambda ip, port, *, timeout=1.5: True)
     found = locator.locate("192.168.1.8:37495")
@@ -57,6 +67,21 @@ def test_locate_follows_a_new_port_from_mdns(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert found.status == locator.STATUS_MOVED
     assert found.address == "192.168.1.8:41234"
+
+
+def test_locate_follows_a_new_port_from_direct_mdns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_tcp(ip: str, port: int, *, timeout: float = 1.5) -> bool:
+        return (ip, port) == ("192.168.1.8", 44803)
+
+    monkeypatch.setattr(locator, "tcp_open", fake_tcp)
+    found = locator.locate(
+        "192.168.1.8:37495",
+        mdns=lambda: [("192.168.1.8", 44803)],
+    )
+    assert found.status == locator.STATUS_MOVED
+    assert found.address == "192.168.1.8:44803"
 
 
 def test_locate_follows_a_new_ip_through_the_arp_table(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -98,6 +123,39 @@ def test_locate_without_any_remembered_address_is_offline() -> None:
     found = locator.locate("")
     assert found.status == locator.STATUS_OFFLINE
     assert "还没有连接过" in found.detail
+
+
+def test_discovered_services_prefers_adb_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tablet import mdns as mdns_module
+
+    calls: list[float] = []
+
+    def fake_discover(*, timeout: float = 1.2) -> list[object]:
+        calls.append(timeout)
+        return []
+
+    monkeypatch.setattr(mdns_module, "discover", fake_discover)
+    found = locator.discovered_services(
+        lambda: ["adb-ABC._adb-tls-connect._tcp	192.168.1.8:41234"]
+    )
+    assert found == [("192.168.1.8", 41234)]
+    assert calls == []
+
+
+def test_discovered_services_falls_back_to_direct_mdns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tablet import mdns as mdns_module
+
+    monkeypatch.setattr(
+        mdns_module,
+        "discover",
+        lambda *, timeout=1.2: [
+            mdns_module.MdnsService(ip="192.168.1.8", port=44803),
+            mdns_module.MdnsService(ip="192.168.1.8", port=44803),
+        ],
+    )
+    assert locator.discovered_services(lambda: []) == [("192.168.1.8", 44803)]
 
 
 def test_arp_table_reads_windows_output(monkeypatch: pytest.MonkeyPatch) -> None:

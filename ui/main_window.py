@@ -52,7 +52,15 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
-from tablet.locator import STATUS_MOVED, STATUS_ONLINE, Located, arp_table, locate, normalize_mac
+from tablet.locator import (
+    STATUS_MOVED,
+    STATUS_ONLINE,
+    Located,
+    arp_table,
+    discovered_services,
+    locate,
+    normalize_mac,
+)
 from ui.about_dialog import AboutDialog
 from ui.add_device_dialog import AddDeviceDialog
 from ui.bridge import RouterBridge, state_value
@@ -1447,10 +1455,13 @@ class MainWindow(QMainWindow):
         located = Located(detail="探测失败")
         try:
             services = getattr(self._adb, "mdns_services", None)
+            discovered = discovered_services(
+                services if callable(services) else None
+            )
             located = locate(
                 serial,
                 mac,
-                services=services if callable(services) else None,
+                mdns=lambda: discovered,
                 arp=arp_table,
             )
         except Exception as exc:  # noqa: BLE001 - 探测失败按离线处理
@@ -1542,13 +1553,16 @@ class MainWindow(QMainWindow):
         results: list[tuple[str, Located]] = []
         try:
             services = getattr(self._adb, "mdns_services", None)
+            discovered = discovered_services(
+                services if callable(services) else None
+            )
             for serial, mac in targets:
                 located = Located(detail="查找失败")
                 try:
                     located = locate(
                         serial,
                         mac,
-                        services=services if callable(services) else None,
+                        mdns=lambda: discovered,
                         arp=arp_table,
                     )
                 except Exception as exc:  # noqa: BLE001 - 单台失败不影响其它设备

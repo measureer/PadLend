@@ -7,12 +7,13 @@
 这里的思路是三层递进：
 
 1. 先用上次记下的地址做一次 TCP 连接（端口能连上基本就说明 adb 还在）；
-2. 连不上就查 ``adb mdns services``——无线调试会通过 mDNS 广播当前端口，
-   同一个 IP 换了端口也能找到新地址；
+2. 连不上就查 mDNS——无线调试会通过 mDNS 广播当前端口。优先用
+   ``adb mdns services``；Windows 上 adb 常常没有 mDNS 守护进程，这时
+   退回 :func:`tablet.mdns.discover` 直接查询，同一个 IP 换了端口也能找到；
 3. IP 也变了的话，用上次记下的 MAC 在系统 ARP 邻居表里找它现在挂在哪个
    地址上；找到 IP 后再回头查 mDNS 有没有对应端口。
 
-三层都失败才算离线。全是纯函数 + 注入的 ``services()``，便于单测。
+三层都失败才算离线。全是纯函数 + 注入的查询函数，便于单测。
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ _ARP_LINE = re.compile(
     r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+"
     r"([0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})"
 )
+# 无线调试的连接服务；配对服务是另一个名字，不能用它来 connect。
+_ADB_CONNECT_SERVICE = "_adb-tls-connect._tcp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,14 +101,59 @@ def tcp_open(ip: str, port: int, *, timeout: float = 1.5) -> bool:
         return False
 
 
-def parse_mdns(lines: Sequence[str]) -> list[tuple[str, int]]:
-    """从 ``adb mdns services`` 的输出里抽出 ``(ip, port)`` 列表。"""
+def parse_mdns(
+    lines: Sequence[str], service: str | None = None
+) -> list[tuple[str, int]]:
+    """从 ``adb mdns services`` 的输出里抽出 ``(ip, port)`` 列表。
+
+    ``service`` 非空时只保留包含该服务名的行（例如
+    ``_adb-tls-connect._tcp``），避免把配对端口当成连接端口。
+    """
+    wanted = (service or "").strip().rstrip(".").lower()
     found: list[tuple[str, int]] = []
     for line in lines:
-        for match in _IPV4.finditer(str(line)):
+        text = str(line)
+        if wanted and wanted not in text.lower():
+            continue
+        for match in _IPV4.finditer(text):
             host, port = match.group(1), int(match.group(2))
             if 0 < port < 65536 and (host, port) not in found:
                 found.append((host, port))
+    return found
+
+
+def discovered_services(
+    adb_mdns: Callable[[], Sequence[str]] | None = None,
+    *,
+    timeout: float = 1.2,
+) -> list[tuple[str, int]]:
+    """发现局域网里的 adb 无线调试地址，供 ``locate(mdns=...)`` 使用。
+
+    ``adb mdns services`` 有输出就直接用；没有（Windows 上很常见）时
+    直接发 mDNS 查询。所有失败都收敛成空列表，查找流程继续走离线分支。
+    """
+    if adb_mdns is not None:
+        try:
+            lines = adb_mdns()
+            found = parse_mdns(lines, service=_ADB_CONNECT_SERVICE)
+        except Exception as exc:  # noqa: BLE001 - mDNS 查询失败不阻断后续
+            log.debug("adb mdns services failed: %r", exc)
+            found = []
+        if found:
+            return found
+
+    try:
+        from tablet.mdns import discover
+
+        services = discover(timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 - 网络/解析失败都当没有
+        log.debug("direct mdns discovery failed: %r", exc)
+        return []
+    found = []
+    for item in services:
+        pair = (item.ip, item.port)
+        if pair not in found:
+            found.append(pair)
     return found
 
 
@@ -155,6 +203,7 @@ def locate(
     mac: str = "",
     *,
     services: Callable[[], Sequence[str]] | None = None,
+    mdns: Callable[[], Sequence[tuple[str, int]]] | None = None,
     arp: Callable[[], dict[str, str]] | None = None,
     timeout: float = 1.5,
 ) -> Located:
@@ -173,14 +222,27 @@ def locate(
             detail=f"上次的地址 {host}:{port} 仍然在线",
         )
 
-    mdns: list[tuple[str, int]] = []
+    found: list[tuple[str, int]] = []
     if services is not None:
         try:
-            mdns = parse_mdns(services())
+            found = parse_mdns(services())
         except Exception as exc:  # noqa: BLE001 - mDNS 查询失败不阻断后续
             log.debug("mdns services failed: %r", exc)
 
-    new_port = mdns_port_for(host, mdns)
+    if mdns is not None:
+        try:
+            for item in mdns():
+                try:
+                    item_host, item_port = str(item[0]), int(item[1])
+                except (IndexError, TypeError, ValueError):
+                    continue
+                pair = (item_host, item_port)
+                if 0 < item_port < 65536 and pair not in found:
+                    found.append(pair)
+        except Exception as exc:  # noqa: BLE001 - 调用方查询失败不阻断后续
+            log.debug("direct mdns lookup failed: %r", exc)
+
+    new_port = mdns_port_for(host, found)
     if new_port and tcp_open(host, new_port, timeout=timeout):
         return Located(
             status=STATUS_MOVED,
@@ -201,7 +263,7 @@ def locate(
                 log.debug("arp lookup failed: %r", exc)
         moved_ip = find_ip_by_mac(wanted_mac, table)
         if moved_ip and moved_ip != host:
-            moved_port = mdns_port_for(moved_ip, mdns)
+            moved_port = mdns_port_for(moved_ip, found)
             if moved_port and tcp_open(moved_ip, moved_port, timeout=timeout):
                 return Located(
                     status=STATUS_MOVED,
