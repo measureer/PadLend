@@ -205,6 +205,12 @@ def find_iscc() -> str | None:
     which = shutil.which("iscc")
     if which:
         return which
+    # winget installs Inno Setup per-user by default when --scope user is used.
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidate = Path(local) / "Programs" / "Inno Setup 6" / "ISCC.exe"
+        if candidate.is_file():
+            return str(candidate)
     for base in (os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES")):
         if not base:
             continue

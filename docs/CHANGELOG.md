@@ -2,6 +2,21 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.0.2] — 2026-11-06
+
+### 修复
+
+- **无线调试换端口后找不到设备**：Windows 上的 adb 经常没有 mDNS 守护进程
+  （`adb mdns check` 返回 unavailable），旧逻辑只能去 `adb mdns services` 拿端口，
+  拿到空表就失败，即使平板仍在同一 IP 上广播新端口。新增 `tablet/mdns.py`，
+  用标准库直接查询 `_adb-tls-connect._tcp.local`，解析 SRV/TXT/A 记录拿到当前端口；
+  启动探测与设备页刷新都会用上。adb 自带 mDNS 可用时仍优先用它，之后再用保存的
+  MAC 和 ARP 表处理换 IP 的情况。
+- **重复启动没有唤起已有窗口**：第二个实例以前只按窗口标题查找首实例，窗口收进
+  托盘或标题变化时会静默退出，看起来像崩溃。现在首实例创建命名事件
+  `Global\PadLend.Activate`，第二实例发事件请求首实例恢复窗口；监听线程只发 Qt
+  信号，窗口操作仍在 GUI 线程。旧版本没有事件时保留标题查找兜底。
+
 ## [1.0.1] — 2026-11-06
 
 ### 变更

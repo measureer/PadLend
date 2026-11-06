@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前版本 1.0.1，Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前源码版本 1.0.2，最新发布 1.0.1；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ![桌面布局页](docs/screenshots/ui-layout.png)
 
@@ -41,7 +41,7 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 ## 下载与安装
 
-到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载：
+到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载最新发布：
 
 - `PadLend-1.0.1-win64.zip`：免安装包，解压即用。
 - `PadLend-1.0.1-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
@@ -80,7 +80,7 @@ PadLend\
 ## 快速开始
 
 1. 运行 `PadLend.exe`。第一次启动会打开向导，依次检查 adb、USB 调试、UHID 和 scrcpy-server，最后可以设置是否自动连接、关闭窗口时是否收进托盘。
-2. 在平板上打开“开发者选项 → USB 调试”，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。设备页的「刷新设备」会重新扫描 adb，并用每台无线设备保存的 MAC 在局域网里找一次，平板换了 IP 或无线调试端口也能重新出现。
+2. 在平板上打开“开发者选项 → USB 调试”，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。设备页的「刷新设备」会重新扫描 adb；如果 adb 自带的 mDNS 不可用，PadLend 会自己发 mDNS 查询找无线调试端口，再按每台设备保存的 MAC 用 ARP 表确认新 IP。平板换了 IP 或无线调试端口，一般也能重新出现。
 3. 选中平板，点「连接此设备」。
 4. 切到「布局」页，把平板拖到某个屏幕边缘的红色虚线区域，松手保存。角落位置按 `Shift` 切换优先边，双击平板切换横竖屏。
 5. 把鼠标移到该边缘并继续往外推，进入接管：PC 光标隐藏，平板出现指针。把指针推到平板对应边缘再往外推，交还给 PC。

@@ -41,6 +41,7 @@ RestartApplications=no
 MinVersion=10.0
 ; Keep the version string in Add/Remove Programs readable.
 VersionInfoVersion={#AppVersion}
+VersionInfoCopyright=Copyright (C) 2026 PadLend contributors
 
 [Languages]
 ; Inno Setup does not ship Simplified Chinese in every distribution (the CI
