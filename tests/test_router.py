@@ -200,13 +200,14 @@ def test_arm_timeout_returns_idle() -> None:
 
 
 def test_arm_slow_push_still_captures() -> None:
-    # 慢速把鼠标压到边缘：80ms 内没攒够 40px，但已经推出 12px 以上。
+    # 慢速把鼠标压到边缘：80ms 内只攒了 6px，没到默认 10px；
+    # 超时后达到慢推兜底阈值（arm_px 的一半，这里为 5px），仍应接管。
     rig = make_rig()
     arm(rig)
-    rig.router.on_raw(raw(10, 0))
-    rig.router.on_raw(raw(10, 0))
+    rig.router.on_raw(raw(3, 0))
+    rig.router.on_raw(raw(3, 0))
     rig.clock.advance(0.09)
-    rig.router.on_raw(raw(10, 0))
+    rig.router.on_raw(raw(3, 0))
     assert rig.router.state is State.CAPTURED
     assert (State.ARMING, State.CAPTURED, "arm_slow") in rig.transitions
 
@@ -339,8 +340,10 @@ def test_entry_corner_does_not_hide_return_edge() -> None:
             rig.router.on_raw(raw(0, 10))
         assert rig.router.state is State.CAPTURED
         assert rig.router.estimator is not None
-        assert rig.router.estimator.y == 0
-        rig.router.on_raw(raw(0, -(C.EXIT_OVERFLOW_PX + 10)))
+        # 默认阈值降低后，第 5 个事件可能已经在平板内移动了一小段；
+        # 这里只要求仍贴着入口的顶边，重点是顶边本身还能用来返回。
+        assert 0 <= rig.router.estimator.y < 50
+        rig.router.on_raw(raw(0, -(C.EXIT_OVERFLOW_PX + 100)))
         assert rig.router.state is State.RETURNING
 
 

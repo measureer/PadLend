@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 1.0.3，最新发布 1.0.3；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前源码版本 1.0.4，最新发布 1.0.4；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ![桌面布局页](docs/screenshots/ui-layout.png)
 
@@ -44,14 +44,14 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载最新发布：
 
-- `PadLend-1.0.3-win64.zip`：免安装包，解压即用。
-- `PadLend-1.0.3-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
+- `PadLend-1.0.4-win64.zip`：免安装包，解压即用。
+- `PadLend-1.0.4-setup.exe`：可选安装器，装到当前用户目录，不需要管理员权限。
 - `SHA256SUMS.txt`：下载后建议核对。
 
 ### 校验
 
 ```powershell
-Get-FileHash .\PadLend-1.0.3-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.0.4-win64.zip -Algorithm SHA256
 ```
 
 把结果和 `SHA256SUMS.txt` 中对应行比对即可。
@@ -68,7 +68,7 @@ PadLend\
 └─ THIRD_PARTY_NOTICES.md
 ```
 
-整个目录约 129 MB，zip 约 51 MB。配置和日志默认写在 `%APPDATA%\PadLend\`，所以换新版时直接覆盖程序目录，配置还在。
+整个目录约 129 MB，zip 约 54 MB。配置和日志默认写在 `%APPDATA%\PadLend\`，所以换新版时直接覆盖程序目录，配置还在。
 
 ### 安装器
 
@@ -137,7 +137,7 @@ motion:
   entry_margin_px: 2
   exit_overflow_px: 120   # 交还所需的外推距离
   debounce_ms: 250
-  arm_px: 40
+  arm_px: 10
   arm_window_ms: 80
   edge_band_px: 1
   boundary_inset_px: 0    # 平板拦截边缘手势时可调 8–16

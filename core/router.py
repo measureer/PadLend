@@ -768,7 +768,9 @@ class Router:
         if now > self._arm_deadline:
             # 没赶上 80ms 的快速甩动，但如果已经明显向外推了一段，
             # 说明用户是慢慢把鼠标压到边上的，不应该判定失败。
-            if self._arm_accum >= C.ARM_SLOW_PX:
+            # 兜底阈值不能高于 arm_px，否则默认 10px 时永远攒不到 12px。
+            slow_px = min(C.ARM_SLOW_PX, max(1, int(self._cfg.motion.arm_px) // 2))
+            if self._arm_accum >= slow_px:
                 self._arm_accum = 0.0
                 self._enter_captured_locked("arm_slow")
             else:

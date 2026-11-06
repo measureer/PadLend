@@ -138,7 +138,7 @@
 - **AC2.4** 拖动和松手只生成预览，点「保存布局」后生效并持久化
 
 ### US-3 穿过去
-- **AC3.1** 边缘带宽 1px，需连续外推 ≥ `arm_px`(40) 才触发
+- **AC3.1** 边缘带宽 1px，需连续外推 ≥ `arm_px`（默认 10）才触发
 - **AC3.2** 触发瞬间 PC 光标隐藏，平板指针出现在**入口边**、与出口位置成比例处
 - **AC3.3** 触发到平板指针可动，无线 < 30ms / USB < 15ms
 - **AC3.4** 贴边后反向推 1px 立即响应（无虚位）
@@ -677,7 +677,7 @@ class CursorEstimator:
 ```
                     ┌───────────────────────────────────┐
                     ▼                                   │
-   ┌────────┐ 边缘命中+外推≥40px  ┌────────┐ 校验通过  ┌─┴────────┐
+   ┌────────┐ 边缘命中+外推≥arm_px  ┌────────┐ 校验通过  ┌─┴────────┐
    │  IDLE  ├────────────────────►│ ARMING ├──────────►│ CAPTURED │
    └───┬────┘  (80ms 观察窗)       └───┬────┘           └────┬─────┘
        │                              │ 失败/缩回            │ 平板边界+溢出≥24px
@@ -709,7 +709,7 @@ segs = desktop.segment_at(cursor.x, cursor.y, band=cfg.edge_band_px)   # 1px
 
 # ARMING → CAPTURED
 arm_accum += |delta|
-若 arm_accum >= arm_px(40) 且 now <= arm_deadline       → CAPTURED
+若 arm_accum >= arm_px（默认 10）且 now <= arm_deadline       → CAPTURED
 若 光标离开边缘带 / 方向反转 / now > arm_deadline        → IDLE
 
 # CAPTURED → RETURNING
@@ -868,7 +868,7 @@ motion:
   entry_margin_px: 2
   exit_overflow_px: 120
   debounce_ms: 250
-  arm_px: 40
+  arm_px: 10
   arm_window_ms: 80
   edge_band_px: 1
   boundary_inset_px: 0          # H3 需规避手势时 8~16

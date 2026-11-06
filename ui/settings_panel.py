@@ -278,11 +278,11 @@ class SettingsPanel(QWidget):
         )
         self.hz_combo.currentIndexChanged.connect(self._on_control_changed)
 
-        self.arm_row = SliderRow("触发阈值", 10, 200, C.ARM_PX, lambda v: f"{v} px", box)
+        self.arm_row = SliderRow("触发阈值", 1, 200, C.ARM_PX, lambda v: f"{v} px", box)
         self.arm_slider = self.arm_row.slider
         layout.addWidget(self.arm_row)
         layout.addWidget(self._hint("鼠标从屏幕边缘继续往外推多少像素才正式接管平板。太小会一蹭就进，"
-                "太大又觉得推不进去；40 px 是折中值。"))
+                "太大又觉得推不进去；默认 10 px，觉得容易误进就调大。"))
 
         self.exit_row = SliderRow(
             "穿回阈值", 4, 120, C.EXIT_OVERFLOW_PX, lambda v: f"{v} px", box

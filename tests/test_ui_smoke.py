@@ -807,6 +807,20 @@ def test_exit_threshold_default_is_120() -> None:
     assert Config().motion.exit_overflow_px == 120
 
 
+def test_arm_threshold_default_is_10_and_slider_starts_at_1(window: Any) -> None:
+    """触发阈值默认 10 px；滑条允许调到 1 px 试验。"""
+    assert C.ARM_PX == 10
+    assert Config().motion.arm_px == 10
+    slider = window.settings.arm_slider
+    assert slider.minimum() == 1
+    assert slider.maximum() == 200
+    assert slider.value() == 10
+
+    slider.setValue(1)
+    assert window.settings.save() is True
+    assert window.settings._config.motion.arm_px == 1
+
+
 # ---------------------------------------------------------------------------
 # 添加无线设备对话框
 # ---------------------------------------------------------------------------
