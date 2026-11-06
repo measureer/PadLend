@@ -37,9 +37,11 @@
 | SmartScreen | 在未加白名单的机器运行 zip 内 exe | 出现「未知发布者」；「更多信息 → 仍要运行」后可启动 | 待执行（干净机） |
 | 截图 | `python tools\make_screenshots.py` | 4 张 1280×820，设备页/布局/设置/浅色；无缺字、无旧控件 | ✅ 已生成 |
 
-**发布前必须清零**：上表所有「待执行」项，以及 `python -m pytest -q`、`ruff check .`、`tools/acceptance.py` 三条门禁。
-当前 pytest 有 3 个失败（`test_kill_server_never_raises`、`test_corrupt_yaml_backs_up_and_resets`、`test_future_version_resets`），
-在修复前不得打 tag。
+上表是 1.0.0 首发时的记录，部分 GUI / 干净机 / 破坏性项后续没有逐条回填；1.0.2 的自动化门禁如下。
+
+**1.0.2 本地验收（2026-11-06，未发布）**：`ruff check .` 通过；`pytest -o addopts="" -q` 为
+`452 passed, 3 skipped`。本版改动包括无线调试端口 mDNS 发现、第二实例唤起已有窗口、
+布局吸附边改由画布决定、布局页「保存布局」、按实际接触段判定边缘穿越；详见 `docs/CHANGELOG.md`。
 
 ## 1. 单元/集成（无硬件）
 

@@ -211,16 +211,23 @@ def test_window_survives_missing_canvas(
 
 
 def test_canvas_signals_reach_window(window: Any, qapp: QApplication) -> None:
-    segment = window.settings.edge_combo.itemData(0)
-    assert isinstance(segment, EdgeSegment)
-    placement = Placement(segment=segment, offset=0.25)
-    window.canvas.placementEdited.emit(placement)
+    placement = window._placement
+    assert placement is not None
+    preview = Placement(segment=placement.segment, offset=0.25)
+    window.canvas.placementEdited.emit(preview)
     qapp.processEvents()
-    assert window._placement == placement
-    window.canvas.placementCommitted.emit(placement)
+    assert window._placement == preview
+    assert window._layout_dirty is True
+    assert window.layout_status.isHidden() is False
+
+    window.canvas.placementCommitted.emit(preview)
+    qapp.processEvents()
+    assert window.config.placement.offset == pytest.approx(0.5)
+    window._save_layout()
     qapp.processEvents()
     assert window.config.placement.offset == pytest.approx(0.25)
-    assert window.config.placement.edge == segment.edge.value
+    assert window._layout_dirty is False
+    assert window.layout_status.isHidden() is True
 
 
 def test_canvas_programmatic_calls_are_guarded(window: Any) -> None:
@@ -367,11 +374,9 @@ def test_log_line_parsing() -> None:
 # ---------------------------------------------------------------------------
 def test_settings_panel_populates_and_saves(window: Any, config_path: Path) -> None:
     panel = window.settings
-    assert panel.edge_combo.count() == 3
-    assert panel.align_combo.count() == 3
-    placement = panel.current_placement()
-    assert isinstance(placement, Placement)
-    assert placement.offset == pytest.approx(window.config.placement.offset)
+    assert not hasattr(panel, "edge_combo")
+    assert not hasattr(panel, "align_combo")
+    assert not hasattr(panel, "placementChanged")
 
     assert panel.save() is True
     assert config_path.is_file()
@@ -386,21 +391,24 @@ def test_settings_panel_rejects_blank_hotkey(window: Any) -> None:
     assert panel.toggle_edit.property("invalid") is True
 
 
-def test_settings_placement_signal_updates_canvas(window: Any, qapp: QApplication) -> None:
-    panel = window.settings
-    segment = panel.edge_combo.itemData(1)
-    placement = Placement(segment=segment, offset=0.5)
-    panel.placementChanged.emit(placement)
-    qapp.processEvents()
-    assert window._placement == placement
-    assert window.canvas.placement == placement
+def test_settings_save_does_not_touch_layout(window: Any) -> None:
+    before = window._placement
+    assert window.settings.save() is True
+    assert window._placement == before
+    assert window._layout_dirty is False
 
 
-def test_config_saved_signal_reaches_router(window: Any, router: FakeRouter) -> None:
-    panel = window.settings
-    panel.save()
-    pushes = [call for call in router.calls if call[0] == "set_placement"]
-    assert pushes, "保存后应把摆位推给 Router"
+def test_settings_save_does_not_push_placement_but_layout_save_does(
+    window: Any, router: FakeRouter
+) -> None:
+    def pushes() -> int:
+        return sum(1 for call in router.calls if call[0] == "set_placement")
+
+    before = pushes()
+    assert window.settings.save() is True
+    assert pushes() == before, "保存设置不应再改布局"
+    window._save_layout()
+    assert pushes() == before + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1152,8 +1160,6 @@ def test_settings_widgets_do_not_react_to_the_wheel(window: Any) -> None:
 
     window._switch_page(2)
     widgets = [
-        window.settings.edge_combo,
-        window.settings.align_combo,
         window.settings.hz_combo,
         window.settings.layout_combo,
         window.settings.exit_slider,

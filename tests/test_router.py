@@ -228,44 +228,50 @@ def test_arm_leaving_edge_band_returns_idle() -> None:
     assert (State.ARMING, State.IDLE, "arm:left_edge") in rig.transitions
 
 
-def test_arm_adopts_matching_edge_on_other_monitor() -> None:
-    # 配置里摆在 DISPLAY1 底部，用户实际在主屏（DISPLAY2）底部向下推：
-    # 同一朝向的边应自动接管，而不是静默无反应。
+def test_arm_ignores_same_edge_where_tablet_does_not_reach() -> None:
+    # 配置摆在 DISPLAY1 底部，用户在 DISPLAY2 底部同朝向的边上推：
+    # 那里其实没有平板，不应再因为边朝向相同就整段接管。
     first = MonitorInfo(1, r"\\.\DISPLAY1", Rect(0, 0, 1920, 1080), 96, True)
     second = MonitorInfo(2, r"\\.\DISPLAY2", Rect(1920, 0, 3840, 1080), 96, False)
     first_bottom = EdgeSegment(1, Edge.BOTTOM, 0, 1920)
     second_bottom = EdgeSegment(2, Edge.BOTTOM, 1920, 3840)
     desktop = FakeDesktop([first, second], segments=[first_bottom, second_bottom])
-    session, mask, clock = FakeSession(), FakeMask(), FakeClock()
-    router = Router(FakeConfig(), session, desktop, mask, clock=clock, keymap=FakeKeymap())
+    router = Router(
+        FakeConfig(), FakeSession(), desktop, FakeMask(), clock=FakeClock(), keymap=FakeKeymap()
+    )
     router.set_placement(Placement(first_bottom, 0.5, Align.PROPORTIONAL, None))
     desktop.cursor = (2500, 1080)
     router.on_raw(raw(0, 10))
-    assert router.state is State.ARMING
+    assert router.state is State.IDLE
     assert router.placement is not None
-    assert router.placement.segment == second_bottom
-    for _ in range(4):
-        clock.advance_ms(10)
-        router.on_raw(raw(0, 10))
-    assert router.state is State.CAPTURED
+    assert router.placement.segment == first_bottom
     router.stop()
 
 
-def test_merged_edge_clips_cursor_on_actual_monitor() -> None:
+def test_arm_clips_to_touching_monitor_without_rewriting_placement() -> None:
+    # 平板横跨两块屏的下方：只有真正被平板覆盖的 DISPLAY2 段能接管，
+    # 锁定条也只覆盖平板这一段；用户配置本身保持不动。
     first = MonitorInfo(1, r"\\.\DISPLAY1", Rect(0, 0, 1920, 1080), 96, True)
     second = MonitorInfo(2, r"\\.\DISPLAY2", Rect(1920, 0, 3840, 1080), 96, False)
+    first_bottom = EdgeSegment(1, Edge.BOTTOM, 0, 1920)
+    second_bottom = EdgeSegment(2, Edge.BOTTOM, 1920, 3840)
     merged = EdgeSegment(1, Edge.BOTTOM, 0, 3840)
-    desktop = FakeDesktop([first, second], segments=[merged])
-    session, mask, clock = FakeSession(), FakeMask(), FakeClock()
-    router = Router(FakeConfig(), session, desktop, mask, clock=clock, keymap=FakeKeymap())
+    desktop = FakeDesktop([first, second], segments=[first_bottom, second_bottom])
+    mask = FakeMask()
+    router = Router(
+        FakeConfig(), FakeSession(), desktop, mask, clock=FakeClock(), keymap=FakeKeymap()
+    )
     router.set_placement(Placement(merged))
     desktop.cursor = (2500, 1080)
     for _ in range(5):
         router.on_raw(raw(0, 10))
     assert router.state is State.CAPTURED
+    assert router.placement is not None
+    assert router.placement.segment == merged
+    assert router._arm_segment == second_bottom
     clip = mask.shown[-1]
     assert clip is not None
-    assert clip.as_tuple() == (1920, 1079, 3840, 1080)
+    assert clip.as_tuple() == (1920, 1079, 2720, 1080)
     router.stop()
 
 
@@ -322,8 +328,8 @@ def test_immediate_reverse_at_entry_returns_to_pc() -> None:
 
 
 def test_entry_corner_does_not_hide_return_edge() -> None:
-    # 从 PC 底边两端进入时，平板同时位于左/右上角和顶边；顶边仍可返回。
-    for pc_x in (0, 1919):
+    # 从平板覆盖的底边两端进入时，平板同时位于左/右上角和顶边；顶边仍可返回。
+    for pc_x in (200, 1700):
         rig = make_rig(
             edges=(Edge.BOTTOM,),
             placement=make_placement(Edge.BOTTOM, span=(0, 1920)),
@@ -1065,3 +1071,57 @@ def test_press_in_captured_logs_cursor_diagnose(caplog) -> None:
     assert len(lines) == 2, lines
     assert "windows=1" in lines[0]
     assert rig.router.state is State.CAPTURED
+
+
+# ---------------------------------------------------------------------------
+# 用户实机布局回归：平板横跨 DISPLAY2 下方与 DISPLAY1 左下角
+# ---------------------------------------------------------------------------
+def _corner_layout_rig() -> Rig:
+    first = MonitorInfo(1, r"\\.\DISPLAY1", Rect(0, 0, 1707, 1067), 96, True)
+    second = MonitorInfo(2, r"\\.\DISPLAY2", Rect(-1707, -132, 0, 828), 96, False)
+    segments = (
+        EdgeSegment(2, Edge.BOTTOM, -1707, 0),
+        EdgeSegment(1, Edge.BOTTOM, 0, 1707),
+        EdgeSegment(1, Edge.LEFT, 828, 1067),
+    )
+    desktop = FakeDesktop([first, second], segments=segments)
+    session = FakeSession(default_facts(width=3200, height=2136))
+    mask, clock, keymap = FakeMask(), FakeClock(), FakeKeymap()
+    router = Router(FakeConfig(), session, desktop, mask, clock=clock, keymap=keymap)
+    rig = Rig(FakeConfig(), session, desktop, mask, clock, keymap, router)
+    router.set_placement(
+        Placement(EdgeSegment(2, Edge.BOTTOM, -1707, 0), 0.3678359247135844)
+    )
+    return rig
+
+
+def test_tablet_below_display2_can_enter_where_it_touches_display1_bottom() -> None:
+    rig = _corner_layout_rig()
+    rig.desktop.cursor = (300, 1067)
+    rig.router.on_raw(raw(0, 5))
+    assert rig.router.state is State.ARMING
+    for _ in range(4):
+        rig.clock.advance_ms(10)
+        rig.router.on_raw(raw(0, 10))
+    assert rig.router.state is State.CAPTURED
+    rig.router.stop()
+
+
+def test_tablet_does_not_arm_on_display1_bottom_where_it_is_absent() -> None:
+    rig = _corner_layout_rig()
+    rig.desktop.cursor = (1200, 1067)
+    rig.router.on_raw(raw(0, 5))
+    assert rig.router.state is State.IDLE
+    rig.router.stop()
+
+
+def test_tablet_can_enter_from_display1_left_near_the_corner() -> None:
+    rig = _corner_layout_rig()
+    rig.desktop.cursor = (0, 1000)
+    rig.router.on_raw(raw(-5, 0))
+    assert rig.router.state is State.ARMING
+    for _ in range(4):
+        rig.clock.advance_ms(10)
+        rig.router.on_raw(raw(-10, 0))
+    assert rig.router.state is State.CAPTURED
+    rig.router.stop()

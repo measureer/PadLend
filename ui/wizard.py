@@ -324,9 +324,9 @@ class FinishPage(QWizardPage):
         body = QLabel(
             "<p>接下来：</p>"
             "<ul>"
-            "<li>主窗左侧是虚拟桌面，拖动平板图标即可改变吸附边。</li>"
+            "<li>主窗「布局」页拖动平板图标改变摆位，点「保存布局」后生效。</li>"
             "<li><code>Ctrl+Alt+S</code> 手动接管 / 交还，<code>Ctrl+Alt+Q</code> 急停。</li>"
-            "<li>遇到问题：托盘菜单 → 复制诊断信息，或「设置 → 诊断」导出 zip。</li>"
+            "<li>遇到问题：顶栏 ⋯ →「运行诊断…」导出 zip，或托盘菜单 →「打开日志目录…」。</li>"
             "</ul>",
             self,
         )

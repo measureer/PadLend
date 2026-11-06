@@ -45,7 +45,7 @@ class DesktopCanvas(QGraphicsView):
     """虚拟桌面 + 平板摆位画布。"""
 
     placementEdited = Signal(object)  # 拖动过程中的实时 Placement
-    placementCommitted = Signal(object)  # 松手/对齐/移除后的 Placement（移除为 None）
+    placementCommitted = Signal(object)  # 预览 Placement（移除为 None；保存布局才落盘）
     tabletOrientationToggled = Signal()  # 双击切换横竖
     testCaptureRequested = Signal()  # 右键"测试穿越"
     pointerMoved = Signal(float, float)  # 鼠标在虚拟桌面物理坐标中的位置
@@ -109,7 +109,7 @@ class DesktopCanvas(QGraphicsView):
 
     @property
     def placement(self) -> Placement | None:
-        """当前已提交的摆位（未提交时返回将要显示的默认摆位）。"""
+        """当前画布摆位（未设置时返回默认预览；保存布局才写入配置）。"""
         if self._placement is not None:
             return self._placement
         return self._default_placement()
@@ -245,7 +245,7 @@ class DesktopCanvas(QGraphicsView):
             self.fit_view()
 
     def set_align(self, align: Align | str) -> None:
-        """改变对齐方式并提交（右键菜单用）。"""
+        """改变对齐方式并发出预览（右键菜单用；保存布局才落盘）。"""
         current = self._placement or self._default_placement()
         if current is None:
             return
@@ -256,7 +256,7 @@ class DesktopCanvas(QGraphicsView):
         self.placementCommitted.emit(placement)
 
     def clear_placement(self) -> None:
-        """移除摆位（右键菜单用）：保留平板可拖，但不再有已提交摆位。"""
+        """移除摆位（右键菜单用）：保留平板可拖，但不再有预览摆位。"""
         self._placement = None
         self._clear_segment_states()
         current = self._default_placement()

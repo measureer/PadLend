@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
+from core.geometry import Align, Edge, Placement
 from tablet.locator import (
     STATUS_MOVED,
     STATUS_ONLINE,
@@ -258,6 +259,7 @@ class MainWindow(QMainWindow):
         self._orientation = "—"
         self._pointer_pos: tuple[float, float] = (0.0, 0.0)
         self._placement: object | None = None
+        self._layout_dirty = False
         self._force_quit = False
         self._dwm_applied = False
         self._hidden_notice_shown = False
@@ -306,7 +308,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_header())
 
         self.settings = SettingsPanel(
-            self.config, self.desktop, config_path=self._config_path, parent=self
+            self.config, config_path=self._config_path, parent=self
         )
         self.canvas, self.canvas_mode = self._create_canvas()
         self.device_page = DevicePage(self._adb, self.router, self)
@@ -335,7 +337,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(body, 1)
         layout.addWidget(self._build_bottom_bar())
 
-        self.settings.placementChanged.connect(self._on_settings_placement)
         self.settings.configChanged.connect(self._on_config_saved)
         self._switch_page(0)
 
@@ -469,20 +470,35 @@ class MainWindow(QMainWindow):
 
         title = QLabel("桌面布局")
         title.setObjectName("pageTitle")
-        hint = QLabel("把平板拖到屏幕外轮廓边；Shift 切换角落优先边，双击平板切换横竖。")
+        hint = QLabel(
+            "把平板拖到屏幕外轮廓边，点「保存布局」后生效；"
+            "Shift 切换角落优先边，双击平板切换横竖。"
+        )
         hint.setObjectName("pageSubtitle")
         hint.setWordWrap(True)
         heading = QVBoxLayout()
         heading.setSpacing(3)
         heading.addWidget(title)
         heading.addWidget(hint)
+        self.layout_status = QLabel("有未保存的布局改动")
+        self.layout_status.setObjectName("hintText")
+        self.layout_status.hide()
+        heading.addWidget(self.layout_status)
         row = QHBoxLayout()
         row.addLayout(heading, 1)
-        self.fit_button = QPushButton("适应窗口")
+        self.fit_button = QPushButton("显示全部")
         self.fit_button.setObjectName("ghostButton")
         self.fit_button.setIcon(make_icon("canvas", tokens.COLORS["text_primary"], 15))
+        self.fit_button.setToolTip(
+            "缩放到同时看见所有显示器和平板；滚轮缩放，Ctrl+0 也可恢复"
+        )
         self.fit_button.clicked.connect(lambda: self._canvas_call("fit_view"))
         row.addWidget(self.fit_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.save_layout_button = QPushButton("保存布局", self)
+        self.save_layout_button.setProperty("accent", True)
+        self.save_layout_button.setToolTip("把当前平板位置写入配置，并立即用于边缘穿越")
+        self.save_layout_button.clicked.connect(self._save_layout)
+        row.addWidget(self.save_layout_button, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(row)
 
         card = QFrame()
@@ -502,7 +518,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel("设置")
         title.setObjectName("pageTitle")
-        hint = QLabel("摆位、手感、键盘与快捷键；保存后立即生效。")
+        hint = QLabel("手感、键盘、快捷键与杂项；保存后立即生效。平板摆位在「桌面布局」页调整。")
         hint.setObjectName("pageSubtitle")
         layout.addWidget(title)
         layout.addWidget(hint)
@@ -570,7 +586,7 @@ class MainWindow(QMainWindow):
     def _create_canvas(self) -> tuple[QWidget, str]:
         canvas_cls = DesktopCanvas
         if canvas_cls is not None:
-            initial = self.settings.current_placement()
+            initial = self._placement_from_config()
             candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
                 ((self.desktop, initial), {"parent": self}),
                 ((self.desktop, initial), {}),
@@ -683,7 +699,7 @@ class MainWindow(QMainWindow):
             return None
 
     def _install_initial_placement(self) -> None:
-        placement = self.settings.current_placement()
+        placement = self._placement_from_config()
         if placement is not None:
             self._placement = placement
             self._canvas_call("set_placement", placement)
@@ -701,27 +717,110 @@ class MainWindow(QMainWindow):
         if placement is None:
             return
         self._placement = placement
+        self._set_layout_dirty(True)
         log.debug("placement edited: %r", placement)
         self.placementChanged.emit(placement)
 
     def _on_placement_committed(self, *_args: object) -> None:
         placement = _args[0] if _args else None
+        self._placement = placement
+        self._set_layout_dirty(True)
         if placement is None:
+            log.info("placement cleared (preview only)")
+            self.placementChanged.emit(None)
+            return
+        segment = getattr(placement, "segment", None)
+        edge = getattr(getattr(segment, "edge", None), "value", "?")
+        offset = float(getattr(placement, "offset", 0.5))
+        log.info("placement preview edge=%s offset=%.3f", edge, offset)
+        self.placementChanged.emit(placement)
+
+    def _set_layout_dirty(self, dirty: bool) -> None:
+        self._layout_dirty = bool(dirty)
+        status = getattr(self, "layout_status", None)
+        if status is None:
+            return
+        if self._layout_dirty:
+            status.setText("有未保存的布局改动")
+            status.show()
+        else:
+            status.hide()
+
+    def _save_layout(self) -> None:
+        """把画布上的预览位置写入配置并交给 Router。"""
+        placement = self._placement
+        if placement is None:
+            current = getattr(self.canvas, "placement", None)
+            placement = current() if callable(current) else current
+        if placement is None:
+            self.layout_status.setText("没有可保存的布局")
+            self.layout_status.show()
             return
         self._placement = placement
         self._apply_placement_to_config(placement)
         saved = self._save_config()
-        self._push_placement(placement)
         segment = getattr(placement, "segment", None)
         edge = getattr(getattr(segment, "edge", None), "value", "?")
         offset = float(getattr(placement, "offset", 0.5))
-        self.log_view.append_event("PLACE", f"吸附 {edge} offset={offset:.2f} 已保存={saved}")
-        self.placementChanged.emit(placement)
         if saved:
+            self._push_placement(placement)
+            self._set_layout_dirty(False)
+            self.log_view.append_event("PLACE", f"布局已保存：吸附 {edge} offset={offset:.2f}")
             self.settingsSaved.emit(self.config)
-        load = getattr(self.settings, "load_from_config", None)
-        if callable(load):
-            load()
+        else:
+            self.layout_status.setText("保存失败，详见日志")
+            self.layout_status.show()
+        self.placementChanged.emit(placement)
+
+    def _placement_from_config(self) -> object | None:
+        """按配置里的显示器/边找到当前真实段，重建画布用的 Placement。"""
+        cfg = getattr(self.config, "placement", None)
+        if cfg is None:
+            return None
+        getter = getattr(self.desktop, "exterior_segments", None)
+        if not callable(getter):
+            return None
+        try:
+            segments = list(getter())
+        except Exception as exc:  # 枚举 Win32 显示器失败时不阻断启动
+            log.warning("exterior_segments failed: %r", exc)
+            return None
+        if not segments:
+            return None
+        edge_text = str(getattr(cfg, "edge", "") or "")
+        monitor = str(getattr(cfg, "monitor", "") or "").casefold()
+
+        def same_edge(segment: object) -> bool:
+            edge = getattr(segment, "edge", None)
+            return str(getattr(edge, "value", edge)) == edge_text
+
+        candidates = [segment for segment in segments if same_edge(segment)]
+        if monitor:
+            exact = [
+                segment
+                for segment in candidates
+                if self._monitor_device(int(getattr(segment, "monitor_handle", 0))).casefold()
+                == monitor
+            ]
+            if exact:
+                candidates = exact
+        if not candidates:
+            candidates = list(segments)
+        segment = max(candidates, key=lambda item: int(getattr(item, "length", 0)))
+        try:
+            align = Align(str(getattr(cfg, "align", "") or Align.PROPORTIONAL.value))
+        except ValueError:
+            align = Align.PROPORTIONAL
+        corner_text = str(getattr(cfg, "corner_priority", "") or "")
+        try:
+            corner = Edge(corner_text) if corner_text else None
+        except ValueError:
+            corner = None
+        try:
+            offset = max(0.0, min(1.0, float(getattr(cfg, "offset", 0.5))))
+        except (TypeError, ValueError):
+            offset = 0.5
+        return Placement(segment, offset, align, corner)
 
     def _apply_placement_to_config(self, placement: object) -> None:
         cfg = getattr(self.config, "placement", None)
@@ -875,19 +974,11 @@ class MainWindow(QMainWindow):
     def _on_log(self, line: object) -> None:
         self.log_view.append_line(str(line))
 
-    def _on_settings_placement(self, placement: object) -> None:
-        self._placement = placement
-        self._canvas_call("set_placement", placement)
-        self.placementChanged.emit(placement)
-
     def _on_config_saved(self, config: object) -> None:
         self.log_view.append_event("CONFIG", f"配置已保存：{self._config_path}")
         self.tray.set_notifications(
             bool(getattr(getattr(config, "ui", None), "tray_notifications", True))
         )
-        placement = self.settings.current_placement()
-        if placement is not None:
-            self._push_placement(placement)
         self._refresh_header_device()
 
     # ------------------------------------------------------------------ 动作

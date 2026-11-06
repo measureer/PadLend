@@ -180,3 +180,124 @@ class Placement:
     def __post_init__(self) -> None:
         if not (0.0 <= self.offset <= 1.0):
             raise ValueError(f"Placement.offset out of range: {self.offset}")
+
+
+# ---------------------------------------------------------------------------
+# 摆位几何
+# ---------------------------------------------------------------------------
+def clamp01(value: float) -> float:
+    return min(max(float(value), 0.0), 1.0)
+
+
+def tablet_rect(
+    segment: EdgeSegment,
+    monitor: MonitorInfo,
+    offset: float,
+    tablet_w: int,
+    tablet_h: int,
+) -> tuple[float, float, float, float]:
+    """平板矩形 (left, top, right, bottom)，单位是虚拟桌面物理像素。
+
+    平板贴在外轮廓段外侧，段上的投影点对准平板中心。贴边一侧的长度是
+    平板的高（left/right 边）或宽（top/bottom 边）。画布和 Router 共用这
+    一份几何，否则拖动预览与实际穿越范围会不一致。
+    """
+    area = monitor.rect
+    along = segment.span_start + clamp01(offset) * max(segment.length, 1)
+    if segment.edge.is_vertical:
+        x = area.left - tablet_w if segment.edge is Edge.LEFT else area.right
+        return (
+            float(x),
+            along - tablet_h / 2.0,
+            float(x + tablet_w),
+            along + tablet_h / 2.0,
+        )
+    y = area.top - tablet_h if segment.edge is Edge.TOP else area.bottom
+    return (
+        along - tablet_w / 2.0,
+        float(y),
+        along + tablet_w / 2.0,
+        float(y + tablet_h),
+    )
+
+
+def segment_contacts_tablet(
+    segment: EdgeSegment,
+    monitor: MonitorInfo,
+    tablet: tuple[float, float, float, float],
+    along: float,
+) -> bool:
+    """鼠标在 along 处压线时，这条外轮廓段是否真的贴着平板。
+
+    只比较段所在的那条 1px 扫描线：线必须落在平板范围内，且光标沿边坐标
+    也必须落在平板范围内。这样同一台显示器的同一条边不会因为显示器本身
+    够长就被整段当成可穿透——平板只贴住其中一小段时，只有那一小段能触发。
+    """
+    if not segment.contains_along(int(along)):
+        return False
+    left, top, right, bottom = tablet
+    area = monitor.rect
+    if segment.edge.is_vertical:
+        line = area.left - 1 if segment.edge is Edge.LEFT else area.right
+        return left <= line < right and top <= along < bottom
+    line = area.top - 1 if segment.edge is Edge.TOP else area.bottom
+    return top <= line < bottom and left <= along < right
+
+
+def tablet_entry_point(
+    segment: EdgeSegment,
+    tablet: tuple[float, float, float, float],
+    pc_x: float,
+    pc_y: float,
+    tablet_w: int,
+    tablet_h: int,
+) -> tuple[float, float]:
+    """PC 压线点 → 平板入口点（1:1 几何）。
+
+    画布按真实像素摆放平板，因此鼠标从哪一点穿过去，就落在平板对应的那一点。
+    不再把整段 PC 边归一化到整条平板边；平板跨在两块显示器之间时，这样才
+    不会发生落点跳变。
+    """
+    left, top, _right, _bottom = tablet
+    max_x = float(max(tablet_w - 1, 0))
+    max_y = float(max(tablet_h - 1, 0))
+    if segment.edge is Edge.LEFT:
+        return (max_x, min(max(pc_y - top, 0.0), max_y))
+    if segment.edge is Edge.RIGHT:
+        return (0.0, min(max(pc_y - top, 0.0), max_y))
+    x = min(max(pc_x - left, 0.0), max_x)
+    if segment.edge is Edge.TOP:
+        return (x, max_y)
+    return (x, 0.0)
+
+
+def tablet_exit_point(
+    segment: EdgeSegment,
+    monitor: MonitorInfo,
+    tablet: tuple[float, float, float, float],
+    tablet_along: float,
+    offset_px: int,
+) -> tuple[int, int]:
+    """平板入口边上的点 → PC 落点（1:1 几何，已夹到显示器与段范围内）。"""
+    area = monitor.rect
+    left, top, _right, _bottom = tablet
+    margin = max(1, int(offset_px))
+    if segment.edge.is_vertical:
+        lo = max(area.top, segment.span_start)
+        hi = min(area.bottom, segment.span_end)
+        if hi <= lo:
+            lo, hi = area.top, area.bottom
+        y = int(round(top + tablet_along))
+        y = min(max(y, lo), max(lo, hi - 1))
+        x = area.left + margin - 1 if segment.edge is Edge.LEFT else area.right - margin
+        x = min(max(x, area.left), area.right - 1)
+        return (int(x), int(y))
+    lo = max(area.left, segment.span_start)
+    hi = min(area.right, segment.span_end)
+    if hi <= lo:
+        lo, hi = area.left, area.right
+    x = int(round(left + tablet_along))
+    x = min(max(x, lo), max(lo, hi - 1))
+    y = area.top + margin - 1 if segment.edge is Edge.TOP else area.bottom - margin
+    y = min(max(y, area.top), area.bottom - 1)
+    return (int(x), int(y))

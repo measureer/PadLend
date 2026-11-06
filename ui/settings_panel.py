@@ -1,10 +1,9 @@
 """右侧设置面板（设计文档 6.10.1）。
 
-分组：平板位置 / 手感 / 键盘 / 快捷键 / 杂项。
-- 摆位控件变化 → ``placementChanged(Placement)``（只做画布预览，不落盘）。
+分组：手感 / 键盘 / 快捷键 / 杂项。
 - 保存 → 写回 ``Config`` → ``Config.validate()`` → ``Config.save()``；
   有 issue 时标红并显示中文问题列表，不发 ``configChanged``。
-- 吸附边下拉的数据源是 ``DesktopMap.exterior_segments()``（真实外轮廓边段）。
+- 平板摆位不在设置页改：布局页拖动平板、点「保存布局」后写入配置。
 """
 
 from __future__ import annotations
@@ -31,26 +30,12 @@ from PySide6.QtWidgets import (
 )
 
 import constants as C
-from core.geometry import Align, Edge, EdgeSegment, Placement
 from ui.style import repolish, set_invalid
 
 if TYPE_CHECKING:
     from config import Config
 
 log = logging.getLogger("ui.settings_panel")
-
-EDGE_LABELS: dict[Edge, str] = {
-    Edge.LEFT: "左侧",
-    Edge.RIGHT: "右侧",
-    Edge.TOP: "上方",
-    Edge.BOTTOM: "下方",
-}
-
-ALIGN_LABELS: list[tuple[str, str]] = [
-    ("等比", Align.PROPORTIONAL.value),
-    ("居中", Align.CENTER.value),
-    ("1:1", Align.ONE_TO_ONE.value),
-]
 
 
 LAYOUTS: list[str] = ["us", "uk", "de", "fr", "es", "ru", "ja"]
@@ -127,15 +112,13 @@ class SliderRow(QWidget):
 
 
 class SettingsPanel(QWidget):
-    """主窗右栏：摆位/手感/键盘/快捷键/杂项 + 保存。"""
+    """主窗右栏：手感/键盘/快捷键/杂项 + 保存。"""
 
-    placementChanged = Signal(object)
     configChanged = Signal(object)
 
     def __init__(
         self,
         config: Config,
-        desktop: object,
         *,
         config_path: Path | None = None,
         parent: QWidget | None = None,
@@ -144,28 +127,25 @@ class SettingsPanel(QWidget):
         self.setObjectName("settingsPanel")
         self.setMinimumWidth(300)
         self._config = config
-        self._desktop = desktop
         self._config_path = Path(config_path) if config_path is not None else C.config_path()
-        self._segments: list[EdgeSegment] = []
         self._loading = False
         self._dirty = False
         self._field_widgets: dict[str, QWidget] = {}
 
         self._build()
         self._connect()
-        self.refresh_segments()
         self.load_from_config()
 
     # ------------------------------------------------------------------ 构建
     def _build(self) -> None:
         self.title_label = QLabel("设置", self)
         self.title_label.setObjectName("sectionTitle")
-        hint = QLabel("拖动画布可改摆位 · Ctrl+, 聚焦此处", self)
+        hint = QLabel("Ctrl+, 聚焦此处", self)
         hint.setObjectName("hintText")
         hint.setWordWrap(True)
 
         # 设置页很宽：左右两列等分铺开，避免所有控件挤在左侧、右侧大片留白。
-        # 左：平板位置 / 键盘    右：手感 / 快捷键    底：杂项（跨两列）
+        # 左：键盘    右：手感 / 快捷键    底：杂项（跨两列）
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 8, 0)
@@ -173,7 +153,6 @@ class SettingsPanel(QWidget):
 
         left = QVBoxLayout()
         left.setSpacing(12)
-        left.addWidget(self._build_placement_group())
         left.addWidget(self._build_keyboard_group())
         left.addStretch(1)
 
@@ -270,37 +249,6 @@ class SettingsPanel(QWidget):
         layout.addWidget(check)
         layout.addWidget(self._hint(hint, 24))
         return container
-
-    def _build_placement_group(self) -> QGroupBox:
-        box, layout = self._make_group("📍 平板位置")
-
-        self.edge_combo = _NoWheelComboBox(box)
-        self.edge_combo.setToolTip("可吸附的虚拟桌面外轮廓边段")
-        layout.addWidget(
-            self._labeled_row(
-                "吸附边",
-                self.edge_combo,
-                "平板放在电脑屏幕的哪一侧：鼠标推到这条边就会穿进平板。"
-                "平板在电脑下面就选「下方」；下拉里只列真正与桌面外轮廓相接的边段。",
-            )
-        )
-
-        self.align_combo = _NoWheelComboBox(box)
-        for text, value in ALIGN_LABELS:
-            self.align_combo.addItem(text, value)
-        layout.addWidget(
-            self._labeled_row(
-                "对齐",
-                self.align_combo,
-                "平板影幕和 PC 屏幕大小不一样时，入口/落点沿边怎么摊："
-                "「等比」把 PC 这条边整体映射到平板整条边（两端都走得到），"
-                "「居中」只映射中间一段，「1:1」按像素一一对应。一般用「等比」。",
-            )
-        )
-
-        self._field_widgets["placement.edge"] = self.edge_combo
-        self._field_widgets["placement.align"] = self.align_combo
-        return box
 
     def _build_motion_group(self) -> QGroupBox:
         box, layout = self._make_group("🖱 手感")
@@ -467,8 +415,6 @@ class SettingsPanel(QWidget):
         return box
 
     def _connect(self) -> None:
-        self.edge_combo.currentIndexChanged.connect(self._on_control_changed)
-        self.align_combo.currentIndexChanged.connect(self._on_control_changed)
         for row in (
             self.gain_row,
             self.arm_row,
@@ -485,40 +431,10 @@ class SettingsPanel(QWidget):
         self.save_button.clicked.connect(self.save)
 
     # ------------------------------------------------------------------ 数据
-    def refresh_segments(self) -> None:
-        """重新读取 ``desktop.exterior_segments()`` 并尽量保住当前选择。"""
-        previous = self.edge_combo.currentData() if self.edge_combo.count() else None
-        self._segments = list(self._query_segments())
-        self._loading = True
-        try:
-            self.edge_combo.clear()
-            if not self._segments:
-                self.edge_combo.addItem("（未检测到可用外轮廓）", None)
-                self.edge_combo.setEnabled(False)
-            else:
-                self.edge_combo.setEnabled(True)
-                for segment in self._segments:
-                    self.edge_combo.addItem(self.segment_label(segment), segment)
-                index = self._index_of(previous)
-                if index >= 0:
-                    self.edge_combo.setCurrentIndex(index)
-        finally:
-            self._loading = False
-        self._emit_placement()
-
-    def segment_label(self, segment: EdgeSegment) -> str:
-        edge = EDGE_LABELS.get(segment.edge, str(segment.edge))
-        return f"{self._monitor_name(segment.monitor_handle)} · {edge} · {segment.length}px"
-
-    def current_placement(self) -> Placement | None:
-        """当前控件组合出的 ``Placement``（无可用边段时 None）。"""
-        return self._build_placement()
-
     def load_from_config(self) -> None:
-        """把 ``Config`` 的值灌进控件（不触发 ``placementChanged``）。"""
+        """把 ``Config`` 的值灌进控件。"""
         self._loading = True
         try:
-            self._fill_placement()
             self._fill_motion()
             self._fill_keyboard()
             self._fill_hotkeys()
@@ -554,76 +470,8 @@ class SettingsPanel(QWidget):
         self.save_button.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     # ------------------------------------------------------------------ 内部
-    def _query_segments(self) -> tuple[EdgeSegment, ...]:
-        getter = getattr(self._desktop, "exterior_segments", None)
-        if not callable(getter):
-            log.warning("desktop has no exterior_segments(); placement disabled")
-            return ()
-        try:
-            return tuple(getter())
-        except Exception as exc:  # 真实 DesktopMap 可能在枚举 Win32 时失败
-            log.warning("desktop.exterior_segments failed: %r", exc)
-            return ()
-
-    def _index_of(self, segment: object) -> int:
-        if not isinstance(segment, EdgeSegment):
-            return -1
-        try:
-            return self._segments.index(segment)
-        except ValueError:
-            return -1
-
-    def _monitor_name(self, handle: int) -> str:
-        for monitor in getattr(self._desktop, "monitors", ()) or ():
-            if getattr(monitor, "handle", None) != handle:
-                continue
-            name = getattr(monitor, "name", "") or getattr(monitor, "device", "")
-            return str(name) or f"#{handle}"
-        return f"#{handle}"
-
-    def _monitor_device(self, handle: int) -> str:
-        for monitor in getattr(self._desktop, "monitors", ()) or ():
-            if getattr(monitor, "handle", None) == handle:
-                return str(getattr(monitor, "device", ""))
-        return ""
-
-    def _build_placement(self) -> Placement | None:
-        segment = self.edge_combo.currentData()
-        if not isinstance(segment, EdgeSegment):
-            return None
-        align_text = str(self.align_combo.currentData() or Align.PROPORTIONAL.value)
-        # 偏移与角优先不再有设置项：偏移由「布局」页拖动平板决定，角优先由
-        # 拖动时按 Shift 循环（默认自动）。这里沿用配置里已有的值，不要覆盖。
-        stored = self._config.placement
-        corner_text = str(stored.corner_priority or "")
-        try:
-            return Placement(
-                segment=segment,
-                offset=float(stored.offset),
-                align=Align(align_text),
-                corner_priority=Edge(corner_text) if corner_text else None,
-            )
-        except ValueError as exc:
-            log.warning("placement invalid from widgets: %r", exc)
-            return None
-
     def _collect(self) -> None:
         cfg = self._config
-        placement = self._build_placement()
-        segment = self.edge_combo.currentData()
-        if placement is not None and isinstance(segment, EdgeSegment):
-            cfg.placement.monitor = self._monitor_device(segment.monitor_handle)
-            cfg.placement.edge = segment.edge.value
-            cfg.placement.span_start = segment.span_start
-            cfg.placement.span_end = segment.span_end
-            cfg.placement.offset = placement.offset
-            cfg.placement.align = placement.align.value
-            cfg.placement.corner_priority = (
-                placement.corner_priority.value
-                if placement.corner_priority is not None
-                else ""
-            )
-
         motion = cfg.motion
         motion.gain = round(self.gain_slider.value() / 100.0, 2)
         motion.report_hz = int(self.hz_combo.currentData() or C.DEFAULT_REPORT_HZ)
@@ -647,32 +495,6 @@ class SettingsPanel(QWidget):
     @staticmethod
     def _sequence_text(edit: QKeySequenceEdit) -> str:
         return edit.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
-
-    def _fill_placement(self) -> None:
-        cfg = self._config.placement
-        index = self._find_segment_index(cfg.monitor, cfg.edge)
-        if index >= 0:
-            self.edge_combo.setCurrentIndex(index)
-        self._select_data(self.align_combo, cfg.align)
-
-    def _find_segment_index(self, monitor: str, edge: str) -> int:
-        if not self._segments:
-            return -1
-        candidates = [
-            idx
-            for idx, segment in enumerate(self._segments)
-            if segment.edge.value == edge
-            and (not monitor or self._monitor_device(segment.monitor_handle) == monitor)
-        ]
-        if not candidates:
-            candidates = [
-                idx for idx, segment in enumerate(self._segments) if segment.edge.value == edge
-            ]
-        if not candidates:
-            return -1
-        # 错位显示器会把同一条边切成多段（例如右侧只剩顶部 132px 的外轮廓）；
-        # 默认摆位应选最长段，而不是枚举顺序里的第一段。
-        return max(candidates, key=lambda idx: self._segments[idx].length)
 
     def _fill_motion(self) -> None:
         cfg = self._config.motion
@@ -715,14 +537,6 @@ class SettingsPanel(QWidget):
         if self._loading:
             return
         self._dirty = True
-        self._emit_placement()
-
-    def _emit_placement(self) -> None:
-        if self._loading:
-            return
-        placement = self._build_placement()
-        if placement is not None:
-            self.placementChanged.emit(placement)
 
     def _mark_invalid(self, problems: list[str]) -> None:
         for widget in self._field_widgets.values():

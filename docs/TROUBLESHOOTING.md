@@ -155,6 +155,7 @@ adb shell dumpsys input | grep -B1 -A3 "Classes: CURSOR"
 
 ### 每次进入位置都偏
 
+- 在「布局」页确认平板位置后点「保存布局」；只拖动不保存不会改变实际摆位。
 - 检查 `placement` 的边/offset 是否与实际吸附段一致；
 - 混合 DPI 屏：确认进程为 Per-Monitor V2（程序已设置），否则几何会按逻辑像素计算。
 

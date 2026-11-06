@@ -38,7 +38,16 @@ from typing import TYPE_CHECKING, Any
 import constants as C
 from core.errors import ErrorCode, PadLendError, wrap_unexpected
 from core.events import KeyEvent, RawDelta
-from core.geometry import Align, Edge, Placement, Rect
+from core.geometry import (
+    Align,
+    Edge,
+    Placement,
+    Rect,
+    segment_contacts_tablet,
+    tablet_entry_point,
+    tablet_exit_point,
+    tablet_rect,
+)
 from core.logsetup import log_event
 from core.metrics import Metrics
 from core.state import State, can_transition
@@ -175,6 +184,10 @@ class Router:
         # ARMING
         self._arm_deadline = 0.0
         self._arm_accum = 0.0
+        # 本次接管实际压住的那条段：平板可能同时贴着多块显示器，
+        # 入口/出口/锁定条都以它为准，不再改写用户的 placement。
+        self._arm_segment: Any | None = None
+        self._arm_monitor: Any | None = None
 
         # CAPTURED / RETURNING
         self._entry_edge: Edge | None = None
@@ -447,6 +460,8 @@ class Router:
         """更新平板摆位；CAPTURED 期间调用只影响下一次接管。"""
         with self._lock:
             self._placement = placement
+            self._arm_segment = None
+            self._arm_monitor = None
         log.info(
             "router.placement edge=%s span=%s..%s offset=%.3f",
             placement.segment.edge.value,
@@ -473,7 +488,14 @@ class Router:
                 if self._placement is None:
                     log.warning("router.manual.no_placement")
                     return
+                placement = self._placement
+                monitor = self._monitor_for_handle(placement.segment.monitor_handle)
+                if monitor is None:
+                    log.warning("router.manual.no_monitor")
+                    return
                 self._manual = True
+                self._arm_segment = placement.segment
+                self._arm_monitor = monitor
                 self._enter_captured_locked("manual")
         except PadLendError as exc:
             log.warning("router.manual_failed code=%s detail=%s", exc.code.value, exc.detail)
@@ -648,44 +670,72 @@ class Router:
                 placement.segment.edge.value,
             )
             return
-        chosen = self._resolve_corner_locked(segments, (int(ev.dx), int(ev.dy)))
-        if chosen is None or chosen.edge is not placement.segment.edge:
+        try:
+            estimator = self._ensure_estimator_locked()
+        except PadLendError as exc:
+            log.debug("router.arm_skip reason=no_device code=%s", exc.code.value)
+            return
+        anchor = self._monitor_for_handle(placement.segment.monitor_handle)
+        if anchor is None:
             log.debug(
-                "router.arm_skip reason=edge_mismatch x=%d y=%d want=%s got=%s",
+                "router.arm_skip reason=no_monitor handle=%s",
+                placement.segment.monitor_handle,
+            )
+            return
+        tablet = tablet_rect(
+            placement.segment,
+            anchor,
+            placement.offset,
+            estimator.width,
+            estimator.height,
+        )
+        # 平板只可能贴在它真实占据的那一小段边上。先把“鼠标压线点其实碰不到
+        # 平板”的同朝向段全部剔除，再做角落裁决；否则同一块显示器上整条边
+        # 都能穿，用户从远离平板的位置也会被吸进去。
+        # 注意每个候选段自己的朝向决定“沿边坐标”是 x 还是 y：配置贴在底边时，
+        # 角落里的左边候选必须用 y 做接触判定，否则拐角永远进不去。
+        contacts: list[Any] = []
+        for segment in segments:
+            monitor = self._monitor_for_handle(segment.monitor_handle)
+            if monitor is None:
+                continue
+            along = y if segment.edge.is_vertical else x
+            if segment_contacts_tablet(segment, monitor, tablet, along):
+                contacts.append(segment)
+        if not contacts:
+            log.debug(
+                "router.arm_skip reason=not_touching x=%d y=%d edge=%s",
                 x,
                 y,
                 placement.segment.edge.value,
-                chosen.edge.value if chosen is not None else "none",
             )
             return
-        # 同一朝向的另一块显示器边缘（例如主屏底部而不是配置里的副屏底部）
-        # 也当成同一条边：平板只有一块，用户不会记得自己上次摆在哪块屏。
-        if self._segment_differs(chosen, placement.segment):
-            self._adopt_segment_locked(chosen, placement)
-            placement = self._placement
-            assert placement is not None
+        chosen = self._resolve_corner_locked(tuple(contacts), (int(ev.dx), int(ev.dy)))
+        if chosen is None:
+            return
         nx, ny = chosen.edge.outward_normal()
         if int(ev.dx) * nx + int(ev.dy) * ny <= 0:
             return
-        along = y if chosen.edge.is_vertical else x
-        if not placement.segment.contains_along(along):
-            log.debug(
-                "router.arm_skip reason=outside_span along=%d span=%d..%d",
-                along,
-                placement.segment.span_start,
-                placement.segment.span_end,
-            )
+        monitor = self._monitor_for_handle(chosen.monitor_handle)
+        if monitor is None:
             return
+        self._arm_segment = chosen
+        self._arm_monitor = monitor
         now = self._clock()
         self._arm_deadline = now + max(0, int(self._cfg.motion.arm_window_ms)) / 1000.0
         self._arm_accum = 0.0
         self._manual = False
         if self._change_state(State.ARMING, "arm"):
+            along = y if chosen.edge.is_vertical else x
             log.debug(
-                "router.arm edge=%s along=%d window_ms=%d",
+                "router.arm edge=%s along=%d window_ms=%d tablet_x=%d..%d tablet_y=%d..%d",
                 chosen.edge.value,
                 along,
                 self._cfg.motion.arm_window_ms,
+                tablet[0],
+                tablet[2],
+                tablet[1],
+                tablet[3],
             )
 
     @staticmethod
@@ -696,24 +746,10 @@ class Router:
             or int(getattr(left, "span_end", -1)) != int(getattr(right, "span_end", -2))
         )
 
-    def _adopt_segment_locked(self, segment: Any, old: Placement) -> None:
-        self._placement = Placement(
-            segment=segment,
-            offset=old.offset,
-            align=old.align,
-            corner_priority=old.corner_priority,
-        )
-        log_event(
-            log,
-            "router.placement_adopt",
-            edge=str(getattr(segment, "edge", "")),
-            span_start=int(getattr(segment, "span_start", 0)),
-            span_end=int(getattr(segment, "span_end", 0)),
-        )
-
     def _update_arm_locked(self, ev: RawDelta) -> None:
         placement = self._placement
-        if placement is None:
+        active = self._arm_segment
+        if placement is None or active is None:
             self._arm_fail_locked("placement_lost")
             return
         now = self._clock()
@@ -728,11 +764,28 @@ class Router:
             return
         x, y = self._pc_cursor or self._default_cursor()
         segments = self._segments_at(x, y)
-        edge = placement.segment.edge
-        if not any(seg.edge is edge for seg in segments):
+        monitor = self._monitor_for_handle(active.monitor_handle)
+        estimator = self._estimator
+        anchor = self._monitor_for_handle(placement.segment.monitor_handle)
+        still_touching = False
+        if monitor is not None and estimator is not None and anchor is not None:
+            tablet = tablet_rect(
+                placement.segment,
+                anchor,
+                placement.offset,
+                estimator.width,
+                estimator.height,
+            )
+            along = y if active.edge.is_vertical else x
+            still_touching = any(
+                not self._segment_differs(segment, active)
+                and segment_contacts_tablet(segment, monitor, tablet, along)
+                for segment in segments
+            )
+        if not still_touching:
             self._arm_fail_locked("left_edge")
             return
-        nx, ny = edge.outward_normal()
+        nx, ny = active.edge.outward_normal()
         if int(ev.dx) * nx + int(ev.dy) * ny < 0:
             self._arm_fail_locked("reverse")
             return
@@ -749,7 +802,9 @@ class Router:
             accum=round(self._arm_accum, 1),
         )
         self._arm_accum = 0.0
-        self._change_state(State.IDLE, f"arm:{reason}")
+        self._arm_segment = None
+        self._arm_monitor = None
+        self._change_state(State.IDLE, "arm:" + reason)
 
     def _segments_at(self, x: int, y: int) -> tuple[Any, ...]:
         band = max(0, int(self._cfg.motion.edge_band_px))
@@ -871,12 +926,36 @@ class Router:
         placement = self._placement
         if placement is None:
             raise PadLendError(ErrorCode.PLACEMENT_INVALID, "未设置平板摆位")
+        segment = self._arm_segment or placement.segment
+        anchor = self._monitor_for_handle(placement.segment.monitor_handle)
+        monitor = self._arm_monitor or self._monitor_for_handle(segment.monitor_handle)
+        if anchor is None or monitor is None:
+            raise PadLendError(ErrorCode.PLACEMENT_INVALID, "摆位引用的显示器已不存在")
         estimator = self._ensure_estimator_locked()
+        tablet = tablet_rect(
+            placement.segment,
+            anchor,
+            placement.offset,
+            estimator.width,
+            estimator.height,
+        )
         x, y = self._pc_cursor or self._default_cursor()
-        along = y if placement.segment.edge.is_vertical else x
-        entry = self._entry_point_locked(placement, along, estimator.width, estimator.height)
+        if reason == "manual":
+            # 手动接管没有“从哪一点压线”可言：直接落在入口边中点。
+            if segment.edge.is_vertical:
+                x = int(round((tablet[0] + tablet[2]) / 2.0))
+            else:
+                y = int(round((tablet[1] + tablet[3]) / 2.0))
+        entry = tablet_entry_point(
+            segment,
+            tablet,
+            float(x),
+            float(y),
+            estimator.width,
+            estimator.height,
+        )
         reports = self._warp_to_entry(estimator, entry[0], entry[1])
-        clip = self._clip_rect(placement)
+        clip = self._clip_rect(segment, monitor, tablet)
         try:
             self._mask.show(clip)
         except Exception as exc:
@@ -885,7 +964,7 @@ class Router:
         if not self._change_state(State.CAPTURED, reason):
             self._release_mask("capture_transition_failed")
             return
-        self._entry_edge = placement.segment.edge.opposite
+        self._entry_edge = segment.edge.opposite
         self._overflow = 0.0
         self._neutral_until_release = self._buttons != 0
         self._wheel_accum = 0
@@ -900,7 +979,7 @@ class Router:
         log_event(
             log,
             C.EVENT_CAP_START,
-            edge=placement.segment.edge.value,
+            edge=segment.edge.value,
             manual=reason == "manual",
             reports=len(reports),
             pin=len(pin),
@@ -908,44 +987,24 @@ class Router:
             buttons=f"0x{self._buttons:02x}",
         )
 
-    def _entry_point_locked(
+    def _clip_rect(
         self,
-        placement: Placement,
-        pc_along: int,
-        tablet_w: int,
-        tablet_h: int,
-    ) -> tuple[float, float]:
-        entry = getattr(self._desktop, "entry_point", None)
-        if not callable(entry):
-            raise PadLendError(ErrorCode.PLACEMENT_INVALID, "desktop 缺少 entry_point()")
-        try:
-            point = entry(placement, int(pc_along), int(tablet_w), int(tablet_h))
-        except PadLendError:
-            raise
-        except Exception as exc:
-            raise wrap_unexpected(exc, detail="desktop.entry_point") from exc
-        try:
-            return float(point[0]), float(point[1])
-        except (TypeError, ValueError, IndexError) as exc:
-            raise wrap_unexpected(exc, detail="desktop.entry_point 返回值") from exc
-
-    def _clip_rect(self, placement: Placement) -> Rect | None:
-        """边缘 1px 条（6.6）；返回 ``None`` 时 mask 仍显示但不锁光标。"""
-        segment = placement.segment
+        segment: Any,
+        monitor: Any,
+        tablet: tuple[float, float, float, float],
+    ) -> Rect | None:
+        """边缘 1px 条（6.6）；只覆盖平板真正贴着的那一段。"""
         x, y = self._pc_cursor if self._pc_cursor is not None else (0, 0)
         along = y if segment.edge.is_vertical else x
-        fallback = self._monitor_for_handle(segment.monitor_handle)
-        if fallback is None:
-            return None
         edge = segment.edge
         expected_line = (
-            fallback.rect.right if edge is Edge.RIGHT
-            else fallback.rect.left if edge is Edge.LEFT
-            else fallback.rect.top if edge is Edge.TOP
-            else fallback.rect.bottom
+            monitor.rect.right if edge is Edge.RIGHT
+            else monitor.rect.left if edge is Edge.LEFT
+            else monitor.rect.top if edge is Edge.TOP
+            else monitor.rect.bottom
         )
-        monitor = None
-        for candidate in self._desktop.monitors:
+        target = monitor
+        for candidate in self._monitors():
             rect = candidate.rect
             candidate_line = (
                 rect.right if edge is Edge.RIGHT
@@ -956,29 +1015,26 @@ class Router:
             if candidate_line != expected_line:
                 continue
             if edge.is_vertical and rect.top <= along < rect.bottom:
-                monitor = candidate
+                target = candidate
                 break
             if not edge.is_vertical and rect.left <= along < rect.right:
-                monitor = candidate
+                target = candidate
                 break
-        # 合并边只保留首台显示器 handle，需按实际穿越位置选择锁定条所在屏。
-        if monitor is None:
-            monitor = fallback
-        rect = monitor.rect
+        rect = target.rect
         if segment.edge.is_vertical:
             left = rect.right - 1 if segment.edge is Edge.RIGHT else rect.left
             if left < rect.left or left >= rect.right:
                 return None
-            top = max(rect.top, segment.span_start)
-            bottom = min(rect.bottom, segment.span_end)
+            top = max(rect.top, segment.span_start, int(tablet[1]))
+            bottom = min(rect.bottom, segment.span_end, int(tablet[3]))
             if bottom <= top:
                 return None
             return Rect(left, top, left + 1, bottom)
         top = rect.bottom - 1 if segment.edge is Edge.BOTTOM else rect.top
         if top < rect.top or top >= rect.bottom:
             return None
-        left = max(rect.left, segment.span_start)
-        right = min(rect.right, segment.span_end)
+        left = max(rect.left, segment.span_start, int(tablet[0]))
+        right = min(rect.right, segment.span_end, int(tablet[2]))
         if right <= left:
             return None
         return Rect(left, top, right, top + 1)
@@ -1040,13 +1096,24 @@ class Router:
         exit_position: tuple[int, int] | None = None
         if estimator is not None and placement is not None:
             try:
-                along = estimator.y if placement.segment.edge.is_vertical else estimator.x
-                exit_position = self._exit_position_locked(
-                    placement,
-                    along,
-                    estimator.width,
-                    estimator.height,
-                )
+                segment = self._arm_segment or placement.segment
+                anchor = self._monitor_for_handle(placement.segment.monitor_handle)
+                monitor = self._arm_monitor or self._monitor_for_handle(segment.monitor_handle)
+                if anchor is not None and monitor is not None:
+                    tablet = tablet_rect(
+                        placement.segment,
+                        anchor,
+                        placement.offset,
+                        estimator.width,
+                        estimator.height,
+                    )
+                    along = estimator.y if segment.edge.is_vertical else estimator.x
+                    exit_position = self._exit_position_locked(
+                        segment,
+                        monitor,
+                        tablet,
+                        along,
+                    )
             except Exception as exc:
                 log.warning("router.exit_position_failed err=%r", exc)
         try:
@@ -1075,21 +1142,18 @@ class Router:
 
     def _exit_position_locked(
         self,
-        placement: Placement,
+        segment: Any,
+        monitor: Any,
+        tablet: tuple[float, float, float, float],
         tablet_along: float,
-        tablet_w: int,
-        tablet_h: int,
     ) -> tuple[int, int]:
-        exit_fn = getattr(self._desktop, "exit_position", None)
-        if not callable(exit_fn):
-            raise PadLendError(ErrorCode.PLACEMENT_INVALID, "desktop 缺少 exit_position()")
-        try:
-            position = exit_fn(placement, float(tablet_along), int(tablet_w), int(tablet_h))
-        except PadLendError:
-            raise
-        except Exception as exc:
-            raise wrap_unexpected(exc, detail="desktop.exit_position") from exc
-        return int(position[0]), int(position[1])
+        return tablet_exit_point(
+            segment,
+            monitor,
+            tablet,
+            float(tablet_along),
+            int(C.ENTRY_MARGIN_PX),
+        )
 
     def _set_pc_cursor(self, position: tuple[int, int]) -> None:
         x, y = int(position[0]), int(position[1])
@@ -1923,6 +1987,9 @@ class Router:
             self._state = dst
             if dst is not State.CAPTURED:
                 self._arm_accum = 0.0
+            if dst is State.IDLE:
+                self._arm_segment = None
+                self._arm_monitor = None
             log.debug("router.state %s->%s reason=%s", old.value, dst.value, reason)
             callback = self.on_state_changed
             if callable(callback):

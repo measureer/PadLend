@@ -152,7 +152,21 @@ CursorEstimator(w,h,xscale): reset(x=None,y=None) / feed(dpx,dpy,gain,clamp=127)
 - 杂项改为两列，避免宽屏右侧空白；测试 `test_settings_hints_and_entry_guard`
   断言说明存在、进入保护值能保存并写回 Config。
 
-## 11. 任务板
+## 11. 1.0.2 布局摆位与边缘穿越
+
+- 设置页删除「平板位置 / 吸附边 / 对齐」分组，`SettingsPanel` 不再接收 `desktop`；
+  摆位只由「桌面布局」页决定，避免设置里的边与实际加载段不一致。
+- 布局页拖动、松手、右键对齐/移除都只更新画布预览和 `placementEdited/Committed`
+  信号；点「保存布局」才调用 `_apply_placement_to_config()` 写配置、`Router.set_placement()`
+  立即生效。有未保存改动时标题旁显示提示。
+- `core/router.py` 不再把同朝向的其它显示器边缘 adopt 进来。进入前用平板矩形
+  （`core/geometry.tablet_rect`）检查压线点是否真的落在平板覆盖范围内，只允许从
+  实际接触的段进入；入口/出口按 1:1 映射。接触判定必须按候选段自己的朝向取沿边坐标
+  （竖直段用 y、水平段用 x），这是修复 DISPLAY1 左下角进不去的根因。
+- 「适应窗口」改名「显示全部」，行为不变；`fit_view()` 仍扩展 `sceneRect`
+  以容纳桌面包围盒之外的平板。
+
+## 12. 任务板
 
 每个实施者从 `team_task_list` 领取自己的任务，完成后 `team_task_update(action="complete")`
 并向 Lead 发送简报（完成项 / 测试命令与结果 / 未决风险）。写作用域见任务描述。
