@@ -22,6 +22,8 @@ LICENSE = "Apache-2.0"
 
 # 单实例互斥体（7.5）。Global\ 前缀保证跨用户会话唯一。
 SINGLE_INSTANCE_MUTEX = r"Global\PadLend.SingleInstance"
+# 第二实例用它通知首实例“把窗口拿到前台”（1.0.2）。
+SINGLE_INSTANCE_EVENT = r"Global\PadLend.Activate"
 
 # ---------------------------------------------------------------------------
 # 路径

@@ -126,7 +126,11 @@ def _force_utf8_console() -> None:
 
 
 def _wake_existing_instance() -> None:
-    """第二实例：把已有主窗还原并置前（7.5）。"""
+    """第二实例：把已有主窗还原并置前（7.5）。
+
+    这是没有命名事件时的兜底路径（旧版本首实例）：优先找标题**正好**是
+    ``PadLend`` 的窗口，避免误选设置/向导等标题里也含产品名的窗口。
+    """
     if sys.platform != "win32":
         return
     try:
@@ -134,7 +138,8 @@ def _wake_existing_instance() -> None:
     except (AttributeError, OSError):
         return
 
-    found: list[int] = []
+    exact: list[int] = []
+    fuzzy: list[int] = []
     enum_proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
     def _enum(hwnd: int, _lparam: int) -> bool:
@@ -143,20 +148,31 @@ def _wake_existing_instance() -> None:
             return True
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
-        if C.APP_NAME.lower() in buf.value.lower():
-            found.append(int(hwnd))
+        title = buf.value.strip()
+        if title.lower() == C.APP_NAME.lower():
+            exact.append(int(hwnd))
             return False
+        if C.APP_NAME.lower() in title.lower():
+            fuzzy.append(int(hwnd))
         return True
 
     try:
         user32.EnumWindows(enum_proc_type(_enum), 0)
     except Exception:  # noqa: BLE001 - 唤醒失败不应阻塞退出
         return
+    found = exact or fuzzy
     if not found:
         return
     hwnd = found[0]
-    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-    user32.SetForegroundWindow(hwnd)
+    try:
+        user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if not user32.SetForegroundWindow(hwnd):
+            switch = getattr(user32, "SwitchToThisWindow", None)
+            if callable(switch):
+                switch(hwnd, True)
+    except Exception:  # noqa: BLE001 - 置顶失败不应阻塞退出
+        return
 
 
 def _stale_cleanup(cfg: Config) -> None:
@@ -471,6 +487,14 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
     )
     window.show()
     window.center_on_screen()  # 每次启动都摆在屏幕正中间（0.3.11）
+    # 第二实例通过命名事件请求“显示窗口”；回调只发 Qt 信号，真正操作
+    # 窗口仍在 GUI 线程上做（1.0.2）。
+    try:
+        from win.single_instance import start_activation_watcher
+
+        start_activation_watcher(lambda: window.presentRequested.emit())
+    except Exception:  # noqa: BLE001 - 唤起监听失败不影响主流程
+        LOG.warning("单实例唤起监听启动失败", exc_info=True)
     # 先确认上次那台平板还在不在线，再决定设备列表里那行怎么写（0.3.13）。
     QTimer.singleShot(400, window.probe_last_device)
 
@@ -599,6 +623,10 @@ def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
     try:
         return int(app.exec())
     finally:
+        with contextlib.suppress(Exception):
+            from win.single_instance import stop_activation_watcher
+
+            stop_activation_watcher()
         _shutdown()
 
 
@@ -664,14 +692,33 @@ def _run(args: argparse.Namespace) -> int:
         return run_raw_debug()
 
     acquired = True
+    release_fn = None
     if not args.no_single_instance:
-        from win.single_instance import acquire, release
+        from win.single_instance import (
+            acquire,
+            create_activation_event,
+            release,
+            signal_running_instance,
+        )
 
+        release_fn = release
         acquired = acquire()
         if not acquired:
-            LOG.info("已有实例在运行，唤醒后退出")
-            _wake_existing_instance()
+            woke = False
+            try:
+                woke = signal_running_instance()
+            except Exception:  # noqa: BLE001 - 通知失败退回窗口查找
+                LOG.debug("发送单实例唤起事件失败", exc_info=True)
+            if woke:
+                LOG.info("已有实例在运行，已通知它显示窗口")
+            else:
+                LOG.info("已有实例在运行，按窗口标题唤起")
+                _wake_existing_instance()
             return 0
+        try:
+            create_activation_event()
+        except Exception:  # noqa: BLE001 - 没有事件仍可启动
+            LOG.warning("单实例唤起事件创建失败", exc_info=True)
 
     try:
         _stale_cleanup(cfg)
@@ -686,9 +733,9 @@ def _run(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
-        if acquired:
+        if release_fn is not None:
             with contextlib.suppress(Exception):
-                release()
+                release_fn()
 
 
 if __name__ == "__main__":

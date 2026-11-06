@@ -185,6 +185,18 @@ def test_window_shell_builds_offscreen(window: Any, qapp: QApplication) -> None:
     window.hide()
 
 
+def test_present_window_restores_hidden_window(window: Any, qapp: QApplication) -> None:
+    window.show()
+    qapp.processEvents()
+    window.hide()
+    qapp.processEvents()
+    assert window.isVisible() is False
+    window.presentRequested.emit()
+    qapp.processEvents()
+    assert window.isVisible() is True
+    window.hide()
+
+
 def test_window_survives_missing_canvas(
     qapp: QApplication, router: FakeRouter, config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

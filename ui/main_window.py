@@ -223,6 +223,8 @@ class MainWindow(QMainWindow):
     locatedBatchFinished = Signal(object)
     # 后台拿到某台无线设备的 MAC 后回到 GUI 线程（serial, mac）。
     macKnown = Signal(str, str)
+    # 第二实例通过命名事件请求显示窗口；由 main 的监听线程 emit。
+    presentRequested = Signal()
 
     def __init__(
         self,
@@ -277,6 +279,7 @@ class MainWindow(QMainWindow):
         self.locatedFinished.connect(self._on_located)
         self.locatedBatchFinished.connect(self._on_located_batch)
         self.macKnown.connect(self._on_mac_known)
+        self.presentRequested.connect(self.present_window)
         self._build_shortcuts()
         # 自动同步：接管时与每次复制都把文本写进平板剪贴板（0.3.14）。
         self._clipboard_timer = QTimer(self)
@@ -937,6 +940,26 @@ class MainWindow(QMainWindow):
             self.canvas.update()
         if hasattr(self, "tray"):
             self.tray.set_state(self._present_state(self._state))
+
+    def present_window(self) -> None:
+        """把窗口从隐藏/最小化恢复并置前（第二实例点图标时调用）。"""
+        if self._shutdown_done:
+            return
+        if not self.isVisible() or self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        if sys.platform == "win32":
+            try:
+                user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+                hwnd = int(self.winId())
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+            except Exception:  # noqa: BLE001 - 置前失败不影响显示
+                log.debug("present_window foreground failed", exc_info=True)
+        self.log_view.append_event("UI", "已有实例请求显示窗口")
 
     def toggle_window(self) -> None:
         if self.isVisible() and not self.isMinimized():

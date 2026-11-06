@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import json
 import sys
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -415,6 +416,25 @@ def test_already_running_detects_external_mutex():
     finally:
         kernel32.CloseHandle(handle)
     assert single_instance.already_running(name) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要 Windows 命名事件")
+def test_activation_event_wakes_watcher() -> None:
+    name = rf"Local\PadLendTest.{uuid.uuid4().hex}"
+    received = threading.Event()
+    try:
+        assert single_instance.create_activation_event(name) is True
+        assert single_instance.start_activation_watcher(received.set, name) is True
+        assert single_instance.signal_running_instance(name, timeout=1.0) is True
+        assert received.wait(2.0) is True
+    finally:
+        single_instance.stop_activation_watcher()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要 Windows 命名事件")
+def test_signal_missing_activation_event_returns_false() -> None:
+    name = rf"Local\PadLendMissing.{uuid.uuid4().hex}"
+    assert single_instance.signal_running_instance(name, timeout=0.15) is False
 
 
 def test_constants_used_by_geometry():
