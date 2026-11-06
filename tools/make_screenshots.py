@@ -67,6 +67,7 @@ class FakeRouter:
     def __init__(self) -> None:
         self.on_state_changed: Any = None
         self.on_metrics: Any = None
+        self.on_orientation_changed: Any = None
 
     def start(self) -> None:
         pass

@@ -667,6 +667,34 @@ class Adb:
                 cause=exc,
             ) from exc
 
+    def popen_shell_stream(self, command: str) -> subprocess.Popen[str]:
+        """长驻远端命令，逐行读取 stdout（朝向监听用）。
+
+        与 :meth:`popen_shell` 的区别是 stdout 走管道且合并 stderr；调用方
+        负责在结束时 ``terminate()`` 并 ``wait()``。设备掉线时进程会 EOF。
+        """
+        cmd = self._base_args() + ["shell", command]
+        LOG.debug("adb (stream): %s", command)
+        try:
+            return subprocess.Popen(  # noqa: S603 - 列表参数，无 shell
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=_run_env(),
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except OSError as exc:
+            raise PadLendError(
+                ErrorCode.SERVER_START_FAILED,
+                f"无法启动 adb 流式命令: {exc}",
+                cause=exc,
+            ) from exc
+
     def exec_out(self, *args: str, timeout: float = C.ADB_SHELL_TIMEOUT) -> bytes:
         """``adb exec-out``：二进制安全（screencap 用）。"""
         command = " ".join(args)

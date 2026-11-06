@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from fakes import (
     FakeClock,
@@ -786,6 +786,42 @@ def test_rotation_rebuilds_estimator() -> None:
         assert rig.router.estimator.width == 2560
         assert rig.router.estimator.height == 1600
         assert rig.router.estimator.position == (1279.5, 799.5)
+    finally:
+        rig.router.stop()
+
+
+def test_session_facts_callback_rebuilds_estimator_and_notifies() -> None:
+    """1.0.3：后台朝向监听报告的新事实要立刻生效，并通知 GUI 切换布局。"""
+    rig = make_rig()
+    rig.router.start()
+    seen: list[object] = []
+    rig.router.on_orientation_changed = seen.append
+    try:
+        assert rig.router.facts is not None
+        rotated = replace(rig.router.facts, width=2560, height=1600, orientation=1)
+        rig.session.publish_facts(rotated)
+
+        assert rig.router.facts == rotated
+        assert rig.router.estimator is not None
+        assert (rig.router.estimator.width, rig.router.estimator.height) == (2560, 1600)
+        assert seen == [rotated]
+    finally:
+        rig.router.stop()
+
+
+def test_orientation_callback_failure_does_not_break_router() -> None:
+    rig = make_rig()
+    rig.router.start()
+
+    def boom(_facts: object) -> None:
+        raise RuntimeError("gui gone")
+
+    rig.router.on_orientation_changed = boom
+    try:
+        assert rig.router.facts is not None
+        rotated = replace(rig.router.facts, width=2560, height=1600, orientation=1)
+        rig.session.publish_facts(rotated)
+        assert rig.router.facts == rotated
     finally:
         rig.router.stop()
 

@@ -561,13 +561,6 @@ class TabletItem(QGraphicsItem):
             return
         super().mouseReleaseEvent(event)
 
-    def mouseDoubleClickEvent(self, event: Any) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._owner is not None:
-            self._owner.toggle_tablet_orientation()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
-
     def contextMenuEvent(self, event: Any) -> None:
         if self._owner is not None:
             self._owner.show_tablet_menu(event.screenPos())

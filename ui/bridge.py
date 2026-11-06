@@ -20,6 +20,7 @@ log = logging.getLogger("ui.bridge")
 MetricSlot = Callable[[dict[str, Any]], None]
 StateSlot = Callable[[str, str, str], None]
 LogSlot = Callable[[str], None]
+OrientationSlot = Callable[[object], None]
 
 
 def state_value(value: object) -> str:
@@ -38,6 +39,10 @@ def _ignore_metrics(_payload: dict[str, Any]) -> None:
     """``detach`` 后的空实现。"""
 
 
+def _ignore_facts(_facts: object) -> None:
+    """``detach`` 后的空实现。"""
+
+
 class RouterBridge(QObject):
     """把 Router 的线程回调转成 Qt 信号。
 
@@ -45,14 +50,17 @@ class RouterBridge(QObject):
     - ``stateChanged(str old, str new, str reason)``
     - ``metricsChanged(dict)``
     - ``logLine(str)``
+    - ``orientationChanged(object)``：设备横竖屏事实变化
     """
 
     stateChanged = Signal(str, str, str)
     metricsChanged = Signal(dict)
     logLine = Signal(str)
+    orientationChanged = Signal(object)
 
     _STATE_CALLBACK: Final[str] = "on_state_changed"
     _METRICS_CALLBACK: Final[str] = "on_metrics"
+    _ORIENTATION_CALLBACK: Final[str] = "on_orientation_changed"
 
     def __init__(self, router: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -88,6 +96,7 @@ class RouterBridge(QObject):
         self._router = router
         self._install(self._STATE_CALLBACK, self._on_state_changed)
         self._install(self._METRICS_CALLBACK, self._on_metrics)
+        self._install(self._ORIENTATION_CALLBACK, self._on_orientation)
 
     def detach(self) -> None:
         """摘掉回调并恢复成空实现（Router 不会被裸 None 调用）。"""
@@ -96,6 +105,7 @@ class RouterBridge(QObject):
             return
         self._restore(router, self._STATE_CALLBACK, _ignore_state)
         self._restore(router, self._METRICS_CALLBACK, _ignore_metrics)
+        self._restore(router, self._ORIENTATION_CALLBACK, _ignore_facts)
 
     def _install(self, name: str, callback: Callable[..., None]) -> None:
         router = self._router
@@ -132,6 +142,11 @@ class RouterBridge(QObject):
         self._metrics = dict(payload)
         self._emit(self.metricsChanged, dict(payload))
 
+    def _on_orientation(self, facts: object) -> None:
+        if facts is None:
+            return
+        self._emit(self.orientationChanged, facts)
+
     # -- 其它生产者的日志 ------------------------------------------------
     def log_line(self, text: str) -> None:
         """供 UI/后台线程追加日志行（同样走信号，保证落到 GUI 线程）。"""
@@ -150,6 +165,7 @@ class RouterBridge(QObject):
         on_state: StateSlot | None = None,
         on_metrics: MetricSlot | None = None,
         on_log: LogSlot | None = None,
+        on_orientation: OrientationSlot | None = None,
     ) -> None:
         """以 ``QueuedConnection`` 把信号接到 GUI 线程的槽上（8.2 要求）。"""
         connection = Qt.ConnectionType.QueuedConnection
@@ -159,3 +175,5 @@ class RouterBridge(QObject):
             self.metricsChanged.connect(on_metrics, connection)
         if on_log is not None:
             self.logLine.connect(on_log, connection)
+        if on_orientation is not None:
+            self.orientationChanged.connect(on_orientation, connection)

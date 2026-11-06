@@ -332,7 +332,6 @@ def test_signals_exist(canvas: DesktopCanvas) -> None:
     for name in (
         "placementEdited",
         "placementCommitted",
-        "tabletOrientationToggled",
         "testCaptureRequested",
         "pointerMoved",
     ):
@@ -357,8 +356,8 @@ def test_pointer_moved_signal(canvas: DesktopCanvas) -> None:
     assert spy.at(0)[1] == pytest.approx(float(expected.y()))
 
 
-def test_double_click_toggles_orientation(canvas: DesktopCanvas) -> None:
-    spy = QSignalSpy(canvas.tabletOrientationToggled)
+def test_double_click_does_not_fake_orientation(canvas: DesktopCanvas) -> None:
+    """朝向只认真机事实；双击不应再把画布切到反方向。"""
     before = canvas.tablet_size
     center = canvas.mapFromScene(canvas.tablet_item.mapToScene(
         canvas.tablet_item.boundingRect().center()
@@ -366,9 +365,9 @@ def test_double_click_toggles_orientation(canvas: DesktopCanvas) -> None:
     QTest.mouseDClick(
         canvas.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, center
     )
-    assert spy.count() == 1
-    assert canvas.tablet_size == (before[1], before[0])
-    assert canvas.tablet_item.tablet_size == (before[1], before[0])
+    assert canvas.tablet_size == before
+    assert canvas.tablet_item.tablet_size == before
+    assert not hasattr(canvas, "tabletOrientationToggled")
 
 
 def test_set_tablet_size(canvas: DesktopCanvas) -> None:

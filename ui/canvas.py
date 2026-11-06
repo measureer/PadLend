@@ -46,7 +46,6 @@ class DesktopCanvas(QGraphicsView):
 
     placementEdited = Signal(object)  # 拖动过程中的实时 Placement
     placementCommitted = Signal(object)  # 预览 Placement（移除为 None；保存布局才落盘）
-    tabletOrientationToggled = Signal()  # 双击切换横竖
     testCaptureRequested = Signal()  # 右键"测试穿越"
     pointerMoved = Signal(float, float)  # 鼠标在虚拟桌面物理坐标中的位置
 
@@ -229,18 +228,6 @@ class DesktopCanvas(QGraphicsView):
         else:
             self._tablet_item.setVisible(False)
 
-        if self._auto_fit:
-            self.fit_view()
-
-    def toggle_tablet_orientation(self) -> None:
-        """横/竖屏切换（双击平板），同步当前摆位并发出信号。"""
-        width, height = self._tablet_size
-        self._tablet_size = (height, width)
-        self._tablet_item.set_size(*self._tablet_size)
-        current = self._placement or self._default_placement()
-        if current is not None:
-            self._apply_placement(current)
-        self.tabletOrientationToggled.emit()
         if self._auto_fit:
             self.fit_view()
 

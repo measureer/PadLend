@@ -27,6 +27,17 @@ CURRENT_VERSION = 1
 
 PLACEMENT_EDGES = ("left", "right", "top", "bottom")
 ALIGNS = ("proportional", "center", "one_to_one")
+LAYOUT_ORIENTATIONS = ("landscape", "portrait")
+
+PLACEMENT_FIELD_TYPES: dict[str, type] = {
+    "monitor": str,
+    "edge": str,
+    "span_start": int,
+    "span_end": int,
+    "offset": float,
+    "align": str,
+    "corner_priority": str,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +65,40 @@ class PlacementCfg:
     offset: float = 0.5
     align: str = "proportional"  # proportional | center | one_to_one
     corner_priority: str = "right"
+
+
+@dataclass
+class LayoutsCfg:
+    """每台设备、每个屏幕方向的摆位（1.0.3）。
+
+    ``devices`` 的键是设备身份（优先硬件序列号，见
+    ``tablet/session.py`` 的 ``DeviceFacts.hardware_serial``）；二级键只有
+    ``landscape`` / ``portrait``。旧配置文件没有这一段时为空，
+    程序继续使用全局 ``placement`` 作为回退。
+    """
+
+    devices: dict[str, dict[str, PlacementCfg]] = field(default_factory=dict)
+
+    def get(self, serial: str, orientation: str) -> PlacementCfg | None:
+        profiles = self.devices.get(normalize_layout_key(serial))
+        if not profiles:
+            return None
+        return profiles.get(str(orientation).strip().lower())
+
+    def set(self, serial: str, orientation: str, placement: PlacementCfg) -> None:
+        key = normalize_layout_key(serial)
+        bucket = str(orientation).strip().lower()
+        if not key or bucket not in LAYOUT_ORIENTATIONS:
+            return
+        self.devices.setdefault(key, {})[bucket] = placement
+
+    def drop(self, serial: str) -> None:
+        self.devices.pop(normalize_layout_key(serial), None)
+
+
+def normalize_layout_key(serial: str) -> str:
+    """设备身份归一化：去空白并忽略大小写（USB 序列号大小写不统一）。"""
+    return str(serial or "").strip().casefold()
 
 
 @dataclass
@@ -107,6 +152,8 @@ class MiscCfg:
 class Config:
     device: DeviceCfg = field(default_factory=DeviceCfg)
     placement: PlacementCfg = field(default_factory=PlacementCfg)
+    # 1.0.3：每台设备 × 屏幕方向的摆位；placement 仍是全局回退
+    layouts: LayoutsCfg = field(default_factory=LayoutsCfg)
     motion: MotionCfg = field(default_factory=MotionCfg)
     keyboard: KeyboardCfg = field(default_factory=KeyboardCfg)
     hotkeys: HotkeyCfg = field(default_factory=HotkeyCfg)
@@ -204,6 +251,7 @@ class Config:
             "version",
             "device",
             "placement",
+            "layouts",
             "motion",
             "keyboard",
             "hotkeys",
@@ -255,16 +303,9 @@ class Config:
         cfg.placement = _section(
             PlacementCfg,
             raw.get("placement"),
-            {
-                "monitor": str,
-                "edge": str,
-                "span_start": int,
-                "span_end": int,
-                "offset": float,
-                "align": str,
-                "corner_priority": str,
-            },
+            PLACEMENT_FIELD_TYPES,
         )
+        cfg.layouts = _parse_layouts(raw.get("layouts"), cfg)
         cfg.motion = _section(
             MotionCfg,
             raw.get("motion"),
@@ -315,7 +356,7 @@ class Config:
 
     def _repair(self) -> None:
         """把越界值夹回合法区间/回退默认，并记录 issue（6.9 校验规则）。"""
-        d, p, m, k = self.device, self.placement, self.motion, self.keyboard
+        d, m, k = self.device, self.motion, self.keyboard
 
         if not (1024 <= d.server_port <= 65535):
             self.add_issue(f"device.server_port={d.server_port} 越界，已恢复默认")
@@ -328,21 +369,15 @@ class Config:
         else:
             self.ui.theme = theme
 
-        if p.edge not in PLACEMENT_EDGES:
-            self.add_issue(f"placement.edge={p.edge!r} 非法，已回退 right")
-            p.edge = "right"
-        if p.align not in ALIGNS:
-            self.add_issue(f"placement.align={p.align!r} 非法，已回退 proportional")
-            p.align = "proportional"
-        if p.corner_priority not in ("", None) and p.corner_priority not in PLACEMENT_EDGES:
-            self.add_issue(f"placement.corner_priority={p.corner_priority!r} 非法，已回退 right")
-            p.corner_priority = "right"
-        if not (0.0 <= p.offset <= 1.0):
-            self.add_issue(f"placement.offset={p.offset} 越界，已夹紧到 [0,1]")
-            p.offset = min(max(p.offset, 0.0), 1.0)
-        if p.span_end <= p.span_start:
-            self.add_issue("placement.span_end 必须大于 span_start，已恢复默认")
-            p.span_start, p.span_end = 0, 1600
+        self._repair_placement(self.placement, "placement")
+        for serial, profiles in list(self.layouts.devices.items()):
+            if not profiles:
+                del self.layouts.devices[serial]
+                continue
+            for orientation, profile in profiles.items():
+                self._repair_placement(
+                    profile, f"layouts.devices.{serial}.{orientation}"
+                )
 
         if not (1 <= m.hid_clamp <= C.HID_CLAMP):
             self.add_issue(f"motion.hid_clamp={m.hid_clamp} 越界，已夹紧到 [1,127]")
@@ -386,23 +421,38 @@ class Config:
             # 0 是合法的运行值，但记录一次以免用户误以为没生效
             pass
 
+    def _repair_placement(self, p: PlacementCfg, prefix: str) -> None:
+        if p.edge not in PLACEMENT_EDGES:
+            self.add_issue(f"{prefix}.edge={p.edge!r} 非法，已回退 right")
+            p.edge = "right"
+        if p.align not in ALIGNS:
+            self.add_issue(f"{prefix}.align={p.align!r} 非法，已回退 proportional")
+            p.align = "proportional"
+        if p.corner_priority not in ("", None) and p.corner_priority not in PLACEMENT_EDGES:
+            self.add_issue(f"{prefix}.corner_priority={p.corner_priority!r} 非法，已回退 right")
+            p.corner_priority = "right"
+        if not (0.0 <= p.offset <= 1.0):
+            self.add_issue(f"{prefix}.offset={p.offset} 越界，已夹紧到 [0,1]")
+            p.offset = min(max(p.offset, 0.0), 1.0)
+        if p.span_end <= p.span_start:
+            self.add_issue(f"{prefix}.span_end 必须大于 span_start，已恢复默认")
+            p.span_start, p.span_end = 0, 1600
+
     def validate(self) -> list[str]:
         """8.3 契约：返回问题列表，空 = 合法。不修改对象。"""
         problems: list[str] = []
-        d, p, m, k = self.device, self.placement, self.motion, self.keyboard
+        d, m, k = self.device, self.motion, self.keyboard
 
         if not (1024 <= d.server_port <= 65535):
             problems.append("device.server_port 必须在 1024..65535")
-        if p.edge not in PLACEMENT_EDGES:
-            problems.append("placement.edge 必须是 left/right/top/bottom")
-        if p.align not in ALIGNS:
-            problems.append("placement.align 必须是 proportional/center/one_to_one")
-        if p.corner_priority not in ("", None) and p.corner_priority not in PLACEMENT_EDGES:
-            problems.append("placement.corner_priority 必须是合法边或空")
-        if not (0.0 <= p.offset <= 1.0):
-            problems.append("placement.offset 必须在 0.0..1.0")
-        if p.span_end <= p.span_start:
-            problems.append("placement.span_end 必须大于 span_start")
+        problems.extend(_placement_issues(self.placement, "placement"))
+        for serial, profiles in self.layouts.devices.items():
+            for orientation, profile in profiles.items():
+                problems.extend(
+                    _placement_issues(
+                        profile, f"layouts.devices.{serial}.{orientation}"
+                    )
+                )
         if not (1 <= m.hid_clamp <= C.HID_CLAMP):
             problems.append("motion.hid_clamp 必须在 1..127")
         if m.report_hz not in C.REPORT_HZ_CHOICES:
@@ -434,6 +484,61 @@ class Config:
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
+def _parse_layouts(raw: Any, cfg: Config) -> LayoutsCfg:
+    """解析 1.0.3 的嵌套布局表；坏条目逐条忽略，不影响其它设备。"""
+    layouts = LayoutsCfg()
+    if raw is None:
+        return layouts
+    if not isinstance(raw, dict):
+        cfg.add_issue("layouts 必须是映射，已忽略")
+        return layouts
+    unknown = sorted(set(raw) - {"devices"})
+    if unknown:
+        cfg.add_issue(f"layouts 未知配置项已忽略：{', '.join(unknown)}")
+    devices = raw.get("devices")
+    if devices is None:
+        return layouts
+    if not isinstance(devices, dict):
+        cfg.add_issue("layouts.devices 必须是映射，已忽略")
+        return layouts
+    for serial, profiles in devices.items():
+        key = normalize_layout_key(serial)
+        if not key or not isinstance(profiles, dict):
+            cfg.add_issue(f"layouts.devices.{serial} 非法，已忽略")
+            continue
+        parsed: dict[str, PlacementCfg] = {}
+        for orientation, payload in profiles.items():
+            bucket = str(orientation).strip().lower()
+            if bucket not in LAYOUT_ORIENTATIONS:
+                cfg.add_issue(
+                    f"layouts.devices.{serial}.{orientation} 方向非法"
+                    "（只支持 landscape/portrait），已忽略"
+                )
+                continue
+            if not isinstance(payload, dict):
+                cfg.add_issue(f"layouts.devices.{serial}.{orientation} 必须是映射，已忽略")
+                continue
+            parsed[bucket] = _section(PlacementCfg, payload, PLACEMENT_FIELD_TYPES)
+        if parsed:
+            layouts.devices[key] = parsed
+    return layouts
+
+
+def _placement_issues(p: PlacementCfg, prefix: str) -> list[str]:
+    problems: list[str] = []
+    if p.edge not in PLACEMENT_EDGES:
+        problems.append(f"{prefix}.edge 必须是 left/right/top/bottom")
+    if p.align not in ALIGNS:
+        problems.append(f"{prefix}.align 必须是 proportional/center/one_to_one")
+    if p.corner_priority not in ("", None) and p.corner_priority not in PLACEMENT_EDGES:
+        problems.append(f"{prefix}.corner_priority 必须是合法边或空")
+    if not (0.0 <= p.offset <= 1.0):
+        problems.append(f"{prefix}.offset 必须在 0.0..1.0")
+    if p.span_end <= p.span_start:
+        problems.append(f"{prefix}.span_end 必须大于 span_start")
+    return problems
+
+
 def _section(cls: type, raw: Any, field_types: dict[str, type]) -> Any:
     """按字段类型从 raw 构造配置段；缺失/类型错误一律用默认值。"""
     obj = cls()

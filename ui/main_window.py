@@ -260,6 +260,8 @@ class MainWindow(QMainWindow):
         self._pointer_pos: tuple[float, float] = (0.0, 0.0)
         self._placement: object | None = None
         self._layout_dirty = False
+        # (设备身份, landscape/portrait)：避免同一布局被重复下发。
+        self._layout_key: tuple[str, str] | None = None
         self._force_quit = False
         self._dwm_applied = False
         self._hidden_notice_shown = False
@@ -472,7 +474,7 @@ class MainWindow(QMainWindow):
         title.setObjectName("pageTitle")
         hint = QLabel(
             "把平板拖到屏幕外轮廓边，点「保存布局」后生效；"
-            "Shift 切换角落优先边，双击平板切换横竖。"
+            "Shift 切换角落优先边。每台设备的横屏、竖屏布局分别保存，旋转平板会自动切换。"
         )
         hint.setObjectName("pageSubtitle")
         hint.setWordWrap(True)
@@ -627,6 +629,7 @@ class MainWindow(QMainWindow):
         self.bridge.stateChanged.connect(self._on_state)
         self.bridge.metricsChanged.connect(self._on_metrics)
         self.bridge.logLine.connect(self._on_log)
+        self.bridge.orientationChanged.connect(self._on_orientation_changed)
         self._on_state("", state_value(getattr(self.bridge, "state", "")), "")
 
     def _build_tray(self) -> None:
@@ -675,7 +678,6 @@ class MainWindow(QMainWindow):
         bindings = (
             ("placementEdited", self._on_placement_edited),
             ("placementCommitted", self._on_placement_committed),
-            ("tabletOrientationToggled", self._on_tablet_orientation_toggled),
             ("testCaptureRequested", self._on_test_capture_requested),
             ("pointerMoved", self._on_pointer_moved),
         )
@@ -757,6 +759,7 @@ class MainWindow(QMainWindow):
             self.layout_status.show()
             return
         self._placement = placement
+        bucket = self._record_layout_profile(placement)
         self._apply_placement_to_config(placement)
         saved = self._save_config()
         segment = getattr(placement, "segment", None)
@@ -765,17 +768,27 @@ class MainWindow(QMainWindow):
         if saved:
             self._push_placement(placement)
             self._set_layout_dirty(False)
-            self.log_view.append_event("PLACE", f"布局已保存：吸附 {edge} offset={offset:.2f}")
+            direction = {"landscape": "横屏", "portrait": "竖屏"}.get(bucket, "当前方向")
+            self.log_view.append_event(
+                "PLACE", f"布局已保存（{direction}）：吸附 {edge} offset={offset:.2f}"
+            )
             self.settingsSaved.emit(self.config)
         else:
             self.layout_status.setText("保存失败，详见日志")
             self.layout_status.show()
         self.placementChanged.emit(placement)
 
-    def _placement_from_config(self) -> object | None:
-        """按配置里的显示器/边找到当前真实段，重建画布用的 Placement。"""
-        cfg = getattr(self.config, "placement", None)
-        if cfg is None:
+    def _placement_from_config(
+        self, cfg: object | None = None, *, strict_monitor: bool = False
+    ) -> object | None:
+        """按配置里的显示器/边找到当前真实段，重建画布用的 Placement。
+
+        cfg 为 None 时用全局 placement；传入某台设备某方向的 profile 时
+        用它重建。strict_monitor 为真时，profile 指定的显示器或边当前不存在
+        就返回 None，不会像全局回退那样误用另一块屏。
+        """
+        source = getattr(self.config, "placement", None) if cfg is None else cfg
+        if source is None:
             return None
         getter = getattr(self.desktop, "exterior_segments", None)
         if not callable(getter):
@@ -787,8 +800,8 @@ class MainWindow(QMainWindow):
             return None
         if not segments:
             return None
-        edge_text = str(getattr(cfg, "edge", "") or "")
-        monitor = str(getattr(cfg, "monitor", "") or "").casefold()
+        edge_text = str(getattr(source, "edge", "") or "")
+        monitor = str(getattr(source, "monitor", "") or "").casefold()
 
         def same_edge(segment: object) -> bool:
             edge = getattr(segment, "edge", None)
@@ -804,26 +817,30 @@ class MainWindow(QMainWindow):
             ]
             if exact:
                 candidates = exact
+            elif strict_monitor:
+                return None
         if not candidates:
+            if strict_monitor and edge_text:
+                return None
             candidates = list(segments)
         segment = max(candidates, key=lambda item: int(getattr(item, "length", 0)))
         try:
-            align = Align(str(getattr(cfg, "align", "") or Align.PROPORTIONAL.value))
+            align = Align(str(getattr(source, "align", "") or Align.PROPORTIONAL.value))
         except ValueError:
             align = Align.PROPORTIONAL
-        corner_text = str(getattr(cfg, "corner_priority", "") or "")
+        corner_text = str(getattr(source, "corner_priority", "") or "")
         try:
             corner = Edge(corner_text) if corner_text else None
         except ValueError:
             corner = None
         try:
-            offset = max(0.0, min(1.0, float(getattr(cfg, "offset", 0.5))))
+            offset = max(0.0, min(1.0, float(getattr(source, "offset", 0.5))))
         except (TypeError, ValueError):
             offset = 0.5
         return Placement(segment, offset, align, corner)
 
-    def _apply_placement_to_config(self, placement: object) -> None:
-        cfg = getattr(self.config, "placement", None)
+    def _apply_placement_to_config(self, placement: object, target: object | None = None) -> None:
+        cfg = target if target is not None else getattr(self.config, "placement", None)
         if cfg is None:
             return
         try:
@@ -855,11 +872,115 @@ class MainWindow(QMainWindow):
         if self._facts is not None:
             self.update_device(self._facts)
 
-    def _on_tablet_orientation_toggled(self, *_args: object) -> None:
-        self._orientation = "竖屏" if self._orientation == "横屏" else "横屏"
-        self.orientation_text.setText(self._orientation)
-        self.log_view.append_event("ORIENT", f"平板朝向切换为 {self._orientation}")
-        self._canvas_call("refresh_desktop")
+    # ------------------------------------------------------------------ 按设备方向记忆布局（1.0.3）
+    def _layout_identity(self, facts: object | None = None) -> str:
+        source = self._facts if facts is None else facts
+        if source is None:
+            return ""
+        return str(
+            getattr(source, "hardware_serial", "") or getattr(source, "serial", "") or ""
+        ).strip()
+
+    @staticmethod
+    def _orientation_bucket(facts: object | None) -> str:
+        if facts is None:
+            return ""
+        try:
+            width = int(getattr(facts, "width", 0) or 0)
+            height = int(getattr(facts, "height", 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            width = height = 0
+        if width and height:
+            return "landscape" if width >= height else "portrait"
+        try:
+            return "landscape" if int(getattr(facts, "orientation", 0) or 0) & 1 else "portrait"
+        except (AttributeError, TypeError, ValueError):
+            return ""
+
+    def _layout_profile(
+        self, facts: object | None = None
+    ) -> tuple[tuple[str, str] | None, object | None]:
+        identity = self._layout_identity(facts)
+        bucket = self._orientation_bucket(facts if facts is not None else self._facts)
+        if not identity or not bucket:
+            return None, None
+        key = (identity.casefold(), bucket)
+        layouts = getattr(self.config, "layouts", None)
+        getter = getattr(layouts, "get", None)
+        if not callable(getter):
+            return key, None
+        try:
+            return key, getter(identity, bucket)
+        except Exception as exc:  # 配置段损坏时不阻断设备连接
+            log.warning("layout profile lookup failed: %r", exc)
+            return key, None
+
+    def _apply_layout_for_facts(self, facts: object | None) -> None:
+        """设备/方向变化时切换到对应布局；没有 profile 时按规则回退。"""
+        key, profile = self._layout_profile(facts)
+        if key is None:
+            self._layout_key = None
+            return
+        if key == self._layout_key:
+            return
+        previous = self._layout_key
+        if profile is not None:
+            placement = self._placement_from_config(profile, strict_monitor=True)
+            if placement is None:
+                # 不记 _layout_key：显示器/边缘接回来后同一事实还能重试。
+                log.warning("layout profile has no matching segment key=%s", key)
+                return
+            self._layout_key = key
+            self._placement = placement
+            self._set_layout_dirty(False)
+            self._push_placement(placement)
+            direction = "横屏" if key[1] == "landscape" else "竖屏"
+            self.log_view.append_event("LAYOUT", f"已切换到该设备的{direction}布局")
+            return
+        self._layout_key = key
+        if previous is not None and previous[0] == key[0]:
+            # 同一台设备换方向但还没保存过：保留当前摆位，让用户自己保存。
+            return
+        placement = self._placement_from_config()
+        if placement is None:
+            return
+        self._placement = placement
+        self._push_placement(placement)
+        self._set_layout_dirty(False)
+        log.info("layout profile missing key=%s; using global placement", key)
+
+    def _record_layout_profile(self, placement: object) -> str:
+        """把当前摆位写进“设备 + 方向”的 profile，返回方向键。"""
+        identity = self._layout_identity()
+        bucket = self._orientation_bucket(self._facts)
+        if not identity or not bucket:
+            return ""
+        layouts = getattr(self.config, "layouts", None)
+        setter = getattr(layouts, "set", None)
+        template = getattr(self.config, "placement", None)
+        if not callable(setter) or template is None:
+            return ""
+        try:
+            profile = type(template)()
+        except Exception as exc:  # pragma: no cover - 自定义配置类型
+            log.warning("layout profile creation failed: %r", exc)
+            return ""
+        self._apply_placement_to_config(placement, target=profile)
+        try:
+            setter(identity, bucket, profile)
+        except Exception as exc:
+            log.warning("layout profile store failed: %r", exc)
+            return ""
+        log.info("layout profile saved key=%s orientation=%s", identity, bucket)
+        return bucket
+
+    def _on_orientation_changed(self, facts: object) -> None:
+        if facts is None:
+            return
+        bucket = self._orientation_bucket(facts)
+        label = "横屏" if bucket == "landscape" else "竖屏"
+        self.log_view.append_event("ORIENT", f"平板旋转为{label}")
+        self.update_device(facts)
 
     def _on_test_capture_requested(self, *_args: object) -> None:
         log.info("canvas requested capture test")
@@ -1291,7 +1412,10 @@ class MainWindow(QMainWindow):
             width = int(getattr(facts, "width", 0) or 0)
             height = int(getattr(facts, "height", 0) or 0)
             orientation = int(getattr(facts, "orientation", 0) or 0)
-            self._orientation = "横屏" if orientation & 1 else "竖屏"
+            if width and height:
+                self._orientation = "横屏" if width >= height else "竖屏"
+            else:
+                self._orientation = "横屏" if orientation & 1 else "竖屏"
             self.device_text.setText(model or serial or "已连接")
             self.device_text.setToolTip(serial)
             if width and height:
@@ -1310,6 +1434,7 @@ class MainWindow(QMainWindow):
             self.tray.set_device(serial)
             self.tray.set_connected(True)
         else:
+            self._layout_key = None
             self._orientation = "—"
             self.device_text.setText("未连接设备")
             self.device_text.setToolTip("")
@@ -1324,6 +1449,8 @@ class MainWindow(QMainWindow):
         # 设备事实变化后重新呈现状态：连接过程中 _on_state 可能先以
         # “未连接”落盘，等 facts 到达后必须刷新状态胶囊/设备页标签。
         self._on_state(self._state, self._state, "device.updated")
+        if facts is not None:
+            self._apply_layout_for_facts(facts)
 
     def _placement_edge_label(self) -> str:
         segment = getattr(self._placement, "segment", None)

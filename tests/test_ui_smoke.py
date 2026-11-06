@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ import constants as C
 from config import Config
 from core.geometry import Edge, EdgeSegment, MonitorInfo, Placement, Rect
 from core.state import State
+from tablet.session import DeviceFacts
 from ui import main_window as mw
 from ui.diagnostics import (
     CommandResult,
@@ -51,6 +53,7 @@ class FakeRouter:
     def __init__(self) -> None:
         self.on_state_changed: Any = None
         self.on_metrics: Any = None
+        self.on_orientation_changed: Any = None
         self.calls: list[tuple[str, Any]] = []
 
     def start(self) -> None:
@@ -210,6 +213,120 @@ def test_window_survives_missing_canvas(
     win.deleteLater()
 
 
+def _facts(
+    width: int = 2560,
+    height: int = 1600,
+    orientation: int = 1,
+    hardware_serial: str = "HW-0001",
+) -> DeviceFacts:
+    return DeviceFacts(
+        serial="192.0.2.10:5555",
+        model="CGA-W00",
+        width=width,
+        height=height,
+        orientation=orientation,
+        xscale=1.0,
+        pointer_speed=0,
+        hardware_serial=hardware_serial,
+    )
+
+
+def test_save_layout_records_profile_for_device_and_orientation(
+    window: Any, qapp: QApplication
+) -> None:
+    window.update_device(_facts())
+    qapp.processEvents()
+    assert window._placement is not None
+    window._placement = Placement(segment=window._placement.segment, offset=0.25)
+    window._save_layout()
+    qapp.processEvents()
+
+    profile = window.config.layouts.get("HW-0001", "landscape")
+    assert profile is not None
+    assert profile.offset == pytest.approx(0.25)
+    assert window.config.placement.offset == pytest.approx(0.25)
+
+
+def test_rotating_device_switches_to_its_saved_profile(
+    window: Any, qapp: QApplication
+) -> None:
+    landscape = _facts()
+    window.update_device(landscape)
+    qapp.processEvents()
+    assert window._placement is not None
+    saved = Placement(segment=window._placement.segment, offset=0.25)
+    window._placement = saved
+    window._save_layout()
+    qapp.processEvents()
+
+    portrait_profile = type(window.config.placement)(edge="left", offset=0.75)
+    window.config.layouts.set("HW-0001", "portrait", portrait_profile)
+    window.update_device(replace(landscape, width=1600, height=2560, orientation=0))
+    qapp.processEvents()
+
+    assert window._orientation == "竖屏"
+    assert window._placement is not None
+    assert window._placement.offset == pytest.approx(0.75)
+    assert window._layout_dirty is False
+
+
+def test_rotating_without_a_profile_keeps_the_current_placement(
+    window: Any, qapp: QApplication
+) -> None:
+    landscape = _facts()
+    window.update_device(landscape)
+    qapp.processEvents()
+    assert window._placement is not None
+    before = window._placement
+
+    window.update_device(replace(landscape, width=1600, height=2560, orientation=0))
+    qapp.processEvents()
+    assert window._placement == before
+
+
+def test_profile_with_missing_monitor_is_retried(
+    window: Any, qapp: QApplication
+) -> None:
+    landscape = _facts()
+    window.update_device(landscape)
+    qapp.processEvents()
+    assert window._placement is not None
+    before = window._placement
+
+    missing = type(window.config.placement)(
+        monitor="\\\\.\\DISPLAY9", edge="left", offset=0.75
+    )
+    portrait = replace(landscape, width=1600, height=2560, orientation=0)
+    window.config.layouts.set("HW-0001", "portrait", missing)
+    window.update_device(portrait)
+    qapp.processEvents()
+    assert window._placement == before
+
+    usable = type(window.config.placement)(
+        monitor="\\\\.\\DISPLAY2", edge="right", offset=0.75
+    )
+    window.config.layouts.set("HW-0001", "portrait", usable)
+    window.update_device(portrait)
+    qapp.processEvents()
+    assert window._placement is not None
+    assert window._placement.offset == pytest.approx(0.75)
+
+
+def test_switching_device_without_a_profile_falls_back_to_global_layout(
+    window: Any, qapp: QApplication
+) -> None:
+    window.update_device(_facts())
+    qapp.processEvents()
+    assert window._placement is not None
+    before = window._placement
+    window._placement = Placement(segment=before.segment, offset=0.9)
+
+    window.update_device(_facts(2560, 1600, 1, hardware_serial="HW-0002"))
+    qapp.processEvents()
+    assert window._placement is not None
+    assert window._placement.offset == pytest.approx(window.config.placement.offset)
+
+
 def test_canvas_signals_reach_window(window: Any, qapp: QApplication) -> None:
     placement = window._placement
     assert placement is not None
@@ -319,6 +436,25 @@ def test_clipboard_changes_only_sync_while_captured(window: Any) -> None:
     window._on_clipboard_changed()
     assert window._clipboard_timer.isActive() is True
     window._clipboard_timer.stop()
+
+
+def test_bridge_forwards_orientation(
+    window: Any, router: FakeRouter, qapp: QApplication
+) -> None:
+    facts = DeviceFacts(
+        serial="FAKE0001",
+        model="FakePad",
+        width=2560,
+        height=1600,
+        orientation=1,
+        xscale=1.0,
+        pointer_speed=0,
+        hardware_serial="HW-0001",
+    )
+    router.on_orientation_changed(facts)
+    qapp.processEvents()
+    assert window._facts is facts
+    assert window._orientation == "横屏"
 
 
 def test_bridge_detach_restores_callbacks(window: Any, router: FakeRouter) -> None:

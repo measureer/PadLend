@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 import constants as C
 from config import (
@@ -151,6 +151,7 @@ class FakeSession:
         self.key_reports: list[tuple[int, tuple[int, ...]]] = []
         self.cursor_sets: list[tuple[int, int]] = []
         self.pointer_speed_sets: list[int] = []
+        self.facts_callback: Callable[[DeviceFacts], None] | None = None
         self.start_calls = 0
         self.stop_calls = 0
         self.reconnect_calls = 0
@@ -181,6 +182,19 @@ class FakeSession:
     def stop(self) -> None:
         self.stop_calls += 1
         self.alive = False
+
+    def set_facts_callback(
+        self, callback: Callable[[DeviceFacts], None] | None
+    ) -> None:
+        """模拟朝向监听注册回调（1.0.3）。"""
+        self.facts_callback = callback
+
+    def publish_facts(self, facts: DeviceFacts) -> None:
+        """模拟后台监听线程报告新的朝向事实。"""
+        self._facts = facts
+        callback = self.facts_callback
+        if callback is not None:
+            callback(facts)
 
     def cancel_start(self) -> None:
         """模拟 TabletSession.cancel_start()：中止首连等待。"""

@@ -76,6 +76,10 @@ def _noop_metrics(_snapshot: dict[str, float | int]) -> None:
     return None
 
 
+def _noop_facts(_facts: DeviceFacts) -> None:
+    return None
+
+
 def _fallback_vk_names() -> dict[str, int]:
     """``tablet.keymap`` 不可用时的最小 VK 名字表（只覆盖默认白名单）。"""
     return {
@@ -223,6 +227,14 @@ class Router:
         # 公开回调：main/GUI 用属性赋值注入（不是构造参数，保持 8.2 四参数）。
         self.on_state_changed: Callable[[State, State, str], None] = _noop_state
         self.on_metrics: Callable[[dict[str, float | int]], None] = _noop_metrics
+        self.on_orientation_changed: Callable[[DeviceFacts], None] = _noop_facts
+        # 会话的朝向监听线程会回调这里；session 没有该扩展时保持静默。
+        setter = getattr(session, "set_facts_callback", None)
+        if callable(setter):
+            try:
+                setter(self._on_session_facts)
+            except Exception:  # pragma: no cover - 扩展失败不影响路由
+                log.warning("router.facts_callback_register_failed", exc_info=True)
 
     # -- 生命周期 -----------------------------------------------------------
     @property
@@ -1363,6 +1375,7 @@ class Router:
         if connect_due:
             self._connect_once()
             return
+        rotation_facts: DeviceFacts | None = None
         with self._lock:
             if self._stopped:
                 return
@@ -1374,12 +1387,15 @@ class Router:
                 return
             if self._state is not State.FAULT:
                 self._check_health_locked()
-                self._check_rotation_locked()
+                rotation_facts = self._check_rotation_locked()
                 self._check_desktop_locked()
                 self._poll_pointer_speed_locked(current)
                 if self._state is State.RETURNING and current >= self._return_deadline:
                     self._change_state(State.IDLE, "debounce")
             self._emit_metrics_locked()
+        # GUI 回调必须在锁外；它可能触发布局切换并回调 Router.set_placement()。
+        if rotation_facts is not None:
+            self._notify_orientation(rotation_facts)
 
     def _connect_once(self) -> None:
         """在 supervisor 线程里执行一次（可能阻塞的）连接/重连尝试。"""
@@ -1474,14 +1490,23 @@ class Router:
                 f"健康检查连续失败 {self._health_failures} 次",
             )
 
-    def _check_rotation_locked(self) -> None:
+    def _check_rotation_locked(self) -> DeviceFacts | None:
+        """没有实时监听时的兜底：把会话缓存里的尺寸变化同步进来。
+
+        正常情况下 TabletSession 的朝向监听会调用 _on_session_facts，
+        这里只是旧会话/测试桩的兼容路径。
+        """
         facts = self._read_facts()
         if facts is None:
-            return
+            return None
+        return facts if self._apply_facts_locked(facts) else None
+
+    def _apply_facts_locked(self, facts: DeviceFacts) -> bool:
+        """用新的设备事实重建估计器；返回尺寸/朝向是否真的变化。"""
         old = self._facts
         if old is None:
             self._facts = facts
-            return
+            return False
         try:
             changed = (
                 int(facts.width) != int(old.width)
@@ -1489,9 +1514,9 @@ class Router:
                 or int(facts.orientation) != int(old.orientation)
             )
         except (AttributeError, TypeError, ValueError):
-            return
+            return False
         if not changed:
-            return
+            return False
         try:
             estimator = CursorEstimator(
                 int(facts.width),
@@ -1503,7 +1528,7 @@ class Router:
             wrapped = wrap_unexpected(exc, detail="rotation reset")
             log.exception("router.rotation_failed")
             self._fault(wrapped.code, f"旋转重建失败: {wrapped.detail}")
-            return
+            return False
         self._estimator = estimator
         self._facts = facts
         self._overflow = 0.0
@@ -1513,6 +1538,27 @@ class Router:
             int(facts.height),
             int(facts.orientation),
         )
+        return True
+
+    def _on_session_facts(self, facts: DeviceFacts) -> None:
+        """会话朝向监听线程的入口；更新事实后通知 GUI（锁外）。"""
+        if facts is None:
+            return
+        with self._lock:
+            if self._stopped:
+                return
+            changed = self._apply_facts_locked(facts)
+        if changed:
+            self._notify_orientation(facts)
+
+    def _notify_orientation(self, facts: DeviceFacts) -> None:
+        callback = self.on_orientation_changed
+        if not callable(callback):
+            return
+        try:
+            callback(facts)
+        except Exception:
+            log.exception("router.orientation_callback_failed")
 
     def _check_desktop_locked(self) -> None:
         signature = self._monitor_signature()

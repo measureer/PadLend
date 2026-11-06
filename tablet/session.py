@@ -24,9 +24,10 @@ import logging
 import os
 import re
 import socket
+import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,7 +41,7 @@ from .server import KILL_PATTERN, ScrcpyServer
 from .uhid import keyboard_report, mouse_report
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from config import Config
@@ -51,6 +52,17 @@ LOG = logging.getLogger("tablet.session")
 _NULL_SETTING = "null"
 # 出厂 pointer_speed（3.1）；恢复时若原值不可读则回退到它。
 _FACTORY_POINTER_SPEED = -3
+
+# 朝向监听（1.0.3）：常驻一条 adb shell，每秒输出一行 Viewport。
+# 单独跑 dumpsys input 一次要 300ms 以上，不能塞进 supervisor 的 2s 轮询。
+_ORIENTATION_POLL_S = 1.0
+_ORIENTATION_RESTART_S = 2.0
+_ORIENTATION_SCRIPT = (
+    "while true; do "
+    "dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='; "
+    "sleep 1; "
+    "done"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +79,9 @@ class DeviceFacts:
     orientation: int  # 0..3，Surface.ROTATION_*
     xscale: float
     pointer_speed: int
+    # ro.serialno：USB 与无线调试时都保持不变，用来按设备记忆布局。
+    # 读不到时回退 adb serial；默认值保证旧构造方式仍然可用。
+    hardware_serial: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +175,17 @@ def _recv_exactly(sock: socket.socket, size: int) -> bytes:
     return b"".join(chunks)
 
 
+def clean_serial(text: str) -> str:
+    """getprop ro.serialno 的清洗：无效值返回空串（调用方回退 adb serial）。"""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    value = lines[-1]
+    if value.lower() in {"unknown", "null", "0", "none"}:
+        return ""
+    return value
+
+
 def read_facts(adb: Adb) -> DeviceFacts:
     """读取 8.2 的 DeviceFacts（附录 C.2 的命令集合）。
 
@@ -168,6 +194,7 @@ def read_facts(adb: Adb) -> DeviceFacts:
     if not adb.serial:
         raise PadLendError(ErrorCode.DEVICE_OFFLINE, "read_facts 需要一个已绑定的 serial")
     model = adb.shell("getprop", "ro.product.model")
+    hardware_serial = clean_serial(adb.shell("getprop", "ro.serialno")) or adb.serial
     natural_w, natural_h = parse_wm_size(adb.shell("wm", "size"))
     dumpsys = adb.shell("dumpsys", "input")
     pointer_speed = parse_pointer_speed(adb.shell("settings", "get", "system", "pointer_speed"))
@@ -181,6 +208,7 @@ def read_facts(adb: Adb) -> DeviceFacts:
         orientation=orientation,
         xscale=parse_xscale(dumpsys),
         pointer_speed=pointer_speed,
+        hardware_serial=hardware_serial,
     )
 
 
@@ -242,6 +270,12 @@ class TabletSession:
         self._orig_pointer_speed: int | None = None
         self._orig_stay_on: str | None = None
 
+        # 1.0.3 朝向监听：回调由 Router 注册；线程只在 start 成功后存在。
+        self._facts_callback: Callable[[DeviceFacts], None] | None = None
+        self._orientation_stop: threading.Event | None = None
+        self._orientation_proc: subprocess.Popen[str] | None = None
+        self._orientation_thread: threading.Thread | None = None
+
         self._last_error = ""
         self._consecutive_failures = 0
         self._sent = 0
@@ -259,6 +293,12 @@ class TabletSession:
     @property
     def started(self) -> bool:
         return self._started
+
+    def set_facts_callback(
+        self, callback: Callable[[DeviceFacts], None] | None
+    ) -> None:
+        """注册朝向变化回调（在监听线程里调用，GUI 侧负责转成队列信号）。"""
+        self._facts_callback = callback
 
     @property
     def port(self) -> int | None:
@@ -306,6 +346,7 @@ class TabletSession:
             self._started_at = time.monotonic()
             self._sock_broken = False
             self._consecutive_failures = 0
+            self._start_orientation_watch()
             return facts
 
     def _start_locked(self) -> DeviceFacts:
@@ -343,6 +384,9 @@ class TabletSession:
         退出，随后本方法才能拿到锁完成清理（GUI 退出不再假死）。
         """
         self._closing.set()
+        # 先停监听线程再拿生命周期锁：线程会在设备上多跑一条 shell，
+        # 但不会调用任何需要 _lock 的方法，不会和 stop 互等。
+        self._stop_orientation_watch()
         with self._lock:
             if not (self._started or self._sock is not None or self._uhid_created):
                 LOG.debug("stop(): 未启动，忽略")
@@ -719,9 +763,109 @@ class TabletSession:
             self._sent += 1
             return True
 
+    # -- 内部：朝向监听（1.0.3） -------------------------------------------
+    def _start_orientation_watch(self) -> None:
+        if self._orientation_thread is not None and self._orientation_thread.is_alive():
+            return
+        dev = self._dev_adb
+        if dev is None:
+            return
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._orientation_loop,
+            args=(dev, stop),
+            name="padlend-orientation",
+            daemon=True,
+        )
+        self._orientation_stop = stop
+        self._orientation_thread = thread
+        thread.start()
+        LOG.debug("朝向监听已启动 serial=%s", self._facts.serial if self._facts else "?")
+
+    def _stop_orientation_watch(self) -> None:
+        stop = self._orientation_stop
+        proc = self._orientation_proc
+        thread = self._orientation_thread
+        self._orientation_stop = None
+        self._orientation_thread = None
+        if stop is not None:
+            stop.set()
+        if proc is not None and proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.terminate()
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=2.0)
+        if proc is not None and proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.kill()
+        self._orientation_proc = None
+
+    def _orientation_loop(self, dev: Adb, stop: threading.Event) -> None:
+        while not stop.is_set():
+            proc: subprocess.Popen[str] | None = None
+            try:
+                proc = dev.popen_shell_stream(_ORIENTATION_SCRIPT)
+                self._orientation_proc = proc
+                stream = proc.stdout
+                if stream is None:  # pragma: no cover - Popen 已指定 PIPE
+                    return
+                for line in stream:
+                    if stop.is_set():
+                        break
+                    if "orientation=" in line:
+                        self._apply_orientation(line, stop)
+                LOG.debug("朝向监听进程结束 rc=%s", proc.poll())
+            except (OSError, PadLendError) as exc:
+                if not stop.is_set():
+                    LOG.warning("朝向监听中断: %s", getattr(exc, "detail", exc))
+            finally:
+                if proc is not None:
+                    with contextlib.suppress(OSError):
+                        proc.terminate()
+                    try:
+                        proc.wait(timeout=1.0)
+                    except (OSError, subprocess.TimeoutExpired):
+                        with contextlib.suppress(OSError):
+                            proc.kill()
+                if self._orientation_proc is proc:
+                    self._orientation_proc = None
+            if stop.wait(_ORIENTATION_RESTART_S):
+                break
+
+    def _apply_orientation(self, line: str, stop: threading.Event) -> None:
+        orientation = parse_orientation(line)
+        old = self._facts
+        if old is None or old.orientation == orientation:
+            return
+        natural_w, natural_h = old.width, old.height
+        if old.orientation & 1:
+            natural_w, natural_h = old.height, old.width
+        width, height = oriented_size(natural_w, natural_h, orientation)
+        new = replace(old, width=width, height=height, orientation=orientation)
+        if stop.is_set() or not self._started:
+            return
+        self._facts = new
+        LOG.info(
+            "设备朝向变化: %dx%d orientation=%d",
+            new.width,
+            new.height,
+            new.orientation,
+        )
+        callback = self._facts_callback
+        if callback is not None:
+            try:
+                callback(new)
+            except Exception:  # noqa: BLE001 - 回调失败不能让监听线程退出
+                LOG.exception("朝向回调失败")
+
     # -- 内部：清理 --------------------------------------------------------
     def _teardown(self) -> None:
         """6.1.3 六步，任何一步失败都不阻断后续步骤。"""
+        self._stop_orientation_watch()
         try:
             self._destroy_uhid()
         except PadLendError as exc:  # pragma: no cover - _destroy_uhid 已自吞

@@ -10,7 +10,7 @@ from tablet import mdns
 SERVICE = "_adb-tls-connect._tcp.local"
 INSTANCE = "adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp.local"
 TARGET = "Android_KXJHTBDK.local"
-IP = "192.168.67.129"
+IP = "192.0.2.10"
 PORT = 44803
 
 

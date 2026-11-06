@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 import constants as C
-from config import Config, DeviceCfg, MotionCfg, PlacementCfg
+from config import Config, DeviceCfg, LayoutsCfg, MotionCfg, PlacementCfg
 
 
 def test_default_when_missing(tmp_path):
@@ -241,3 +241,77 @@ def test_macs_invalid_type_falls_back_to_default(tmp_path):
     )
     cfg = Config.load(path)
     assert cfg.device.macs == {}
+
+
+def test_layouts_roundtrip_by_device_and_orientation(tmp_path):
+    """每台设备、每个方向一份布局，存盘再读回要完全一致。"""
+    path = tmp_path / "config.yaml"
+    cfg = Config()
+    landscape = PlacementCfg(
+        monitor="DISPLAY2",
+        edge="bottom",
+        span_start=-2560,
+        span_end=0,
+        offset=0.25,
+        align="one_to_one",
+        corner_priority="left",
+    )
+    portrait = PlacementCfg(edge="left", offset=0.75, align="proportional")
+    cfg.layouts.set("AM4NBB5C23001691", "landscape", landscape)
+    cfg.layouts.set("am4nbb5c23001691", "portrait", portrait)
+    cfg.save(path)
+
+    again = Config.load(path)
+    saved_landscape = again.layouts.get("AM4NBB5C23001691", "landscape")
+    saved_portrait = again.layouts.get("AM4NBB5C23001691", "portrait")
+    assert saved_landscape is not None and saved_portrait is not None
+    assert saved_landscape.edge == "bottom"
+    assert saved_landscape.offset == 0.25
+    assert saved_portrait.edge == "left"
+    assert again.validate() == []
+
+
+def test_layouts_invalid_profiles_are_reported_and_repaired(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """\
+            version: 1
+            layouts:
+              devices:
+                "":
+                  landscape:
+                    edge: right
+                SERIAL1:
+                  landscape:
+                    edge: diagonal
+                    offset: 3.0
+                    align: stretch
+                  portrait: oops
+                SERIAL2:
+                  diagonal:
+                    edge: right
+                  landscape:
+                    monitor: ""
+            """
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config.load(path)
+    assert cfg.issues
+    assert cfg.validate() == []
+    profile = cfg.layouts.get("SERIAL1", "landscape")
+    assert profile is not None
+    assert profile.edge == "right"
+    assert profile.offset == 1.0
+    assert profile.align == "proportional"
+    assert cfg.layouts.get("SERIAL1", "portrait") is None
+    assert cfg.layouts.get("SERIAL2", "diagonal") is None
+    assert cfg.layouts.get("SERIAL3", "landscape") is None
+
+
+def test_layouts_default_empty():
+    layouts = LayoutsCfg()
+    assert layouts.devices == {}
+    assert layouts.get("", "landscape") is None
+    assert layouts.get("", "diagonal") is None
