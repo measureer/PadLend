@@ -257,6 +257,9 @@ class MainWindow(QMainWindow):
         self._config_path = Path(config_path) if config_path is not None else C.config_path()
         self._state = ""
         self._orientation = "—"
+        # 回写平板文本时短暂抑制 dataChanged，避免原样发回平板形成回环。
+        self._clipboard_remote_text: str | None = None
+        self._clipboard_remote_until = 0.0
         self._pointer_pos: tuple[float, float] = (0.0, 0.0)
         self._placement: object | None = None
         self._layout_dirty = False
@@ -630,6 +633,7 @@ class MainWindow(QMainWindow):
         self.bridge.metricsChanged.connect(self._on_metrics)
         self.bridge.logLine.connect(self._on_log)
         self.bridge.orientationChanged.connect(self._on_orientation_changed)
+        self.bridge.clipboardReceived.connect(self._on_tablet_clipboard)
         self._on_state("", state_value(getattr(self.bridge, "state", "")), "")
 
     def _build_tray(self) -> None:
@@ -1043,9 +1047,37 @@ class MainWindow(QMainWindow):
             clip.dataChanged.connect(self._on_clipboard_changed)
 
     def _on_clipboard_changed(self) -> None:
+        if self._clipboard_remote_text is not None:
+            if time.monotonic() <= self._clipboard_remote_until:
+                try:
+                    # 只吞掉远程回写自身；用户紧接着复制不同内容不能丢。
+                    if QGuiApplication.clipboard().text() == self._clipboard_remote_text:
+                        return
+                except Exception as exc:  # noqa: BLE001 - 与读取路径一致静默降级
+                    log.debug("clipboard read failed: %r", exc)
+                    return
+            self._clipboard_remote_text = None
         if self._state != "captured":
             return
         self._schedule_clipboard_sync()
+
+    def _on_tablet_clipboard(self, text: str) -> None:
+        """在 GUI 线程回写 Windows 剪贴板，并抑制由此产生的反向回显。"""
+        if not bool(getattr(getattr(self.config, "misc", None), "clipboard_sync", False)):
+            return
+        try:
+            clip = QGuiApplication.clipboard()
+            if clip.text() == text:
+                return
+            self._clipboard_timer.stop()
+            self._clipboard_remote_text = text
+            self._clipboard_remote_until = time.monotonic() + 1.0
+            clip.setText(text)
+        except Exception as exc:  # noqa: BLE001 - 剪贴板不可用不应影响主流程
+            self._clipboard_remote_text = None
+            log.debug("tablet clipboard write failed: %r", exc)
+            return
+        self.log_view.append_event("CLIP", f"平板 → Windows：{len(text)} 字符")
 
     def _schedule_clipboard_sync(self) -> None:
         """合并短时间内的多次复制，避免一次复制发多条报文。"""
@@ -1070,6 +1102,11 @@ class MainWindow(QMainWindow):
             return
         if not text:
             return
+        if self._clipboard_remote_text is not None:
+            remote_pending = time.monotonic() <= self._clipboard_remote_until
+            if remote_pending and text == self._clipboard_remote_text:
+                return
+            self._clipboard_remote_text = None
         inject = getattr(self.router, "inject_clipboard", None)
         if not callable(inject):
             return

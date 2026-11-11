@@ -80,6 +80,10 @@ def _noop_facts(_facts: DeviceFacts) -> None:
     return None
 
 
+def _noop_clipboard(_text: str) -> None:
+    return None
+
+
 def _fallback_vk_names() -> dict[str, int]:
     """``tablet.keymap`` 不可用时的最小 VK 名字表（只覆盖默认白名单）。"""
     return {
@@ -228,13 +232,20 @@ class Router:
         self.on_state_changed: Callable[[State, State, str], None] = _noop_state
         self.on_metrics: Callable[[dict[str, float | int]], None] = _noop_metrics
         self.on_orientation_changed: Callable[[DeviceFacts], None] = _noop_facts
-        # 会话的朝向监听线程会回调这里；session 没有该扩展时保持静默。
+        self.on_clipboard_received: Callable[[str], None] = _noop_clipboard
+        # 会话的后台监听线程会回调这里；session 没有该扩展时保持静默。
         setter = getattr(session, "set_facts_callback", None)
         if callable(setter):
             try:
                 setter(self._on_session_facts)
             except Exception:  # pragma: no cover - 扩展失败不影响路由
                 log.warning("router.facts_callback_register_failed", exc_info=True)
+        clipboard_setter = getattr(session, "set_clipboard_callback", None)
+        if callable(clipboard_setter):
+            try:
+                clipboard_setter(self._on_session_clipboard)
+            except Exception:  # pragma: no cover - 扩展失败不影响路由
+                log.warning("router.clipboard_callback_register_failed", exc_info=True)
 
     # -- 生命周期 -----------------------------------------------------------
     @property
@@ -1765,6 +1776,22 @@ class Router:
             log.exception("router.fault_handler_failed code=%s", code.value)
 
     # -- 剪贴板（6.8，SHOULD） ------------------------------------------------
+    def _on_session_clipboard(self, text: str) -> None:
+        """接收线程入口：按开关把平板文本转交给 GUI，绝不直接碰 Qt。"""
+        if not bool(self._cfg.misc.clipboard_sync):
+            return
+        with self._lock:
+            if self._stopped:
+                return
+        callback = self.on_clipboard_received
+        if not callable(callback):
+            return
+        try:
+            callback(str(text))
+        except Exception:
+            log.exception("router.clipboard_callback_failed")
+        log.info("router.clipboard_received chars=%d", len(text))
+
     def inject_clipboard(self, text: str) -> bool:
         """把 PC 剪贴板文本写进平板剪贴板（UTF-8，最多 4KB）。
 

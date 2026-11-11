@@ -822,10 +822,10 @@ UHID 键盘被识别为**物理键盘** ⇒ 输入法按物理键位工作，候
 
 | 项 | 设计 |
 |---|---|
-| 方向 | PC → 平板（主）、平板 → PC（次） |
-| 通道 | `SET_CLIPBOARD`（type 9，UTF-8），长度上限 4KB；**不敲键盘** |
-| 触发 | 勾选 `misc.clipboard_sync` 后自动：进入接管时同步一次 + 接管期间每次复制都同步（0.3.15 起没有单独的剪贴板热键） |
-| 不做 | 图片、富文本、平板 → PC |
+| 方向 | PC → 平板（主）、平板 → PC（1.0.5 起） |
+| 通道 | PC → 平板：`SET_CLIPBOARD`（type 9，UTF-8），长度上限 4KB，**不敲键盘**；平板 → PC：device message `CLIPBOARD`（type 0，1.0.5） |
+| 触发 | 勾选 `misc.clipboard_sync` 后自动：进入接管时同步一次 + 接管期间每次复制都同步（0.3.15 起没有单独的剪贴板热键）；平板侧复制走同一开关回传 |
+| 不做 | 图片、富文本 |
 
 **为什么改用 `SET_CLIPBOARD`**（0.3.14）：0.3.10 曾把自动同步整个关掉，因为当时
 走 `INJECT_TEXT`——服务端用 `KeyCharacterMap.getEvents()` 把它翻译成**真实按键
@@ -836,6 +836,17 @@ App（刷抖音时命中 `R` 就是「不感兴趣」）。scrcpy 5.0.1 服务�
 可以安全地自动同步。`paste` 字节恒为 0（只写剪贴板，不触发粘贴）。
 
 载荷（9.2）：`sequence(8) paste(1) len(4) utf8(len)`，大端。
+
+**平板 → PC（1.0.5）**：控制通道本来就是双向 TCP，但 1.0.4 及以前只发不收，平板
+回传的字节一直躺在 socket 缓冲区里。1.0.5 起会话启动一条常驻接收线程，按
+`device_msg.h` 拆包：`CLIPBOARD`(0, len(4)+utf8)、`ACK_CLIPBOARD`(1, sequence(8))、
+`UHID_OUTPUT`(2, id(2)+len(2)+data)。一次 `recv` 可能只到半条消息，拆包函数在
+数据不足时返回 `(None, 0)` 让调用方继续攒；未知类型或超过 256KB 上限抛
+`ValueError`，由连接层判流断开并走既有重连。
+
+回写 Windows 剪贴板会触发 `dataChanged`，不抑制就会原样发回平板形成回环。做法是
+记下刚写入的远程文本，1 秒内**只有与它完全相同**的 `dataChanged` 被吞掉；用户紧
+接着复制别的内容仍然照常同步。
 
 ---
 
@@ -1386,7 +1397,8 @@ PC --TCP 127.0.0.1:{port}--> adb forward --> localabstract:scrcpy --> scrcpy-ser
 
 - 握手：连接后先读 **1 字节**，MUST 等于 `00`（`send_dummy_byte=true`；2026-11-02 实测修正，scrcpy 5.0.1 `DesktopConnection` 只写一个 0 字节）
 - 之后为连续消息流，无长度前缀，按首字节 `type` 分派
-- 单向：PC → 平板（本方案不消费平板回传）
+- 双向：PC → 平板发控制消息；平板 → PC 回 device message（剪贴板 / ACK / UHID
+  输出），由会话里的常驻接收线程消费（1.0.5 起）
 
 ## 9.2 控制消息
 
@@ -1403,6 +1415,17 @@ PC --TCP 127.0.0.1:{port}--> adb forward --> localabstract:scrcpy --> scrcpy-ser
 | 15 | OPEN_HARD_KEYBOARD_SETTINGS | 无 |
 
 > 字节序：**大端**（网络序）。实现前用 scrcpy 源码 `app/src/control_msg.h` 复核一次枚举值。
+
+### 9.2.1 设备消息（平板 → PC，1.0.5）
+
+| type | 名称 | 载荷 |
+|---|---|---|
+| 0 | CLIPBOARD | len(4) utf8(len) |
+| 1 | ACK_CLIPBOARD | sequence(8) |
+| 2 | UHID_OUTPUT | id(2) len(2) data(len) |
+
+单条上限 `1 << 18`（256KB，与 scrcpy 的 `DEVICE_MSG_MAX_SIZE` 一致）。拆包在数据
+不足时返回「继续等」，不推进缓冲区；未知 type 直接判流失效。
 
 ## 9.3 UHID 报文
 

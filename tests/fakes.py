@@ -152,6 +152,7 @@ class FakeSession:
         self.cursor_sets: list[tuple[int, int]] = []
         self.pointer_speed_sets: list[int] = []
         self.facts_callback: Callable[[DeviceFacts], None] | None = None
+        self.clipboard_callback: Callable[[str], None] | None = None
         self.start_calls = 0
         self.stop_calls = 0
         self.reconnect_calls = 0
@@ -195,6 +196,16 @@ class FakeSession:
         callback = self.facts_callback
         if callback is not None:
             callback(facts)
+
+    def set_clipboard_callback(self, callback: Callable[[str], None] | None) -> None:
+        """模拟平板剪贴板接收回调。"""
+        self.clipboard_callback = callback
+
+    def publish_clipboard(self, text: str) -> None:
+        """模拟接收线程报告平板复制的新文本。"""
+        callback = self.clipboard_callback
+        if callback is not None:
+            callback(text)
 
     def cancel_start(self) -> None:
         """模拟 TabletSession.cancel_start()：中止首连等待。"""

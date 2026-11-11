@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 from typing import Final
 
 # 9.2 控制消息 type 枚举（与 scrcpy app/src/control_msg.h 对齐）
@@ -28,6 +29,24 @@ MSG_UHID_INPUT: Final = 13
 MSG_UHID_DESTROY: Final = 14
 MSG_OPEN_HARD_KEYBOARD_SETTINGS: Final = 15
 MSG_SET_CLIPBOARD: Final = 9  # 直接写平板剪贴板，不敲键盘（6.8）
+
+# 平板 → PC 的 device message（与 scrcpy 5.0.1 app/src/device_msg.h 对齐）。
+DEVICE_MSG_CLIPBOARD: Final = 0
+DEVICE_MSG_ACK_CLIPBOARD: Final = 1
+DEVICE_MSG_UHID_OUTPUT: Final = 2
+DEVICE_MSG_MAX_SIZE: Final = 1 << 18
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceMessage:
+    """一条完整的平板回传消息；只保留对应类型需要的字段。"""
+
+    type: int
+    text: str = ""
+    sequence: int = 0
+    uhid_id: int = 0
+    data: bytes = b""
+
 
 # android.view.KeyEvent.ACTION_* / MotionEvent.ACTION_*
 ACTION_DOWN: Final = 0
@@ -117,6 +136,50 @@ def set_clipboard(text: str, *, sequence: int = 0) -> bytes:
         )
         + payload
     )
+
+
+def deserialize_device_message(
+    buffer: bytes | bytearray | memoryview,
+) -> tuple[DeviceMessage | None, int]:
+    """从接收缓冲区解出一条 device message，返回 ``(消息, 消费字节数)``。
+
+    数据不足时返回 ``(None, 0)``，调用方保留缓冲区等待下一次 ``recv()``。
+    未知类型或超出 scrcpy 256KB 上限时抛 ``ValueError``：流已无法可靠对齐，
+    应由连接层断开并走既有重连流程。
+    """
+    data = bytes(buffer)
+    if not data:
+        return None, 0
+    msg_type = data[0]
+
+    if msg_type == DEVICE_MSG_CLIPBOARD:
+        if len(data) < 5:
+            return None, 0
+        length = int.from_bytes(data[1:5], "big")
+        if length > DEVICE_MSG_MAX_SIZE - 5:
+            raise ValueError(f"平板剪贴板消息过长: {length} 字节")
+        if len(data) < 5 + length:
+            return None, 0
+        text = data[5 : 5 + length].decode("utf-8")
+        return DeviceMessage(msg_type, text=text), 5 + length
+
+    if msg_type == DEVICE_MSG_ACK_CLIPBOARD:
+        if len(data) < 9:
+            return None, 0
+        sequence = int.from_bytes(data[1:9], "big")
+        return DeviceMessage(msg_type, sequence=sequence), 9
+
+    if msg_type == DEVICE_MSG_UHID_OUTPUT:
+        if len(data) < 5:
+            return None, 0
+        uhid_id = int.from_bytes(data[1:3], "big")
+        length = int.from_bytes(data[3:5], "big")
+        if len(data) < 5 + length:
+            return None, 0
+        payload = data[5 : 5 + length]
+        return DeviceMessage(msg_type, uhid_id=uhid_id, data=payload), 5 + length
+
+    raise ValueError(f"未知平板设备消息 type={msg_type}")
 
 
 def back_or_screen_on(action: int) -> bytes:

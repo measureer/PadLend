@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,6 +60,7 @@ class SimulatedSession:
     _started: bool = False
     _facts: DeviceFacts | None = None
     _pointer_speed_calls: int = 0
+    _clipboard_callback: Callable[[str], None] | None = field(default=None, repr=False)
 
     # -- 身份 ---------------------------------------------------------------
     @property
@@ -125,6 +127,16 @@ class SimulatedSession:
     def inject_text(self, text: str) -> None:
         with self._lock:
             self.texts.append(str(text))
+
+    def set_clipboard_callback(self, callback: Callable[[str], None] | None) -> None:
+        """注册模拟平板的剪贴板回传回调。"""
+        self._clipboard_callback = callback
+
+    def publish_clipboard(self, text: str) -> None:
+        """模拟用户在平板上复制文本。"""
+        callback = self._clipboard_callback
+        if callback is not None:
+            callback(str(text))
 
     def set_clipboard(self, text: str, *, sequence: int = 0) -> None:
         """记录写平板剪贴板的请求（0.3.14 起自动同步走这条路）。"""

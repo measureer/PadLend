@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 1.0.4，最新发布 1.0.4；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前源码版本 1.0.5，最新发布 1.0.4；Apache-2.0。设计思路见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ![桌面布局页](docs/screenshots/ui-layout.png)
 
@@ -16,6 +16,7 @@
 - 鼠标从屏幕边缘进入平板后 1:1 移动；从平板边缘继续外推，交还给 PC。
 - 通过 UHID 创建虚拟鼠标/键盘，平板显示真实的系统指针，右键、滚轮、侧键都能用。
 - 键盘转发，支持中文输入法；`Ctrl+Alt+S` 手动接管/交还，`Ctrl+Alt+Q` 急停。
+- 剪贴板双向同步：PC 复制自动写入平板，平板复制也会写回 Windows；只写剪贴板，不敲键盘。
 - 布局页可视化摆位：拖到合法边缘后点「保存布局」才生效；角落按 `Shift` 切换优先边，点「显示全部」可一次看全所有显示器和平板。
 - 每台设备的横屏、竖屏布局分别保存；平板旋转时按真实朝向自动切换到对应布局。
 - 日间/夜间主题、托盘菜单、日志查看、脱敏诊断包。
@@ -68,7 +69,7 @@ PadLend\
 └─ THIRD_PARTY_NOTICES.md
 ```
 
-整个目录约 129 MB，zip 约 54 MB。配置和日志默认写在 `%APPDATA%\PadLend\`，所以换新版时直接覆盖程序目录，配置还在。
+整个目录约 138 MB，zip 约 54 MB。配置和日志默认写在 `%APPDATA%\PadLend\`，所以换新版时直接覆盖程序目录，配置还在。
 
 ### 安装器
 

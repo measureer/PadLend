@@ -396,9 +396,9 @@ class SettingsPanel(QWidget):
         right.addWidget(
             self._check_row(
                 self.clipboard_check,
-                "勾选后，接管期间 PC 剪贴板会跟着平板走：进入接管时同步一次，"
-                "之后每次复制也会自动同步（直接写平板剪贴板，不敲键盘）；"
-                "取消勾选就完全不发。",
+                "勾选后双向同步文本：接管期间 PC 复制会自动写入平板，"
+                "平板复制也会写回 Windows（只写剪贴板，不敲键盘）；"
+                "取消勾选就关闭双向同步。",
             )
         )
         right.addWidget(

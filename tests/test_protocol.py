@@ -322,3 +322,30 @@ def test_set_clipboard_defaults_to_sequence_zero() -> None:
     message = P.set_clipboard("x")
     assert message[9] == 0
     assert int.from_bytes(message[1:9], "big") == 0
+
+
+def test_deserialize_clipboard_waits_for_fragment_and_decodes_utf8() -> None:
+    payload = "平板复制".encode()
+    packet = b"\x00" + len(payload).to_bytes(4, "big") + payload
+    assert P.deserialize_device_message(packet[:3]) == (None, 0)
+    assert P.deserialize_device_message(packet[:-1]) == (None, 0)
+    message, consumed = P.deserialize_device_message(packet + b"next")
+    assert message == P.DeviceMessage(P.DEVICE_MSG_CLIPBOARD, text="平板复制")
+    assert consumed == len(packet)
+
+
+def test_deserialize_ack_and_uhid_output() -> None:
+    ack, ack_size = P.deserialize_device_message(b"\x01" + (7).to_bytes(8, "big"))
+    assert ack == P.DeviceMessage(P.DEVICE_MSG_ACK_CLIPBOARD, sequence=7)
+    assert ack_size == 9
+
+    uhid, uhid_size = P.deserialize_device_message(b"\x02\x00\x02\x00\x02\xab\xcd")
+    assert uhid == P.DeviceMessage(P.DEVICE_MSG_UHID_OUTPUT, uhid_id=2, data=b"\xab\xcd")
+    assert uhid_size == 7
+
+
+def test_deserialize_rejects_unknown_or_oversized_message() -> None:
+    with pytest.raises(ValueError, match="未知平板设备消息"):
+        P.deserialize_device_message(b"\xff")
+    with pytest.raises(ValueError, match="剪贴板消息过长"):
+        P.deserialize_device_message(b"\x00" + (P.DEVICE_MSG_MAX_SIZE).to_bytes(4, "big"))

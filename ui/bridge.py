@@ -21,6 +21,7 @@ MetricSlot = Callable[[dict[str, Any]], None]
 StateSlot = Callable[[str, str, str], None]
 LogSlot = Callable[[str], None]
 OrientationSlot = Callable[[object], None]
+ClipboardSlot = Callable[[str], None]
 
 
 def state_value(value: object) -> str:
@@ -43,6 +44,10 @@ def _ignore_facts(_facts: object) -> None:
     """``detach`` 后的空实现。"""
 
 
+def _ignore_clipboard(_text: str) -> None:
+    """``detach`` 后的空实现。"""
+
+
 class RouterBridge(QObject):
     """把 Router 的线程回调转成 Qt 信号。
 
@@ -51,16 +56,19 @@ class RouterBridge(QObject):
     - ``metricsChanged(dict)``
     - ``logLine(str)``
     - ``orientationChanged(object)``：设备横竖屏事实变化
+    - ``clipboardReceived(str)``：平板复制的新文本
     """
 
     stateChanged = Signal(str, str, str)
     metricsChanged = Signal(dict)
     logLine = Signal(str)
     orientationChanged = Signal(object)
+    clipboardReceived = Signal(str)
 
     _STATE_CALLBACK: Final[str] = "on_state_changed"
     _METRICS_CALLBACK: Final[str] = "on_metrics"
     _ORIENTATION_CALLBACK: Final[str] = "on_orientation_changed"
+    _CLIPBOARD_CALLBACK: Final[str] = "on_clipboard_received"
 
     def __init__(self, router: object | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -97,6 +105,7 @@ class RouterBridge(QObject):
         self._install(self._STATE_CALLBACK, self._on_state_changed)
         self._install(self._METRICS_CALLBACK, self._on_metrics)
         self._install(self._ORIENTATION_CALLBACK, self._on_orientation)
+        self._install(self._CLIPBOARD_CALLBACK, self._on_clipboard)
 
     def detach(self) -> None:
         """摘掉回调并恢复成空实现（Router 不会被裸 None 调用）。"""
@@ -106,6 +115,7 @@ class RouterBridge(QObject):
         self._restore(router, self._STATE_CALLBACK, _ignore_state)
         self._restore(router, self._METRICS_CALLBACK, _ignore_metrics)
         self._restore(router, self._ORIENTATION_CALLBACK, _ignore_facts)
+        self._restore(router, self._CLIPBOARD_CALLBACK, _ignore_clipboard)
 
     def _install(self, name: str, callback: Callable[..., None]) -> None:
         router = self._router
@@ -147,6 +157,11 @@ class RouterBridge(QObject):
             return
         self._emit(self.orientationChanged, facts)
 
+    def _on_clipboard(self, text: object) -> None:
+        if text is None:
+            return
+        self._emit(self.clipboardReceived, str(text))
+
     # -- 其它生产者的日志 ------------------------------------------------
     def log_line(self, text: str) -> None:
         """供 UI/后台线程追加日志行（同样走信号，保证落到 GUI 线程）。"""
@@ -166,6 +181,7 @@ class RouterBridge(QObject):
         on_metrics: MetricSlot | None = None,
         on_log: LogSlot | None = None,
         on_orientation: OrientationSlot | None = None,
+        on_clipboard: ClipboardSlot | None = None,
     ) -> None:
         """以 ``QueuedConnection`` 把信号接到 GUI 线程的槽上（8.2 要求）。"""
         connection = Qt.ConnectionType.QueuedConnection
@@ -177,3 +193,5 @@ class RouterBridge(QObject):
             self.logLine.connect(on_log, connection)
         if on_orientation is not None:
             self.orientationChanged.connect(on_orientation, connection)
+        if on_clipboard is not None:
+            self.clipboardReceived.connect(on_clipboard, connection)

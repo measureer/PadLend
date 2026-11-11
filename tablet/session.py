@@ -276,6 +276,11 @@ class TabletSession:
         self._orientation_proc: subprocess.Popen[str] | None = None
         self._orientation_thread: threading.Thread | None = None
 
+        # scrcpy 控制通道是双向的：接收线程处理平板剪贴板、ACK 与 UHID 输出。
+        self._clipboard_callback: Callable[[str], None] | None = None
+        self._receiver_stop: threading.Event | None = None
+        self._receiver_thread: threading.Thread | None = None
+
         self._last_error = ""
         self._consecutive_failures = 0
         self._sent = 0
@@ -299,6 +304,10 @@ class TabletSession:
     ) -> None:
         """注册朝向变化回调（在监听线程里调用，GUI 侧负责转成队列信号）。"""
         self._facts_callback = callback
+
+    def set_clipboard_callback(self, callback: Callable[[str], None] | None) -> None:
+        """注册平板剪贴板回调（接收线程调用，GUI 侧负责排队回主线程）。"""
+        self._clipboard_callback = callback
 
     @property
     def port(self) -> int | None:
@@ -364,6 +373,7 @@ class TabletSession:
         self._port = self.server.forward()
         self._connect_socket()
         self._create_uhid()
+        self._start_receiver()
         self._keep_screen_on()
         log_event(
             LOG,
@@ -446,6 +456,7 @@ class TabletSession:
         self._port = server.forward()
         self._connect_socket()
         self._create_uhid()
+        self._start_receiver()
 
     # -- 发送（只由 T5 调用） ----------------------------------------------
     def send_mouse(self, buttons: int, dx: int, dy: int, wheel: int) -> None:
@@ -670,16 +681,97 @@ class TabletSession:
             return
 
     def _close_socket(self) -> None:
+        stop = self._receiver_stop
+        thread = self._receiver_thread
+        self._receiver_stop = None
+        self._receiver_thread = None
+        if stop is not None:
+            stop.set()
         with self._send_lock:
             sock, self._sock = self._sock, None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+            try:
+                sock.close()
+            except OSError:  # pragma: no cover - 已关闭
+                LOG.debug("socket 关闭时已失效")
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=2.0)
+
+    def _start_receiver(self) -> None:
+        """启动控制通道接收线程；发送与接收共用 socket，但互不持有对方的锁。"""
+        if self._receiver_thread is not None and self._receiver_thread.is_alive():
+            return
+        sock = self._sock
         if sock is None:
             return
-        with contextlib.suppress(OSError):
-            sock.shutdown(socket.SHUT_RDWR)
-        try:
-            sock.close()
-        except OSError:  # pragma: no cover - 已关闭
-            LOG.debug("socket 关闭时已失效")
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._receiver_loop,
+            args=(sock, stop),
+            name="padlend-receiver",
+            daemon=True,
+        )
+        self._receiver_stop = stop
+        self._receiver_thread = thread
+        thread.start()
+        LOG.debug("控制通道接收监听已启动")
+
+    def _receiver_loop(self, sock: socket.socket, stop: threading.Event) -> None:
+        buffer = bytearray()
+        while not stop.is_set():
+            try:
+                chunk = sock.recv(65536)
+            except TimeoutError:
+                continue
+            except OSError as exc:
+                self._mark_receiver_broken(sock, stop, f"socket 读失败: {exc}")
+                return
+            if not chunk:
+                self._mark_receiver_broken(sock, stop, "对端关闭了控制通道")
+                return
+            buffer.extend(chunk)
+            try:
+                while buffer and not stop.is_set():
+                    message, consumed = protocol.deserialize_device_message(buffer)
+                    if message is None:
+                        break
+                    del buffer[:consumed]
+                    self._handle_device_message(message)
+            except (ValueError, UnicodeError) as exc:
+                self._mark_receiver_broken(sock, stop, f"设备消息解析失败: {exc}")
+                return
+        LOG.debug("控制通道接收监听已停止")
+
+    def _mark_receiver_broken(
+        self, sock: socket.socket, stop: threading.Event, detail: str
+    ) -> None:
+        if stop.is_set() or self._sock is not sock:
+            return
+        self._sock_broken = True
+        self._last_error = detail
+        LOG.warning("控制通道接收中断: %s", detail)
+
+    def _handle_device_message(self, message: protocol.DeviceMessage) -> None:
+        if message.type == protocol.DEVICE_MSG_CLIPBOARD:
+            callback = self._clipboard_callback
+            if callback is not None:
+                try:
+                    callback(message.text)
+                except Exception:  # noqa: BLE001 - GUI 回调不能杀死接收线程
+                    LOG.exception("平板剪贴板回调失败")
+            return
+        if message.type == protocol.DEVICE_MSG_ACK_CLIPBOARD:
+            LOG.debug("平板剪贴板 ACK sequence=%d", message.sequence)
+            return
+        if message.type == protocol.DEVICE_MSG_UHID_OUTPUT:
+            # 当前鼠标/键盘描述符没有需要回写的输出报告；必须消费以保持流对齐。
+            LOG.debug("忽略 UHID 输出 id=%d size=%d", message.uhid_id, len(message.data))
 
     def _create_uhid(self) -> None:
         """UHID_CREATE 鼠标(id=1) + 键盘(id=2)（9.2 / 9.3）。"""

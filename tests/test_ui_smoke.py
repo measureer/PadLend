@@ -54,6 +54,7 @@ class FakeRouter:
         self.on_state_changed: Any = None
         self.on_metrics: Any = None
         self.on_orientation_changed: Any = None
+        self.on_clipboard_received: Any = None
         self.calls: list[tuple[str, Any]] = []
 
     def start(self) -> None:
@@ -436,6 +437,31 @@ def test_clipboard_changes_only_sync_while_captured(window: Any) -> None:
     window._on_clipboard_changed()
     assert window._clipboard_timer.isActive() is True
     window._clipboard_timer.stop()
+
+
+def test_tablet_clipboard_updates_windows_without_echo(
+    window: Any, router: FakeRouter, qapp: QApplication
+) -> None:
+    window.config.misc.clipboard_sync = True
+    QGuiApplication.clipboard().setText("before")
+    qapp.processEvents()
+    window._state = "captured"
+    router.calls.clear()
+
+    router.on_clipboard_received("来自平板")
+    qapp.processEvents()
+
+    assert QGuiApplication.clipboard().text() == "来自平板"
+    assert window._clipboard_timer.isActive() is False
+    window._clipboard_timer.timeout.emit()
+    assert not [call for call in router.calls if call[0] == "clipboard"]
+
+    # 即使用户在一秒抑制窗口内复制不同内容，也不能被当成远程回显丢掉。
+    QGuiApplication.clipboard().setText("Windows 新内容")
+    qapp.processEvents()
+    assert window._clipboard_timer.isActive() is True
+    window._clipboard_timer.timeout.emit()
+    assert ("clipboard", "Windows 新内容") in router.calls
 
 
 def test_bridge_forwards_orientation(
