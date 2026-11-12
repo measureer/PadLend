@@ -1,0 +1,978 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "152541be-0999-4697-aaa9-961a07be4a55",
+      "title": "PadLend 0.1.0 实现交接与真机联调结论",
+      "description": "PadLend（Windows→Android 平板 KVM 式扩展）0.1.0 的架构分层、真机实测推翻的三处设计假设、验收状态与复验入口。",
+      "status": "active",
+      "filename": "padlend-0-1-0-152541be.md",
+      "relativePath": "documents/active/padlend-0-1-0-152541be.md",
+      "sourcePaths": [
+        "docs/DESIGN.md",
+        "docs/IMPLEMENTATION_NOTES.md",
+        "docs/VERIFICATION.md",
+        "docs/CHANGELOG.md",
+        "docs/TROUBLESHOOTING.md",
+        "README.md",
+        "main.py",
+        "core/router.py",
+        "tablet/session.py",
+        "tablet/adb.py",
+        "tools/probe.py",
+        "tools/repack_server_jar.py"
+      ],
+      "sessionIds": [
+        "0a847350-6dd4-423d-a110-c06e04b4cbd1"
+      ],
+      "createdAt": "2026-11-02T05:07:02.319Z",
+      "updatedAt": "2026-11-02T05:07:02.319Z",
+      "lastAccessedAt": "2026-11-05T16:10:30.099Z",
+      "revision": 1,
+      "contentHash": "e2fe0c0ec2c5ea7800ae662ec4f9089544d5fc2ec5c40dc623fc402f3fa7e33a",
+      "sizeBytes": 5356,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e8749862-642e-4782-8ade-f0ca2bd46431",
+      "title": "PadLend 0.1.0 单文件 exe 打包与交付（onefile 决策与坑）",
+      "description": "PadLend 0.1.0 由 onedir 改为 PyInstaller onefile 的交付决策、spec 关键项、内置 adb、验证证据与遗留限制；补充既有实现交接文档的打包部分。",
+      "status": "active",
+      "filename": "padlend-0-1-0-exe-onefile-e8749862.md",
+      "relativePath": "documents/active/padlend-0-1-0-exe-onefile-e8749862.md",
+      "sourcePaths": [
+        "PadLend.spec",
+        "constants.py",
+        "README.md",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md",
+        "docs/CHANGELOG.md",
+        "vendor/adb/README.md",
+        ".gitignore"
+      ],
+      "sessionIds": [
+        "e9fb3c4f-14f4-4e33-8f31-f9c42a080ba9"
+      ],
+      "createdAt": "2026-11-02T06:03:30.931Z",
+      "updatedAt": "2026-11-02T06:03:30.931Z",
+      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "revision": 1,
+      "contentHash": "d6442fa0fd64a3a68e2d77b5d71fadb982b985a6444a13b0a82b73c1edb5ee1a",
+      "sizeBytes": 3465,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c1ae64a0-a18e-4316-8453-4074c37e64d2",
+      "title": "PadLend 0.2.0 UI 重做与设备管理页（状态语义、线程模型与交付）",
+      "description": "PadLend 0.2.0 的深色 UI 重做、设备管理页（扫描/连接/断开、后台线程、未连接不显示假分辨率）、状态语义与交付验证结论。",
+      "status": "active",
+      "filename": "padlend-0-2-0-ui-c1ae64a0.md",
+      "relativePath": "documents/active/padlend-0-2-0-ui-c1ae64a0.md",
+      "sourcePaths": [
+        "ui/device_page.py",
+        "ui/icons.py",
+        "ui/main_window.py",
+        "ui/theme/tokens.py",
+        "ui/theme/dark.qss",
+        "docs/VERIFICATION.md",
+        "docs/IMPLEMENTATION_NOTES.md",
+        "docs/CHANGELOG.md",
+        "dist/PadLend.exe"
+      ],
+      "sessionIds": [
+        "8bcd88f7-90e3-4aa6-a8fa-84fa92f6d8d9"
+      ],
+      "createdAt": "2026-11-02T07:28:28.458Z",
+      "updatedAt": "2026-11-02T07:28:28.458Z",
+      "lastAccessedAt": "2026-11-04T16:47:30.286Z",
+      "revision": 1,
+      "contentHash": "c9a11b0dc031f8a230a137921f1ad600ba8456000ba7add8ebfe338c2a3c5bb8",
+      "sizeBytes": 5549,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "d263d889-99d4-4b9b-abdb-486e880fa3b4",
+      "title": "PadLend 0.2.1 明暗主题切换（令牌、持久化与交付）",
+      "description": "PadLend 0.2.1 的明/暗主题切换实现要点（tokens/set_theme/current_theme、config.ui.theme 持久化、画布与标题栏重绘修复）、验证证据、exe 交付与重建时进程占用坑。",
+      "status": "active",
+      "filename": "padlend-0-2-1-d263d889.md",
+      "relativePath": "documents/active/padlend-0-2-1-d263d889.md",
+      "sourcePaths": [
+        "ui/theme/tokens.py",
+        "ui/style.py",
+        "ui/main_window.py",
+        "ui/canvas_items.py",
+        "ui/icons.py",
+        "config.py",
+        "tests/test_config.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "docs/screenshots/ui-light.png"
+      ],
+      "sessionIds": [
+        "70350749-7c85-4131-9ae8-c852693ef54a"
+      ],
+      "createdAt": "2026-11-02T07:43:23.910Z",
+      "updatedAt": "2026-11-02T07:43:23.910Z",
+      "lastAccessedAt": "2026-11-04T16:40:00.520Z",
+      "revision": 1,
+      "contentHash": "8e75dfc951e7e9ed10be398609f0f0ee75d60078cc474641a6bba005987f5c54",
+      "sizeBytes": 4166,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "03b30f62-e54b-4b46-8840-a6d760dfe221",
+      "title": "PadLend 0.2.2 根因修复：设备列表重复与边缘穿越不触发",
+      "description": "PadLend 0.2.2 两个缺陷的根因与修复：畸形 mDNS 记录导致 adb 设备重复；DesktopMap 缺 cursor_pos 退化为 Raw Input 累加导致边缘判定漂移、从未进入捕获态。含真机日志证据、测试与自动化验证限制。",
+      "status": "active",
+      "filename": "padlend-0-2-2-03b30f62.md",
+      "relativePath": "documents/active/padlend-0-2-2-03b30f62.md",
+      "sourcePaths": [
+        "tablet/adb.py",
+        "core/router.py",
+        "win/desktop.py",
+        "win/dpi.py",
+        "win/keyboard_hook.py",
+        "ui/main_window.py",
+        "tests/test_adb.py",
+        "tests/test_router.py",
+        "tests/test_geometry.py",
+        "docs/VERIFICATION.md",
+        "docs/CHANGELOG.md",
+        "constants.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "0af62dac-1300-4bb6-861f-6674be046540"
+      ],
+      "createdAt": "2026-11-02T16:19:29.139Z",
+      "updatedAt": "2026-11-02T16:19:29.139Z",
+      "lastAccessedAt": "2026-11-05T10:10:23.711Z",
+      "revision": 1,
+      "contentHash": "4108c99acb39b23723ac0c3c7fb0b7189c0d35f8a011058560333556a32eeb3c",
+      "sizeBytes": 4217,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "77d38f1b-d45b-4e37-b757-5dc62fa3e6ba",
+      "title": "PadLend 0.2.3：接管期隐藏系统光标与入口保护（防过早穿回）",
+      "description": "PadLend 0.2.3 两个可用性缺陷的根因与修复：透明遮罩带 WS_EX_TRANSPARENT 收不到 WM_SETCURSOR 导致平板与 PC 双指针；出口判定缺少进入深度门槛导致刚进入就穿回。含 entry_guard_px 语义、测试与产物验证。",
+      "status": "active",
+      "filename": "padlend-0-2-3-77d38f1b.md",
+      "relativePath": "documents/active/padlend-0-2-3-77d38f1b.md",
+      "sourcePaths": [
+        "win/mask.py",
+        "core/router.py",
+        "config.py",
+        "constants.py",
+        "tests/test_mask.py",
+        "tests/test_router.py",
+        "docs/DESIGN.md",
+        "docs/CHANGELOG.md",
+        "README.md"
+      ],
+      "sessionIds": [
+        "20646b29-6be9-4e75-ac92-0ca88d6c6a7f"
+      ],
+      "createdAt": "2026-11-02T16:59:25.440Z",
+      "updatedAt": "2026-11-02T16:59:25.440Z",
+      "lastAccessedAt": "2026-11-05T16:10:30.099Z",
+      "revision": 1,
+      "contentHash": "a7b04c9ba9e09aaff7098570c9c1bb77b674e8a12c570782311f4f640fa064c3",
+      "sizeBytes": 4974,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "426829a8-2768-4216-8e2c-e7442c0760ab",
+      "title": "PadLend 0.2.4：无线 adb 设备被误丢（带空格的 mDNS serial）根因与修复",
+      "description": "PadLend 0.2.4 修复「平板已开无线调试但检测不到设备」：adb devices 解析把含空格的 mDNS serial（形如 name (2)._adb-tls-connect._tcp）整行丢弃的根因、按状态令牌回拼与 IP:port 优先去重方案、真机证据与交付数据。",
+      "status": "active",
+      "filename": "padlend-0-2-4-adb-mdns-serial-426829a8.md",
+      "relativePath": "documents/active/padlend-0-2-4-adb-mdns-serial-426829a8.md",
+      "sourcePaths": [
+        "tablet/adb.py",
+        "tests/test_adb.py",
+        "docs/TROUBLESHOOTING.md",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "tools/probe.py",
+        "ui/device_page.py",
+        "constants.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "e997aa4b-6cef-4466-a5b0-5f5bc64b8b3d"
+      ],
+      "createdAt": "2026-11-03T01:03:01.231Z",
+      "updatedAt": "2026-11-03T01:03:01.231Z",
+      "lastAccessedAt": "2026-11-06T13:10:36.278Z",
+      "revision": 1,
+      "contentHash": "55497db40ca477d4c2367ccc38e6ff7122b16d565e511c5f1adaf064cf012121",
+      "sizeBytes": 4636,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "b95bf08b-9a5c-4b5a-a672-af69f52c7c79",
+      "title": "PadLend 0.2.7：滚轮步进换算、拖动期禁止穿回与键盘锁外发送",
+      "description": "PadLend 0.2.7 一轮可用性缺陷的根因与修复：120/HID 滚轮步进换算、按键按下期间禁止出口判定、键盘发送移出 Router 锁、键盘/回程后刷新绝对光标；含 Qt 测试排序与 exe 占用排障、316 passed 与构建校验。",
+      "status": "active",
+      "filename": "padlend-0-2-7-b95bf08b.md",
+      "relativePath": "documents/active/padlend-0-2-7-b95bf08b.md",
+      "sourcePaths": [
+        "core/router.py",
+        "constants.py",
+        "main.py",
+        "conftest.py",
+        "tests/test_router.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "docs/DESIGN.md",
+        "ui/main_window.py"
+      ],
+      "sessionIds": [
+        "55ed5c26-cfa9-49ba-8e86-dd68ee66b4ab"
+      ],
+      "createdAt": "2026-11-03T02:33:26.528Z",
+      "updatedAt": "2026-11-03T02:33:26.528Z",
+      "lastAccessedAt": "2026-11-05T16:10:30.099Z",
+      "revision": 1,
+      "contentHash": "d418273a70d36c0f1bcb91721e37a03e4616122ab8a7f00a849dc5ebcf258e69",
+      "sizeBytes": 5239,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "fb9d6e9c-638d-47b1-b564-a31edd8e3576",
+      "title": "PadLend 0.2.8：心跳携带按键位，修复平板端拖拽一拖就断",
+      "description": "PadLend 0.2.8 根因与修复：发送线程 1ms 零位移心跳把按键位清零导致 UHID 拖拽被取消；心跳改为携带接管期按键位、离开接管发全零；含发送队列语义、回归测试、版本/产物校验与构建排障。",
+      "status": "active",
+      "filename": "padlend-0-2-8-fb9d6e9c.md",
+      "relativePath": "documents/active/padlend-0-2-8-fb9d6e9c.md",
+      "sourcePaths": [
+        "core/router.py",
+        "tests/test_router.py",
+        "ui/main_window.py",
+        "constants.py",
+        "padlend/__init__.py",
+        "pyproject.toml",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "c9814a86-b81d-4bf4-b27f-978d3714fe2a"
+      ],
+      "createdAt": "2026-11-03T02:46:23.468Z",
+      "updatedAt": "2026-11-03T02:46:23.468Z",
+      "lastAccessedAt": "2026-11-04T15:58:16.285Z",
+      "revision": 1,
+      "contentHash": "ab283535ef7c508c8d24f0e6f6f2ec33773aa405e147a431f61bd5fca4d0cbd0",
+      "sizeBytes": 4260,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e2adfa38-96f7-405c-9f59-e38da0a8ac8d",
+      "title": "PadLend 0.2.9 / 0.3.0：慢推不接管与跨显示器边缘不匹配",
+      "description": "PadLend 0.2.9/0.3.0 修复：ARMING 80ms/40px 速度门槛导致慢推不接管（改为 ≥12px arm_slow），以及吸附边在其他显示器时静默 return（改为 placement_adopt 自动采纳）。含日志证据、提交、测试与构建校验。",
+      "status": "active",
+      "filename": "padlend-0-2-9-0-3-0-e2adfa38.md",
+      "relativePath": "documents/active/padlend-0-2-9-0-3-0-e2adfa38.md",
+      "sourcePaths": [
+        "core/router.py",
+        "constants.py",
+        "tests/test_router.py",
+        "tests/fakes.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "9068ab1a-d02c-46a4-b1c9-58d6e215dbec"
+      ],
+      "createdAt": "2026-11-03T03:12:11.411Z",
+      "updatedAt": "2026-11-03T03:12:11.411Z",
+      "lastAccessedAt": "2026-11-06T11:37:38.675Z",
+      "revision": 1,
+      "contentHash": "a0cc06a66746244e535fd9feb1be538758680cb7461b62e1b5a6faba398492b9",
+      "sizeBytes": 4031,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "83fbcc75-72bc-47a8-b14d-7676bd1dc135",
+      "title": "PadLend 0.3.1：Raw Input 静默兜底（cursor_watch）与一次真实鼠标复验交接",
+      "description": "PadLend 0.3.1 根因与修复：点击 Windows 输入框后 Raw Input 静默导致无法再推向边缘接管；新增 GetCursorPos/GetAsyncKeyState 兜底线程、让位语义、日志与文件清单，含 0.2.9/0.3.0 背景、测试与产物校验。",
+      "status": "active",
+      "filename": "padlend-0-3-1-raw-input-cursor-watch-83fbcc75.md",
+      "relativePath": "documents/active/padlend-0-3-1-raw-input-cursor-watch-83fbcc75.md",
+      "sourcePaths": [
+        "win/rawinput.py",
+        "win/cursor_watch.py",
+        "tests/test_cursor_watch.py",
+        "main.py",
+        "constants.py",
+        "padlend/__init__.py",
+        "pyproject.toml",
+        "docs/CHANGELOG.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "3d0b9244-8bf9-4aa6-819a-ce87c6ca7faf"
+      ],
+      "createdAt": "2026-11-03T03:35:19.196Z",
+      "updatedAt": "2026-11-03T03:35:19.196Z",
+      "lastAccessedAt": "2026-11-05T10:38:24.059Z",
+      "revision": 1,
+      "contentHash": "be6f0455dc431875f7d932dc719c81baa27ff0b66c79f8e4fd9ca9e9c399095f",
+      "sizeBytes": 4813,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "3b223e1f-e1ce-49f7-aa73-b2bfc9c690f2",
+      "title": "PadLend 0.3.2：兜底线程直接调 Router 导致遮罩挂起（AppHangB1）",
+      "description": "PadLend 0.3.1 光标兜底的线程归属缺陷：cursorwatch 线程创建全屏遮罩导致点击挂起/双光标消失；修复为 inject()+WM_APP 回 Raw Input 线程分发，含证据、测试、产物与线程不变量。",
+      "status": "active",
+      "filename": "padlend-0-3-2-router-apphangb1-3b223e1f.md",
+      "relativePath": "documents/active/padlend-0-3-2-router-apphangb1-3b223e1f.md",
+      "sourcePaths": [
+        "win/rawinput.py",
+        "win/cursor_watch.py",
+        "win/mask.py",
+        "core/router.py",
+        "tests/test_rawinput.py",
+        "tests/test_cursor_watch.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "50cb5bb0-65e4-4ee2-9580-dcff8472bc60"
+      ],
+      "createdAt": "2026-11-03T03:58:45.039Z",
+      "updatedAt": "2026-11-03T03:58:45.039Z",
+      "lastAccessedAt": "2026-11-03T05:02:44.503Z",
+      "revision": 1,
+      "contentHash": "68e8737f90f3a46c6737c1283a90481f03c35bbbd1fd1fa1dd139a2872a0f1cd",
+      "sizeBytes": 4032,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "fb594e73-71de-4328-9304-cf7413283dd9",
+      "title": "PadLend 0.3.3：兜底注入刷新 Raw Input 时间戳导致接管永远 ARMING 超时",
+      "description": "PadLend 0.3.3 根因：inject() 回写 Raw Input 最近事件时间，CursorWatch 误判恢复后每 250ms 才补一帧，ARMING 80ms 内等不到 40px 而 arm.fail timeout；修复为注入不刷新时间戳、静默期 20ms 连续补帧，含测试与产物。",
+      "status": "active",
+      "filename": "padlend-0-3-3-raw-input-arming-fb594e73.md",
+      "relativePath": "documents/active/padlend-0-3-3-raw-input-arming-fb594e73.md",
+      "sourcePaths": [
+        "win/rawinput.py",
+        "win/cursor_watch.py",
+        "tests/test_rawinput.py",
+        "tests/test_cursor_watch.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "constants.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "01602a0d-8f59-44c6-8ec0-8ebf97ff11ef"
+      ],
+      "createdAt": "2026-11-03T04:03:40.907Z",
+      "updatedAt": "2026-11-03T04:03:40.907Z",
+      "lastAccessedAt": "2026-11-05T10:10:23.711Z",
+      "revision": 1,
+      "contentHash": "4ec665f2c43d205d38ef88cc2cdfe968f709ebd5239f8efe8021c12b3524b934",
+      "sizeBytes": 4848,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "33674fad-db20-4559-9660-8f5e82632719",
+      "title": "PadLend 0.3.4：系统光标永久隐藏的根因修复（弃用 ShowCursor、跨线程 WM_CLOSE）",
+      "description": "PadLend 0.3.4 根因与修复：0.3.3 用进程级 ShowCursor 计数 + 跨线程 DestroyWindow 失败导致遮罩泄漏，Windows 光标永久不可见；改为仅靠 WM_SETCURSOR 隐藏、释放改 PostMessage(WM_CLOSE)，含 Win32 不变量、测试、提交与产物校验。",
+      "status": "active",
+      "filename": "padlend-0-3-4-showcursor-wm-close-33674fad.md",
+      "relativePath": "documents/active/padlend-0-3-4-showcursor-wm-close-33674fad.md",
+      "sourcePaths": [
+        "win/mask.py",
+        "main.py",
+        "tests/test_mask.py",
+        "constants.py",
+        "padlend/__init__.py",
+        "pyproject.toml",
+        "docs/CHANGELOG.md",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "27e42e0a-35bb-47cc-9c6a-1ceda2ebfa60"
+      ],
+      "createdAt": "2026-11-03T05:02:57.326Z",
+      "updatedAt": "2026-11-03T05:02:57.326Z",
+      "lastAccessedAt": "2026-11-05T03:21:54.310Z",
+      "revision": 1,
+      "contentHash": "bd25949a913093c24c5da9544370d22ef12708c3f1423332791da909c41503d7",
+      "sizeBytes": 5389,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e02ec28b-b543-48c2-89a5-ac57f7ecb212",
+      "title": "PadLend 0.3.5：退出后残留进程的根因（Qt 模态框吞掉 closeEvent）与「添加设备」/顶栏整理",
+      "description": "PadLend 0.3.5 一轮交付：关闭窗口不退出（模态对话框打开时 Qt 拒绝 closeEvent，改用原生事件过滤器接管 WM_CLOSE）+ Runtime.stop 补 adb kill-server；设备页「添加设备」无线配对对话框与地址容错；顶栏去重与品牌图标；含 adb fork-server 被第三方拉起的隔离端口判别法、355 passed 与 0.3.5 产物校验。",
+      "status": "active",
+      "filename": "padlend-0-3-5-qt-closeevent-e02ec28b.md",
+      "relativePath": "documents/active/padlend-0-3-5-qt-closeevent-e02ec28b.md",
+      "sourcePaths": [
+        "ui/main_window.py",
+        "ui/device_page.py",
+        "ui/icons.py",
+        "tablet/adb.py",
+        "main.py",
+        "build/ps-close-check.ps1",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "README.md",
+        "docs/DESIGN.md"
+      ],
+      "sessionIds": [
+        "19489a6b-fc41-4afc-86bc-8560a2360042"
+      ],
+      "createdAt": "2026-11-04T08:00:38.840Z",
+      "updatedAt": "2026-11-04T08:00:38.840Z",
+      "lastAccessedAt": "2026-11-06T10:27:22.468Z",
+      "revision": 1,
+      "contentHash": "87dd9090335d7c0a13bf641eea5d2fa3c45c61f9aaa6aff2d66f789e86ddec58",
+      "sizeBytes": 6929,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c6ae51a9-0067-4690-a981-d61ad2914ac5",
+      "title": "PadLend 0.3.6：--simulate 假平板与 tools/acceptance.py 自验收通道（含「点击后冒出鼠标」取证边界）",
+      "description": "PadLend 0.3.6：--simulate 假平板 + tools/acceptance.py 24 项现场状态验收、远程会话光标不可观测导致 3 项 SKIP、光标重现的三类成因与 cap.cursor 日志判读、设备行单行省略号 bug、产物与回归数据。",
+      "status": "active",
+      "filename": "padlend-0-3-6-simulate-tools-acceptance-py-c6ae51a9.md",
+      "relativePath": "documents/active/padlend-0-3-6-simulate-tools-acceptance-py-c6ae51a9.md",
+      "sourcePaths": [
+        "main.py",
+        "tablet/simulated.py",
+        "tools/acceptance.py",
+        "tests/test_simulated.py",
+        "tests/test_router.py",
+        "ui/device_page.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "README.md"
+      ],
+      "sessionIds": [
+        "c4dc933e-af5c-4ead-aa32-8b1dd9d67058"
+      ],
+      "createdAt": "2026-11-04T15:04:09.998Z",
+      "updatedAt": "2026-11-04T15:04:09.998Z",
+      "lastAccessedAt": "2026-11-05T03:21:54.310Z",
+      "revision": 1,
+      "contentHash": "c16cf9655461db2c886329459edce6ed102e5fd92adf56f29597502eb4d77b68",
+      "sizeBytes": 5588,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e293429d-6bb5-4d01-bc96-87a7a37d7104",
+      "title": "PadLend 0.3.7：RTT 恒为 0 与「穿屏后误点」的根因修复及 29 项验收",
+      "description": "PadLend 0.3.7 两处根因：record_latency() 无调用方导致 RTT 恒 0（改为入队→HID 写入计时、无样本不输出键）；退出/FAULT/stop 路径缺鼠标全松导致平板持续按着左键（四条路径补发 buttons=0）。含验收 29 项、364 passed、0.3.7 产物与未提交状态。",
+      "status": "active",
+      "filename": "padlend-0-3-7-rtt-0-29-e293429d.md",
+      "relativePath": "documents/active/padlend-0-3-7-rtt-0-29-e293429d.md",
+      "sourcePaths": [
+        "core/metrics.py",
+        "core/router.py",
+        "tools/acceptance.py",
+        "tests/test_router.py",
+        "tests/fakes.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "constants.py",
+        "padlend/__init__.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "65ef32cc-d587-4357-884e-069500259d8b"
+      ],
+      "createdAt": "2026-11-04T15:23:53.926Z",
+      "updatedAt": "2026-11-04T15:23:53.926Z",
+      "lastAccessedAt": "2026-11-05T03:21:54.310Z",
+      "revision": 1,
+      "contentHash": "888339223998ab1693be75db5591f64d8d5cb2aa55d188a581b9d935c6d6c247",
+      "sizeBytes": 5136,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "93d417e1-2745-4e17-914d-dafcdd42102c",
+      "title": "PadLend 0.3.8：进入接管先发鼠标全松、HID 按键位掩码与按下来源三路日志",
+      "description": "PadLend 0.3.8 接续 0.3.7：真机复现条件（只推入不按键、从上边缘进入）指向「进入前平板已持有左键」的跨会话残留；修法为入口补发 buttons=0、HID 按键字节 &0x1F、tablet.mouse.btn/cursorwatch.btn/cap.btn 三路来源日志；含 30 项验收、367 passed、0.3.8 产物哈希与提交 d6ab870。",
+      "status": "active",
+      "filename": "padlend-0-3-8-hid-93d417e1.md",
+      "relativePath": "documents/active/padlend-0-3-8-hid-93d417e1.md",
+      "sourcePaths": [
+        "core/router.py",
+        "tablet/session.py",
+        "win/cursor_watch.py",
+        "tests/test_session_mouse.py",
+        "tests/test_router.py",
+        "tools/acceptance.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "bb3d6222-1ecd-4c21-9124-8b97bf0ef6ad"
+      ],
+      "createdAt": "2026-11-04T15:46:50.195Z",
+      "updatedAt": "2026-11-04T15:46:50.195Z",
+      "lastAccessedAt": "2026-11-05T11:36:58.350Z",
+      "revision": 1,
+      "contentHash": "0ce2b91a92f3c21ffd12d2c7ef23d52a6b82ab877e83c587a8ad68795fb312f0",
+      "sizeBytes": 6081,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "83de8021-e432-4fab-a9d4-1dfde5b3ec3c",
+      "title": "PadLend 0.3.8–0.3.9：入口全松与真实指针贴边对齐",
+      "description": "PadLend 穿屏入口两处修复：0.3.8 进入前补全松消除误触；0.3.9 诊断出平板相对指针镜像从 (0,0) 起步导致提前穿回，用入口边法线整轴位移把真实指针顶到边上。含根因、实现、测试交互、验收与产物。",
+      "status": "active",
+      "filename": "padlend-0-3-8-0-3-9-83de8021.md",
+      "relativePath": "documents/active/padlend-0-3-8-0-3-9-83de8021.md",
+      "sourcePaths": [
+        "core/router.py",
+        "constants.py",
+        "tests/test_router.py",
+        "tests/fakes.py",
+        "tools/acceptance.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "padlend/__init__.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "05ced286-be17-42b1-b8d4-e3d16a9d9bc3"
+      ],
+      "createdAt": "2026-11-04T15:59:22.108Z",
+      "updatedAt": "2026-11-04T15:59:22.108Z",
+      "lastAccessedAt": "2026-11-06T11:37:38.675Z",
+      "revision": 1,
+      "contentHash": "52b7b5635107983c345da91c34974d711ad2c93127c43148524a083c3e6ac355",
+      "sizeBytes": 4737,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "1f477ac1-c92c-4cb9-87d2-1a5771e3f425",
+      "title": "PadLend 0.3.10：接管时不再自动推送剪贴板（穿屏误触 R 键的根因）",
+      "description": "PadLend 0.3.10 根因交接：进入接管时 GUI 自动同步剪贴板，scrcpy 的 INJECT_TEXT 经 KeyCharacterMap 变成真实按键，抖音里命中 R=「不感兴趣」；修法为仅保留 Ctrl+Alt+V 热键触发，并补 GUI 层与 acceptance 双层断言；含 369 passed、32 项验收、产物哈希与提交 c88092b。",
+      "status": "active",
+      "filename": "padlend-0-3-10-r-1f477ac1.md",
+      "relativePath": "documents/active/padlend-0-3-10-r-1f477ac1.md",
+      "sourcePaths": [
+        "ui/main_window.py",
+        "tools/acceptance.py",
+        "tests/test_ui_smoke.py",
+        "win/hotkeys.py",
+        "main.py",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md",
+        "docs/CHANGELOG.md"
+      ],
+      "sessionIds": [
+        "42666aae-d7f7-421c-98c5-a06e4d491a52"
+      ],
+      "createdAt": "2026-11-04T16:25:16.725Z",
+      "updatedAt": "2026-11-04T16:25:16.725Z",
+      "lastAccessedAt": "2026-11-05T10:49:34.145Z",
+      "revision": 1,
+      "contentHash": "2b8bc01bd6789584e34c46c89da3215fc9399e80b69782d60717958f19dbad8e",
+      "sizeBytes": 6159,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "70505628-5c8b-40af-83f2-e4038ca2708b",
+      "title": "PadLend 0.3.9–0.3.11 修复与交付（剪贴板误触、入口对齐、设备记忆、居中与图标）",
+      "description": "PadLend 0.3.9/0.3.10/0.3.11 三处根因修复（接管时的 INJECT_TEXT 误触按键、指针镜像与设备真实位置错位、设备记忆与重连）、窗口居中与图标单一来源的实现锚点、验证证据、产物与遗留确认项。",
+      "status": "active",
+      "filename": "padlend-0-3-9-0-3-11-70505628.md",
+      "relativePath": "documents/active/padlend-0-3-9-0-3-11-70505628.md",
+      "sourcePaths": [
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "docs/DESIGN.md",
+        "README.md",
+        "ui/main_window.py",
+        "ui/device_page.py",
+        "config.py",
+        "main.py",
+        "tools/make_icon.py",
+        "constants.py",
+        "tests/test_ui_smoke.py",
+        "tests/test_config.py"
+      ],
+      "sessionIds": [
+        "b66229da-7919-4f6b-b9e8-8c7d2172c952"
+      ],
+      "createdAt": "2026-11-04T16:40:13.686Z",
+      "updatedAt": "2026-11-04T16:40:13.686Z",
+      "lastAccessedAt": "2026-11-06T10:27:22.468Z",
+      "revision": 1,
+      "contentHash": "c018576d299fe7c1e44d172d154ee9addec3c0df017d67fb0fdbb861a81cf6eb",
+      "sizeBytes": 5927,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "9703aa09-7995-42f8-b7ec-f68260e1a720",
+      "title": "PadLend 打包图标仍显示旧图标：ICO 的 DIB/PNG 规范与 Shell 缓存排查（0.3.11 后续）",
+      "description": "0.3.11 交付后用户仍看到旧 exe 图标的双重根因（Explorer 图标缓存未刷新 + ICO 小尺寸写成 PNG）、DIB/PNG 混合 ICO 的生成与验证方法、缓存强制刷新手段，以及修正后的产物哈希。",
+      "status": "active",
+      "filename": "padlend-ico-dib-png-shell-0-3-11-9703aa09.md",
+      "relativePath": "documents/active/padlend-ico-dib-png-shell-0-3-11-9703aa09.md",
+      "sourcePaths": [
+        "tools/make_icon.py",
+        "tests/test_ui_smoke.py",
+        "assets/padlend.ico",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "e0361818-fd34-4224-82f8-7061e0e7e53b"
+      ],
+      "createdAt": "2026-11-04T16:48:11.174Z",
+      "updatedAt": "2026-11-04T16:48:11.174Z",
+      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "revision": 1,
+      "contentHash": "3437829b65d4284c7daae54074550353a92a813ad7a8953c0d690dadd03475dc",
+      "sizeBytes": 5102,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "d77b971e-b4e1-4390-bda7-5757ef582b0a",
+      "title": "PadLend 0.3.12：关闭窗口最小化到托盘（ui.close_to_tray）的实现与打包验收",
+      "description": "PadLend 0.3.12 交付：新增 ui.close_to_tray 开关，三条关闭路径统一到 MainWindow.request_close()，托盘不可用时回退真退出；含打包版两种模式验证、380 passed、0.3.12 产物哈希与提交 018837b。",
+      "status": "active",
+      "filename": "padlend-0-3-12-ui-close-to-tray-d77b971e.md",
+      "relativePath": "documents/active/padlend-0-3-12-ui-close-to-tray-d77b971e.md",
+      "sourcePaths": [
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "config.py",
+        "constants.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "fac81532-2f24-4524-8b47-4ec40f77e4a8"
+      ],
+      "createdAt": "2026-11-05T03:22:21.454Z",
+      "updatedAt": "2026-11-05T03:22:21.454Z",
+      "lastAccessedAt": "2026-11-05T11:56:56.876Z",
+      "revision": 1,
+      "contentHash": "a74b2e092bef0906b9e5dc86ac5bd89a6c208ab611fa748506cfa5a5dc3e9b44",
+      "sizeBytes": 4812,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "3fc283ec-660b-4303-999d-7d335a4739e0",
+      "title": "PadLend 0.3.13：设备找回三层定位、列表记忆移除与设置页滚轮隔离",
+      "description": "PadLend 0.3.13 五项改动：设备列表文案与「从列表移除」、启动时按 TCP/mDNS/ARP 三层找回上次设备（新增 tablet/locator.py）、设置项 wheelEvent 隔离、19 条设置说明重写；含 398 passed 测试、32 项验收、打包哈希与提交 b35b3ad，以及换 IP 找回的真机验证限制。",
+      "status": "active",
+      "filename": "padlend-0-3-13-3fc283ec.md",
+      "relativePath": "documents/active/padlend-0-3-13-3fc283ec.md",
+      "sourcePaths": [
+        "tablet/locator.py",
+        "tests/test_locator.py",
+        "tablet/adb.py",
+        "ui/device_page.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "82c6ec4e-f3c7-4170-af27-7d7120a154b7"
+      ],
+      "createdAt": "2026-11-05T10:10:46.693Z",
+      "updatedAt": "2026-11-05T10:10:46.693Z",
+      "lastAccessedAt": "2026-11-06T13:10:36.278Z",
+      "revision": 1,
+      "contentHash": "b7a21198469b3e24594e23075096284922a6219cd1e7bdbccad11b5be348c336",
+      "sizeBytes": 5374,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "02db456c-01d6-422c-b66a-2718e16efab1",
+      "title": "PadLend 0.3.14：剪贴板自动同步改用 SET_CLIPBOARD（不再注入按键）",
+      "description": "PadLend 0.3.14 交接：自动剪贴板同步从 INJECT_TEXT 改为 scrcpy SET_CLIPBOARD（type 9），报文布局、paste 语义、GUI 触发点、双层断言、404 通过/33 项验收与产物哈希；含替换运行中 exe 的操作前提。",
+      "status": "active",
+      "filename": "padlend-0-3-14-set-clipboard-02db456c.md",
+      "relativePath": "documents/active/padlend-0-3-14-set-clipboard-02db456c.md",
+      "sourcePaths": [
+        "tablet/protocol.py",
+        "tablet/session.py",
+        "tablet/simulated.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "tests/test_clipboard.py",
+        "tests/test_protocol.py",
+        "tests/test_ui_smoke.py",
+        "tools/acceptance.py",
+        "docs/DESIGN.md",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "bb176694-7c63-4225-b897-36e29da9feaf"
+      ],
+      "createdAt": "2026-11-05T10:38:40.958Z",
+      "updatedAt": "2026-11-05T10:38:40.958Z",
+      "lastAccessedAt": "2026-11-05T10:49:34.145Z",
+      "revision": 1,
+      "contentHash": "c143df3bfe448fb481a5ed91c779a9c3a847c816a9b44f289d40961d7218741d",
+      "sizeBytes": 5326,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "75d42eb1-4962-4340-b161-c4729094bc56",
+      "title": "PadLend 0.3.15：剪贴板同步全自动，移除 Ctrl+Alt+V 热键",
+      "description": "PadLend 0.3.15 交接：删除 clipboard 热键（VK_V / clipboardSyncRequested / _paste_clipboard）与 hotkeys.clipboard 配置字段，SET_CLIPBOARD paste 字节固定 0；含旧配置兼容、404 通过/33 项验收、产物哈希、提交 4d4d112 与替换运行中 exe 的操作前提。",
+      "status": "active",
+      "filename": "padlend-0-3-15-ctrl-alt-v-75d42eb1.md",
+      "relativePath": "documents/active/padlend-0-3-15-ctrl-alt-v-75d42eb1.md",
+      "sourcePaths": [
+        "config.py",
+        "main.py",
+        "win/hotkeys.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "tablet/protocol.py",
+        "tests/test_clipboard.py",
+        "tests/test_ui_smoke.py",
+        "tools/acceptance.py",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "docs/DESIGN.md"
+      ],
+      "sessionIds": [
+        "a1c6b2e0-00fc-4c91-b019-3a75b3e5f69c"
+      ],
+      "createdAt": "2026-11-05T10:49:56.722Z",
+      "updatedAt": "2026-11-05T10:49:56.722Z",
+      "lastAccessedAt": "2026-11-05T11:36:58.350Z",
+      "revision": 1,
+      "contentHash": "fc7046ecfb6748058cd9fa2d3b3805ba2e34a02e83ffccf5a2bb51570141f92d",
+      "sizeBytes": 5580,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "9d4a9cdc-4d8f-4732-82a0-51e98a96a7b6",
+      "title": "PadLend 0.3.16：托盘图标可辨识（品牌标 + 状态点）、上报频率四档、穿回阈值 120",
+      "description": "PadLend 0.3.16 交付：托盘图标改为品牌「P」+ 右下角状态点（≥24px 叠点、16/20px 只留品牌），隐藏前 ensure_visible、挂不上退化为最小化；上报频率收敛为 125/250/500/1000 四档并在加载时吸附旧值；EXIT_OVERFLOW_PX 24→120。含 Qt QIcon 按尺寸缓存导致的图标状态测试坑、409 passed、33 项验收、产物哈希与提交 763a059。",
+      "status": "active",
+      "filename": "padlend-0-3-16-120-9d4a9cdc.md",
+      "relativePath": "documents/active/padlend-0-3-16-120-9d4a9cdc.md",
+      "sourcePaths": [
+        "ui/tray.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "config.py",
+        "constants.py",
+        "tests/test_ui_smoke.py",
+        "tests/test_config.py",
+        "tests/test_router.py",
+        "docs/CHANGELOG.md",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md",
+        "docs/VERIFICATION.md#390"
+      ],
+      "sessionIds": [
+        "89d311eb-71b7-4bfa-8681-c2195874f2c5"
+      ],
+      "createdAt": "2026-11-05T11:20:20.491Z",
+      "updatedAt": "2026-11-05T11:20:20.491Z",
+      "lastAccessedAt": "2026-11-05T11:56:56.876Z",
+      "revision": 1,
+      "contentHash": "eecd30a3fd7880c4ab7ee6daf80ca3f3fae7d24669a4ed54b2350e91f9363d53",
+      "sizeBytes": 7539,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c9e12694-4a13-47f6-892c-e54b1b8feb72",
+      "title": "PadLend 0.3.17：设置页移除「偏移 / 角优先」，改由布局页拖动与方向裁决",
+      "description": "PadLend 0.3.17 交接：为何从设置页删掉 placement.offset 与 corner_priority（offset 不参与穿入/穿出映射，corner_priority 只是角落打分平局偏好，Shift 仅布局页拖动有效）；配置键保留兼容、旧 config.yaml 照常加载；409 passed、产物 53,185,982 B / sha256 1a601a1e…、提交 bbab534。",
+      "status": "active",
+      "filename": "padlend-0-3-17-c9e12694.md",
+      "relativePath": "documents/active/padlend-0-3-17-c9e12694.md",
+      "sourcePaths": [
+        "ui/settings_panel.py",
+        "constants.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md",
+        "padlend/__init__.py",
+        "pyproject.toml"
+      ],
+      "sessionIds": [
+        "ca2ed92c-7347-4a94-9a80-22dec7ed8cf2"
+      ],
+      "createdAt": "2026-11-05T11:37:13.939Z",
+      "updatedAt": "2026-11-05T11:37:13.939Z",
+      "lastAccessedAt": "2026-11-06T13:10:36.278Z",
+      "revision": 1,
+      "contentHash": "f3d7c71319343cd7ae73cb39a3b7a9f44b03d6275837c0b1475f2db1dfb1e134",
+      "sizeBytes": 4578,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "337b6ba4-27d0-4000-a174-d4145271ec83",
+      "title": "PadLend 0.3.18：托盘图标是否被 Windows 外壳接受（Shell_NotifyIcon 探针）与关窗兜底",
+      "description": "PadLend 0.3.18 交付：Qt isVisible() 不能证明托盘图标被外壳接受，新增 win/trayprobe.py 用 Shell_NotifyIconW 返回值+GetLastError 判定；拒绝时退化为最小化并在底栏说明；去重 WM_CLOSE/closeEvent；411 passed、33 项验收、产物哈希与提交 518363f。",
+      "status": "active",
+      "filename": "padlend-0-3-18-windows-shell-notifyicon-337b6ba4.md",
+      "relativePath": "documents/active/padlend-0-3-18-windows-shell-notifyicon-337b6ba4.md",
+      "sourcePaths": [
+        "win/trayprobe.py",
+        "ui/tray.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/DESIGN.md",
+        "docs/VERIFICATION.md"
+      ],
+      "sessionIds": [
+        "c407d741-58b2-4d76-af7d-e97063453211"
+      ],
+      "createdAt": "2026-11-05T11:57:18.972Z",
+      "updatedAt": "2026-11-05T11:57:18.972Z",
+      "lastAccessedAt": "2026-11-06T15:03:48.397Z",
+      "revision": 1,
+      "contentHash": "7f7a955e3516cb76cd6d487aefff06237f9ec6328d875b2ad0712893740e01c9",
+      "sizeBytes": 5959,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "bf0ac5f7-b326-4bae-9cdf-83e229fc1411",
+      "title": "PadLend 1.0.0 发版就绪：onedir 回归、版本单一来源、合规与发布流水线",
+      "description": "PadLend 1.0.0 从 onefile 回归 onedir 的决策与理由、版本单一来源/许可证合规、release.py 与 GitHub Actions 发布链路、崩溃可观测性与 auto_connect 等缺陷修复、验证证据（SHA-256、b81696b/v1.0.0）以及未签名与无 remote 的阻塞项。",
+      "status": "active",
+      "filename": "padlend-1-0-0-onedir-bf0ac5f7.md",
+      "relativePath": "documents/active/padlend-1-0-0-onedir-bf0ac5f7.md",
+      "sourcePaths": [
+        "PadLend.spec",
+        "pyproject.toml",
+        "tools/release.py",
+        "tools/version_info.py",
+        "core/crash.py",
+        "core/logsetup.py",
+        "docs/RELEASE_READINESS.md",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        ".github/release-notes.md",
+        "installer/padlend.iss",
+        "THIRD_PARTY_NOTICES.md",
+        "tests/test_release_hardening.py",
+        "tests/test_release_surface.py"
+      ],
+      "sessionIds": [
+        "ff34ee59-f864-4d6c-ac07-522ae20f0f19"
+      ],
+      "createdAt": "2026-11-05T16:10:55.437Z",
+      "updatedAt": "2026-11-05T16:10:55.437Z",
+      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "revision": 1,
+      "contentHash": "358ce49cb477e30e0ef12ce27dc0217db8eb31eab5e31345fc1ca12f78a6dd69",
+      "sizeBytes": 6100,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "951185ce-54b4-47e1-ae7b-c51d8e33db95",
+      "title": "PadLend 1.0.2：无线 adb 换端口直查 mDNS 与重复启动唤起窗口",
+      "description": "PadLend 1.0.2 两个修复的根因与设计：Windows adb 无 mDNS 守护进程时用标准库直查 _adb-tls-connect._tcp.local 解决无线端口变化（三级回退链），命名事件 Global\\PadLend.Activate + GUI 线程 present_window 解决第二实例静默退出；含三个提交、452 用例、onedir/zip 产物与 SHA-256、不发 Release 的范围约束与 Windows 冒烟脚本教训。",
+      "status": "active",
+      "filename": "padlend-1-0-2-adb-mdns-951185ce.md",
+      "relativePath": "documents/active/padlend-1-0-2-adb-mdns-951185ce.md",
+      "sourcePaths": [
+        "tablet/mdns.py",
+        "tablet/locator.py",
+        "ui/main_window.py",
+        "win/single_instance.py",
+        "main.py",
+        "constants.py",
+        "padlend/__init__.py",
+        "tests/test_mdns.py",
+        "tests/test_locator.py",
+        "tests/test_ui_smoke.py",
+        "docs/CHANGELOG.md",
+        "docs/TROUBLESHOOTING.md"
+      ],
+      "sessionIds": [
+        "a077722d-bf99-4358-8837-7f03b8833e9a"
+      ],
+      "createdAt": "2026-11-06T10:27:41.212Z",
+      "updatedAt": "2026-11-06T10:27:41.212Z",
+      "lastAccessedAt": "2026-11-06T15:03:48.397Z",
+      "revision": 1,
+      "contentHash": "a85b7766da88fc094b45b6f6eb83f41a963b28b6a781f8384fbd96d03e0659e1",
+      "sizeBytes": 7503,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "7a68b66f-6d33-4b3b-894f-c00711608d11",
+      "title": "PadLend 1.0.3：每设备 × 横竖屏布局档案与真实朝向监听",
+      "description": "PadLend 1.0.3 交接：layouts.devices.<ro.serialno>.landscape/portrait 档案、常驻 adb shell 每秒读 dumpsys input Viewport orientation 自动切布局、strict_monitor 缺屏保护、474 passed/3 skipped、产物 sha256 与「1.0.2/1.0.3 仅本地提交、GitHub 仍为 1.0.1」的发版状态。",
+      "status": "active",
+      "filename": "padlend-1-0-3-7a68b66f.md",
+      "relativePath": "documents/active/padlend-1-0-3-7a68b66f.md",
+      "sourcePaths": [
+        "config.py",
+        "ui/main_window.py",
+        "tablet/session.py",
+        "core/router.py",
+        "tests/fakes.py",
+        "docs/DESIGN.md",
+        "docs/CHANGELOG.md"
+      ],
+      "sessionIds": [
+        "da42e653-7450-456c-acbf-f5abc0b7297f"
+      ],
+      "createdAt": "2026-11-06T13:11:19.597Z",
+      "updatedAt": "2026-11-06T13:11:19.597Z",
+      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "revision": 1,
+      "contentHash": "a0893a3d267ca737842f3dff5f1efbbadc23f52190fd8eed9d0039128d1cb090",
+      "sizeBytes": 6782,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "780370ee-c293-4e94-9272-05f748c3102a",
+      "title": "PadLend 1.0.5：剪贴板双向同步修复与本地代理推送",
+      "description": "1.0.5 双向剪贴板根因（控制通道只发不收）、协议/UI 改动、提交 de7c21e、481 通过验收与产物 SHA-256，以及本机 git push 必须经 127.0.0.1:7897 代理的排查结论。",
+      "status": "active",
+      "filename": "padlend-1-0-5-780370ee.md",
+      "relativePath": "documents/active/padlend-1-0-5-780370ee.md",
+      "sourcePaths": [
+        "padlend/__init__.py",
+        "tablet/session.py",
+        "tablet/protocol.py",
+        "ui/bridge.py",
+        "ui/main_window.py",
+        "ui/settings_panel.py",
+        "docs/DESIGN.md",
+        "docs/CHANGELOG.md",
+        "docs/VERIFICATION.md",
+        "README.md",
+        ".github/release-notes.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-f5ee820d-df51-4678-858c-4a61859a8f9f"
+      ],
+      "createdAt": "2026-11-11T10:23:18.454Z",
+      "updatedAt": "2026-11-11T10:23:18.454Z",
+      "lastAccessedAt": "2026-11-11T10:23:18.454Z",
+      "revision": 1,
+      "contentHash": "8e0507c972e62b7d362ee759d798cc532de4642d3b204e473330168c94d30a96",
+      "sizeBytes": 4903,
+      "memoryBodyIds": []
+    }
+  ]
+}
