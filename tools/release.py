@@ -1,20 +1,14 @@
-"""PadLend release helper: build, zip, checksums, signing, installer.
+"""PadLend 1.1+ 发布脚本：前端 / sidecar / Tauri 外壳的构建、打包与校验和。
 
-Standard library only. Run from anywhere:
+用法：
 
-    .venv/Scripts/python.exe tools/release.py --build --zip --sha256
-    .venv/Scripts/python.exe tools/release.py --zip --sha256
-    .venv/Scripts/python.exe tools/release.py --sign
-    .venv/Scripts/python.exe tools/release.py --installer
+    .\\.venv\\Scripts\\python.exe tools\\release.py                # 全部
+    .\\.venv\\Scripts\\python.exe tools\\release.py --build --zip --sha256
+    .\\.venv\\Scripts\\python.exe tools\\release.py --zip --sha256  # 只打包已有产物
 
-Every flag is optional and composable; steps run in the order build, zip,
-installer, sign, sha256. Exit code is non-zero when a requested step fails.
-
-Environment variables used by --sign:
-    PADLEND_SIGN_CERT      path to a .pfx/.p12 code-signing certificate
-    PADLEND_SIGN_PASSWORD  its password
-If PADLEND_SIGN_CERT is unset the step is skipped (release notes should say
-the artifact is unsigned).
+与 1.0.x 的区别：不再使用 PyInstaller 打包 Qt 主程序，也不再用 Inno Setup。
+Tauri 自己产出 NSIS 安装器；本脚本负责前端静态资源、Python 业务 sidecar、
+免安装 zip 与 SHA256 校验和。没有 Rust 工具链时会跳过原生外壳并明确提示。
 """
 
 from __future__ import annotations
@@ -30,13 +24,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
+FRONTEND = ROOT / "frontend-dist"
+BINARIES = ROOT / "src-tauri" / "binaries"
+TAURI_TARGET = ROOT / "src-tauri" / "target" / "release"
 APP_NAME = "PadLend"
-TIMESTAMP_URL = "http://timestamp.digicert.com"
 
 sys.path.insert(0, str(ROOT))
 from padlend import __version__ as VERSION  # noqa: E402
-
-RELEASE_BASENAME = f"{APP_NAME}-{VERSION}-win64"
 
 
 def log(message: str) -> None:
@@ -48,242 +42,145 @@ def fail(message: str) -> int:
     return 1
 
 
-def app_dir() -> Path:
-    return DIST / APP_NAME
+def run(command: list[str], *, cwd: Path = ROOT) -> int:
+    log("执行：" + " ".join(command))
+    result = subprocess.run(command, cwd=cwd, check=False)
+    if result.returncode != 0:
+        log(f"失败（exit {result.returncode}）：{' '.join(command)}")
+    return result.returncode
 
 
-def ensure_legal_files() -> None:
-    """Make sure notices/LICENSES also sit next to PadLend.exe (not only _internal)."""
-    target = app_dir()
-    if not target.is_dir():
-        return
-    shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", target / "THIRD_PARTY_NOTICES.md")
-    shutil.copytree(ROOT / "LICENSES", target / "LICENSES", dirs_exist_ok=True)
+def has_cargo() -> bool:
+    return shutil.which("cargo") is not None
 
 
-def require_built() -> Path | None:
-    exe = app_dir() / f"{APP_NAME}.exe"
-    if not exe.is_file():
-        fail(f"missing {exe}; run --build first")
-        return None
-    return exe
+def sidecar_name() -> str:
+    import platform
+
+    arch = "aarch64" if (platform.machine() or "").lower() in {"arm64", "aarch64"} else "x86_64"
+    suffix = ".exe" if os.name == "nt" else ""
+    return f"padlend-service-{arch}-pc-windows-msvc{suffix}"
 
 
 def build() -> int:
-    log(f"building {APP_NAME} {VERSION} (onedir) with PyInstaller")
-    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "PadLend.spec"]
-    result = subprocess.run(command, cwd=ROOT)
-    if result.returncode != 0:
-        return fail(f"PyInstaller failed with exit code {result.returncode}")
-    exe = require_built()
-    if exe is None:
+    if not (ROOT / "node_modules").is_dir() and run(["npm", "ci"]) != 0:
         return 1
-    ensure_legal_files()
-    size = sum(p.stat().st_size for p in app_dir().rglob("*") if p.is_file())
-    log(f"built {exe} ({size / 1024 / 1024:.1f} MiB total)")
+    if run(["npm", "run", "build"]) != 0:
+        return 1
+    if not (FRONTEND / "index.html").is_file():
+        return fail("frontend-dist/index.html 不存在")
+    log(f"前端产物：{FRONTEND}")
+
+    if run([sys.executable, str(ROOT / "tools" / "build_sidecar.py")]) != 0:
+        return 1
+    sidecar = BINARIES / sidecar_name()
+    if not sidecar.is_file():
+        return fail(f"sidecar 未生成：{sidecar}")
+    log(f"业务 sidecar：{sidecar.name}（{sidecar.stat().st_size // 1024 // 1024} MB）")
+
+    if not has_cargo():
+        log("本机没有 cargo，跳过 Tauri 原生外壳（CI 会构建并发布安装包）")
+        return 0
+    if run(["npx", "tauri", "build"]) != 0:
+        return 1
     return 0
 
 
-def _zip_add(archive: zipfile.ZipFile, source: Path, arcname: Path, seen: set[str]) -> None:
-    name = arcname.as_posix()
-    if name in seen:
-        return
-    seen.add(name)
-    archive.write(source, name)
+def collect_files() -> list[tuple[Path, str]]:
+    """返回 (源文件, zip 内路径)；不存在的文件自动跳过。"""
+    items: list[tuple[Path, str]] = []
+    exe = TAURI_TARGET / "padlend-desktop.exe"
+    if exe.is_file():
+        items.append((exe, f"{APP_NAME}/{APP_NAME}.exe"))
+    sidecar = BINARIES / sidecar_name()
+    if sidecar.is_file():
+        items.append((sidecar, f"{APP_NAME}/{sidecar.name}"))
 
+    jar = ROOT / "vendor" / "scrcpy-server-v5.0.1.jar"
+    if jar.is_file():
+        items.append((jar, f"{APP_NAME}/vendor/{jar.name}"))
+    adb_dir = ROOT / "vendor" / "adb" / "platform-tools"
+    if adb_dir.is_dir():
+        for path in sorted(adb_dir.rglob("*")):
+            if path.is_file():
+                items.append(
+                    (
+                        path,
+                        f"{APP_NAME}/vendor/adb/platform-tools/{path.relative_to(adb_dir).as_posix()}",
+                    )
+                )
 
-def _zip_add_tree(
-    archive: zipfile.ZipFile, source: Path, prefix: str, seen: set[str]
-) -> None:
-    for path in sorted(source.rglob("*")):
+    for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+        path = ROOT / name
         if path.is_file():
-            _zip_add(archive, path, Path(prefix) / path.relative_to(source), seen)
+            items.append((path, f"{APP_NAME}/{name}"))
+    licenses = ROOT / "LICENSES"
+    if licenses.is_dir():
+        for path in sorted(licenses.rglob("*")):
+            if path.is_file():
+                items.append((path, f"{APP_NAME}/LICENSES/{path.relative_to(licenses).as_posix()}"))
+    return items
 
 
 def make_zip() -> int:
-    if require_built() is None:
-        return 1
-    ensure_legal_files()
-    target = DIST / f"{RELEASE_BASENAME}.zip"
-    notices = ROOT / "THIRD_PARTY_NOTICES.md"
-    licenses = ROOT / "LICENSES"
-    readme = ROOT / "README.md"
-    for required in (notices, licenses, readme):
-        if not required.exists():
-            return fail(f"missing {required}")
-
-    if target.exists():
-        target.unlink()
-    log(f"creating {target.name}")
-    seen: set[str] = set()
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        _zip_add_tree(archive, app_dir(), "", seen)
-        _zip_add(archive, notices, Path("THIRD_PARTY_NOTICES.md"), seen)
-        _zip_add(archive, readme, Path("README.md"), seen)
-        _zip_add_tree(archive, licenses, "LICENSES", seen)
-    log(f"zip: {target} ({target.stat().st_size / 1024 / 1024:.1f} MiB)")
+    DIST.mkdir(parents=True, exist_ok=True)
+    items = collect_files()
+    if not items:
+        return fail("没有可打包的产物，请先运行 --build")
+    native = any(target.endswith("PadLend.exe") for _, target in items)
+    basename = f"{APP_NAME}-{VERSION}-win64" if native else f"{APP_NAME}-{VERSION}-bundle"
+    target = DIST / f"{basename}.zip"
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        seen: set[str] = set()
+        for source, arcname in items:
+            if arcname in seen:
+                continue
+            seen.add(arcname)
+            archive.write(source, arcname)
+    log(f"打包：{target.name}（{target.stat().st_size // 1024 // 1024} MB，{len(items)} 个文件）")
+    bundle = ROOT / "src-tauri" / "target" / "release" / "bundle" / "nsis"
+    if bundle.is_dir():
+        for installer in bundle.glob("*-setup.exe"):
+            shutil.copy2(installer, DIST / f"{APP_NAME}-{VERSION}-setup.exe")
+            log(f"安装器：{APP_NAME}-{VERSION}-setup.exe")
     return 0
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def make_sha256() -> int:
-    files = [DIST / f"{RELEASE_BASENAME}.zip"]
-    setup = DIST / f"{APP_NAME}-{VERSION}-setup.exe"
-    if setup.exists():
-        files.append(setup)
-    missing = [p for p in files if not p.exists()]
-    if missing:
-        return fail("nothing to hash: " + ", ".join(str(p) for p in missing))
-    sums = DIST / "SHA256SUMS.txt"
+    DIST.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in DIST.iterdir() if p.is_file() and p.name != "SHA256SUMS.txt")
+    if not files:
+        return fail("dist 里没有产物")
     lines = []
     for path in files:
-        digest = sha256_file(path)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         lines.append(f"{digest}  {path.name}")
-        log(f"sha256 {digest}  {path.name}")
-    sums.write_text("\n".join(lines) + "\n", encoding="ascii")
-    log(f"wrote {sums}")
-    return 0
-
-
-def find_signtool() -> str | None:
-    which = shutil.which("signtool")
-    if which:
-        return which
-    program_files_x86 = os.environ.get("PROGRAMFILES(X86)") or r"C:\Program Files (x86)"
-    kits = Path(program_files_x86) / "Windows Kits" / "10" / "bin"
-    if kits.is_dir():
-        candidates = sorted(kits.glob("*/x64/signtool.exe"), reverse=True)
-        if candidates:
-            return str(candidates[0])
-    return None
-
-
-def sign(include_exe: bool = True, include_setup: bool = True) -> int:
-    cert = os.environ.get("PADLEND_SIGN_CERT")
-    if not cert:
-        log("PADLEND_SIGN_CERT not set - skipping signing (artifact stays unsigned)")
-        return 0
-    certificate = Path(cert)
-    if not certificate.is_file():
-        return fail(f"PADLEND_SIGN_CERT does not exist: {certificate}")
-    signtool = find_signtool()
-    if not signtool:
-        return fail("signtool.exe not found (install Windows SDK)")
-    targets = []
-    if include_exe:
-        targets.append(app_dir() / f"{APP_NAME}.exe")
-    setup = DIST / f"{APP_NAME}-{VERSION}-setup.exe"
-    if include_setup and setup.exists():
-        targets.append(setup)
-    if not targets:
-        log("no signing target present - skipping")
-        return 0
-    for target in targets:
-        command = [
-            signtool, "sign", "/fd", "SHA256",
-            "/tr", TIMESTAMP_URL, "/td", "SHA256",
-            "/f", str(certificate),
-        ]
-        password = os.environ.get("PADLEND_SIGN_PASSWORD")
-        if password:
-            command += ["/p", password]
-        command.append(str(target))
-        log(f"signing {target.name}")
-        if subprocess.run(command, cwd=ROOT).returncode != 0:
-            return fail(f"signtool failed for {target.name}")
-    return 0
-
-
-def find_iscc() -> str | None:
-    which = shutil.which("iscc")
-    if which:
-        return which
-    # winget installs Inno Setup per-user by default when --scope user is used.
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        candidate = Path(local) / "Programs" / "Inno Setup 6" / "ISCC.exe"
-        if candidate.is_file():
-            return str(candidate)
-    for base in (os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES")):
-        if not base:
-            continue
-        candidate = Path(base) / "Inno Setup 6" / "ISCC.exe"
-        if candidate.is_file():
-            return str(candidate)
-    return None
-
-
-def make_installer() -> int:
-    iscc = find_iscc()
-    if not iscc:
-        log("Inno Setup (ISCC.exe) not found - skipping installer")
-        return 0
-    script = ROOT / "installer" / "padlend.iss"
-    if not script.is_file():
-        return fail(f"missing {script}")
-    setup = DIST / f"{APP_NAME}-{VERSION}-setup.exe"
-    if setup.exists():
-        setup.unlink()
-    command = [
-        iscc, str(script),
-        f"/DAppVersion={VERSION}",
-        f"/O{DIST}",
-        f"/F{APP_NAME}-{VERSION}-setup",
-    ]
-    log(f"building installer {setup.name}")
-    if subprocess.run(command, cwd=ROOT).returncode != 0:
-        return fail("ISCC failed")
-    if not setup.is_file():
-        return fail(f"installer not produced: {setup}")
-    log(f"installer: {setup} ({setup.stat().st_size / 1024 / 1024:.1f} MiB)")
+        log(f"sha256 {digest[:16]}…  {path.name}")
+    (DIST / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--build", action="store_true", help="run PyInstaller --noconfirm PadLend.spec"
-    )
-    parser.add_argument("--zip", action="store_true", help="create dist/PadLend-<ver>-win64.zip")
-    parser.add_argument("--sha256", action="store_true", help="write dist/SHA256SUMS.txt")
-    parser.add_argument(
-        "--sign", action="store_true", help="sign exe/installer with PADLEND_SIGN_CERT"
-    )
-    parser.add_argument("--installer", action="store_true", help="build Inno Setup installer")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--build", action="store_true", help="构建前端、sidecar 与 Tauri 外壳")
+    parser.add_argument("--zip", action="store_true", help="生成免安装 zip")
+    parser.add_argument("--sha256", action="store_true", help="生成 SHA256SUMS.txt")
     args = parser.parse_args(argv)
     if not any(vars(args).values()):
-        parser.print_help()
-        return 0
+        args.build = args.zip = args.sha256 = True
 
     steps = []
     if args.build:
         steps.append(build)
-    # Sign the app before packaging so the zip and installer carry a signed exe;
-    # the installer itself is signed afterwards.
-    if args.sign:
-        steps.append(lambda: sign(include_exe=True, include_setup=False))
     if args.zip:
         steps.append(make_zip)
-    if args.installer:
-        steps.append(make_installer)
-    if args.sign and args.installer:
-        steps.append(lambda: sign(include_exe=False, include_setup=True))
     if args.sha256:
         steps.append(make_sha256)
     for step in steps:
         code = step()
         if code:
             return code
-    log("done")
+    log(f"完成：PadLend {VERSION}")
     return 0
 
 

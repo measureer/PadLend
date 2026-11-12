@@ -1,7 +1,24 @@
 # 验收记录
 
-> 环境：Windows 11、Python 3.13.14、PySide6 6.12.0、adb 37.0.1；平板 Honor MagicPad 3（CGA-W00，Android 17 / SDK 37，3200×2136，420 dpi）。
+> 环境：Windows 11、Python 3.13.14、Node.js 22、adb 37.0.1；平板 Honor MagicPad 3（CGA-W00，Android 17 / SDK 37，3200×2136，420 dpi）。
+> 1.1.0 起界面不再使用 PySide6；第 0 节及以下历史记录中的 Qt 相关内容仅作回归对照。
 > 记录原则：每条都写命令、期望、实际、结论；无硬件时明确标"待复验"，不得默认为通过。
+
+## 1.1.0 发布验收（2026-11-12）
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| Python 引擎 + 服务协议 | `pytest -q` | 全部通过（含 `tests/test_service_bridge.py` 真实子进程 + 假平板） |
+| 代码风格 | `ruff check .` | 全通过 |
+| 前端单元测试与交互冒烟 | `npx vitest run` | 28 passed |
+| 类型检查 / 构建 | `npm run build`（含 `tsc --noEmit`） | 通过，输出 `frontend-dist/` |
+| 业务服务联调 | `python -m service --simulate --no-hooks` | bootstrap / 扫描 / 布局保存 / 诊断导出 / 引擎事件正常 |
+| 视觉 | 无头 Edge 对 `frontend-dist` 截图 | 设备/布局/设置/日志、亮色主题、900×700 窄窗口均无重叠/裁切 |
+| 原生外壳编译 | GitHub Actions `windows-latest`（Rust stable + MSVC） | 由 CI 的 `npx tauri build --no-bundle` 与 Release 工作流验证；本机无 Rust/MSVC |
+
+> 本机没有 Rust/Cargo 与 MSVC 构建工具，Tauri 原生 exe 与 NSIS 安装器由
+> GitHub Actions 在 `windows-latest` 上产出后发布；本地只产出前端静态资源、
+> Python 业务 sidecar 与免安装资源包。
 
 ## 0. 1.0.0 发布验收（2026-11-05）
 

@@ -13,10 +13,7 @@ jobs:
     name: build and publish Windows release
     runs-on: windows-latest
     env:
-      QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8
-      PADLEND_SIGN_CERT_B64: ${{ secrets.PADLEND_SIGN_CERT_B64 }}
-      PADLEND_SIGN_PASSWORD: ${{ secrets.PADLEND_SIGN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +21,17 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Verify tag matches padlend.__version__
         shell: pwsh
@@ -40,27 +48,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -r requirements-build.txt
+          npm ci
 
-      - name: Lint
-        run: ruff check .
-
-      - name: Test
-        run: pytest -q
-
-      - name: Install Inno Setup
-        run: choco install innosetup --yes --no-progress
-        continue-on-error: true
-
-      - name: Decode signing certificate (optional)
-        if: env.PADLEND_SIGN_CERT_B64 != ''
-        shell: pwsh
+      - name: Lint + tests
         run: |
-          $cert = Join-Path $env:RUNNER_TEMP "padlend-sign.pfx"
-          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env.PADLEND_SIGN_CERT_B64))
-          "PADLEND_SIGN_CERT=$cert" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ruff check .
+          pytest -q
+          npx vitest run
 
-      - name: Build, package, sign, checksum
-        run: python tools/release.py --build --zip --installer --sign --sha256
+      - name: Build, package, checksum
+        run: python tools/release.py --build --zip --sha256
 
       - name: Show outputs
         shell: pwsh
@@ -80,5 +77,6 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             dist/PadLend-*-win64.zip
+            dist/PadLend-*-bundle.zip
             dist/PadLend-*-setup.exe
             dist/SHA256SUMS.txt

@@ -1,4 +1,4 @@
-"""Console entry point for ``python -m padlend``."""
+"""``python -m padlend``：转调 main.main()，默认启动 Tauri 业务服务。"""
 
 from __future__ import annotations
 

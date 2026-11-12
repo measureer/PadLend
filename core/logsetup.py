@@ -62,8 +62,6 @@ def setup_logging(level: int = logging.INFO, log_file: Path | None = None) -> No
         file_handler.setFormatter(logging.Formatter(_FILE_FORMAT, DATE_FORMAT))
         root.addHandler(file_handler)
 
-    # Qt / PySide 的杂音降级
-    logging.getLogger("PySide6").setLevel(logging.WARNING)
     _CONFIGURED = True
 
     if log_file is not None:

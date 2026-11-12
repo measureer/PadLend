@@ -5,13 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "padlend"
 dynamic = ["version"]
-description = "PadLend — use an Android tablet as a seamless side screen with a real system pointer"
+description = "PadLend - use an Android tablet as a Windows side screen (Tauri 2 desktop shell)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "PadLend contributors" }]
 dependencies = [
-    "PySide6>=6.7,<7",
     "PyYAML>=6.0",
     "psutil>=5.9",
 ]
@@ -20,7 +19,7 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.5"]
 
 [project.scripts]
-padlend = "main:main"
+padlend = "service.server:main"
 
 [tool.setuptools]
 py-modules = ["main", "config", "constants"]
@@ -29,7 +28,7 @@ py-modules = ["main", "config", "constants"]
 version = { attr = "padlend.__version__" }
 
 [tool.setuptools.packages.find]
-include = ["core*", "win*", "tablet*", "ui*", "padlend*"]
+include = ["core*", "win*", "tablet*", "padlend*", "service*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

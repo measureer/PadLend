@@ -1,5 +1,9 @@
 # PadLend 项目设计文档
 
+> **版本提示**：本文描述的是引擎、协议与 Windows 输入链路设计，1.1.0 起仍然有效；
+> 其中涉及 Qt/PySide6 窗口、QSS、托盘与对话框的章节属于 1.0.x 旧界面，
+> 现行界面见 [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。
+
 | 项目 | 内容 |
 |---|---|
 | **名称** | PadLend（中文：借屏） |

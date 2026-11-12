@@ -10,22 +10,17 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: test (py${{ matrix.python }})
+  python:
+    name: python engine + service
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11", "3.13"]
     env:
-      QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "${{ matrix.python }}"
+          python-version: "3.13"
           cache: pip
 
       - name: Install
@@ -40,20 +35,63 @@ jobs:
       - name: Test
         run: pytest -q
 
-      - name: Build onedir (3.13 only)
-        if: matrix.python == '3.13'
-        run: python tools/release.py --build
+  frontend:
+    name: react/typescript frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Package + checksums (3.13 only)
-        if: matrix.python == '3.13'
-        run: python tools/release.py --zip --sha256
-
-      - name: Upload artifact (3.13 only)
-        if: matrix.python == '3.13'
-        uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          name: PadLend-win64-ci
-          path: |
-            dist/PadLend-*-win64.zip
-            dist/SHA256SUMS.txt
-          if-no-files-found: error
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit + interaction tests
+        run: npx vitest run
+
+      - name: Typecheck + build
+        run: npm run build
+
+  desktop:
+    name: tauri 2 shell (compile check)
+    runs-on: windows-latest
+    needs: [python, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-build.txt
+          npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Python sidecar
+        run: python tools/build_sidecar.py
+
+      # --no-bundle 仍会完整编译 Rust 外壳与前端资源，但不生成 NSIS 安装包，
+      # 用来在推送 tag 之前先验证 Tauri 2 API 与 Rust 依赖能编译通过。
+      - name: Compile Tauri app
+        run: npx tauri build --no-bundle

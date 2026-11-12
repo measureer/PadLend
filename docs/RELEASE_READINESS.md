@@ -1,5 +1,9 @@
 # PadLend 1.0.0 发版就绪报告
 
+> **版本提示**：本文是 1.0.0 的历史报告，其中 PyInstaller/Inno Setup/Qt 打包流程
+> 已在 1.1.0 由 Tauri 2 发布流水线取代；当前发布流程见
+> [CHANGELOG](CHANGELOG.md) 与 [.github/workflows/release.yml](../.github/workflows/release.yml)。
+
 > 这是 1.0.0 首发时的报告。1.0.1 是设备地址发现相关的补丁版本，变更与产物见
 > [CHANGELOG](CHANGELOG.md) 和 [Releases](https://github.com/measureer/PadLend/releases)。
 

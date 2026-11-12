@@ -10,8 +10,14 @@ dist/
 pytest-of-*/
 .padlend/
 _MEI*/
-!PadLend.spec
 .mnemon/
 
 # WorkBuddy IDE workspace
 .workbuddy/
+
+# Tauri 2 / React 前端
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+frontend-dist/

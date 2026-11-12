@@ -8,10 +8,10 @@
    Python/平台/线程名）；
 2. faulthandler.enable(all_threads=True) 单独写 faulthandler-*.log，
    原生崩溃（ctypes/Qt）也能留下线程栈；
-3. GUI 已存在时弹一个模态框告诉用户日志在哪，而不是静默消失。
+3. 崩溃/启动失败时把位置写进日志与 stderr，由 Tauri 前端通过事件提示用户。
 
-本模块不 import Qt；Qt 只在真正要提示时延迟 import，避免无头/测试环境
-因为 GUI 依赖缺失而二次崩溃。
+1.1.0 起界面层不再使用 Qt，本模块也完全不依赖任何 GUI 框架；sidecar
+进程可以独立安装崩溃钩子而不拉起窗口。
 """
 
 from __future__ import annotations
@@ -168,63 +168,29 @@ def report_crash(
     return path
 
 
+def _safe_stderr(message: str) -> None:
+    """console=False 的打包版 stderr 可能为 None，输出失败不能二次崩溃。"""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        print(message, file=sys.stderr, flush=True)
+
+
 def notify_user(path: Path | None, *, kind: str = "uncaught") -> None:
-    """GUI 存在时告知用户日志位置；无 GUI / 非主线程时静默。"""
+    """崩溃位置写入日志与 stderr；前端通过 `fatal` / toast 事件提示用户。"""
     if path is None:
         return
-    if threading.current_thread() is not threading.main_thread():
-        return
-    try:
-        from PySide6.QtWidgets import QApplication, QMessageBox
-    except Exception:  # noqa: BLE001 - 无 Qt 环境
-        return
-    try:
-        app = QApplication.instance()
-        if app is None:
-            return
-        QMessageBox.critical(
-            None,
-            "PadLend 遇到问题",
-            "程序遇到未处理的错误，已把详细信息写入日志：\n\n"
-            f"{path}\n\n"
-            "请把该文件（以及 logs 目录下的 padlend.log）附到问题反馈里。",
-        )
-    except Exception:  # noqa: BLE001 - 提示失败不能二次崩溃
-        LOG.debug("崩溃提示框显示失败", exc_info=True)
+    LOG.error("崩溃日志：%s (%s)", path, kind)
+    _safe_stderr(f"[PadLend] 已写入崩溃日志：{path}")
 
 
 def show_startup_error(message: str, log_path: Path | None = None) -> None:
-    """启动早期失败（还没有 QApplication）时也尽量弹窗说明原因。
-
-    console=False 的打包版没有 stderr，启动阶段失败若不弹窗，用户看到
-    的就是"双击没反应"。这里临时建一个 QApplication，弹完即退出。
-    """
-    try:
-        from PySide6.QtWidgets import QApplication, QMessageBox
-    except Exception:  # noqa: BLE001 - 无 Qt 环境（无头/测试）
-        return
-    app = None
-    created = False
-    try:
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(["padlend"])
-            created = True
-        if log_path is None:
+    """启动失败时留下可读线索（不弹窗、不依赖 GUI）。"""
+    if log_path is None:
+        with contextlib.suppress(Exception):
             log_path = log_dir() / "padlend.log"
-        text = (
-            f"{message}\n\n"
-            "详细信息已写入日志目录：\n"
-            f"{log_path.parent}\n\n"
-            "可重新打开 PadLend，在托盘菜单里选择“导出诊断信息”生成 zip 反馈。"
-        )
-        QMessageBox.critical(None, "PadLend 启动失败", text)
-    except Exception:  # noqa: BLE001 - 弹窗失败不能二次崩溃
-        LOG.debug("启动失败提示框显示失败", exc_info=True)
-    finally:
-        if created and app is not None:
-            with contextlib.suppress(Exception):
-                app.quit()
+    LOG.error("启动失败：%s（日志：%s）", message, log_path)
+    _safe_stderr(f"[PadLend] 启动失败：{message}")
+    if log_path is not None:
+        _safe_stderr(f"[PadLend] 详细信息：{log_path.parent}")
 
 
 def _excepthook(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:

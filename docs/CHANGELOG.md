@@ -2,6 +2,40 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.1.0] — 2026-11-12
+
+### 变更
+
+- **前端架构迁移**：PySide6/Qt 界面整体替换为 Tauri 2 + React 19 + TypeScript。
+  Rust 外壳负责窗口/托盘/单实例/剪贴板/sidecar 生命周期；新增 `service/`
+  以 NDJSON（stdin/stdout）把既有 `core/`、`tablet/`、`win/`、`config.py`
+  暴露给前端，业务接口与状态机行为不变。
+- **统一视觉规范**：`src/styles/tokens.css` 单一令牌源（两套主题、8px 间距、
+  字体/圆角/控件高度），统一组件库与页面骨架；1180 / 900 / 700px 断点自适应，
+  布局画布 SVG viewBox 随窗口缩放。
+- **性能**：取消 1s GUI 轮询改事件推送；日志防抖 + 虚拟列表；画布拖动只改 DOM
+  transform 且 rAF 合帧；慢任务全部移到服务进程线程池；设置草稿本地化；
+  主题切换只改根 CSS 变量；路由/对话框按需分包。
+- **架构治理**：诊断纯逻辑从 Qt 层上移到 `core/diagnostics.py`；设置页 14 个字段
+  由 `configSchema.ts` 一份声明驱动；指标键名与 `core.metrics.snapshot()` 对齐；
+  非法配置补丁现在整体回滚，不污染运行中的 Config。
+- **清理旧代码**：删除 `ui/`（PySide6）、旧 GUI 测试与截图、旧截图/图标工具、
+  `PadLend.spec`、Inno Setup 配置、旧版 `tools/release.py` 打包流程与 Qt 许可文本；
+  `main.py` 瘦身为无头/服务组合根，`pyproject.toml` 与依赖文件去掉 PySide6。
+- **发布工程**：CI 与 Release 工作流改为 Python 测试 + 前端测试 + Rust/MSVC 编译 +
+  Tauri NSIS 安装包；`tools/release.py` 统一构建前端/sidecar/zip/校验和。
+
+### 修复
+
+- 旧版 `MetricsPanel._pick` 的别名猜测导致 `report_hz` / `backpressure` / `loss_pct`
+  三个字段恒显示「—」；新前端直接消费后端键名 `raw_hz` / `backlog` / `drop_pct`。
+
+### 验证
+
+- `pytest` 全量通过（含新增服务协议端到端测试）；`ruff check .` 通过；
+  `vitest` 28 项通过；`tsc --noEmit` 与 `npm run build` 通过；
+  无头浏览器对构建产物截图覆盖 4 个页面、亮色主题与 900×700 窄窗口。
+
 ## [1.0.5] — 2026-11-11
 
 ### 新增

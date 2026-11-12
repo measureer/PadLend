@@ -1,12 +1,11 @@
 """PadLend 组合根（main.py）。
 
-只做编排，不实现业务：
+1.1.0 起界面由 Tauri 2 + React/TS 承担，本模块只做编排，不含任何 GUI 代码：
 
-1. 最早设置 Per-Monitor V2（遮罩/Raw Input 的物理坐标前提）；
-2. 单实例、日志、配置、崩溃残留清理（``exit.clean``）；
-3. 组装 DesktopMap / Adb / TabletSession / CursorMask / Router；
-4. GUI 交给 :class:`ui.main_window.MainWindow`，无头模式跑 Router 主循环；
-5. 退出时按顺序停止热键、Router、Session 并释放遮罩，最后写 ``exit.clean``。
+1. 最早设置 Per-Monitor V2（Raw Input 物理坐标的前提）；
+2. 组装 DesktopMap / Adb / TabletSession / CursorMask / Router 为 :class:`Runtime`；
+3. 默认入口转调 ``service.server.main``（NDJSON 业务服务，供 Tauri 外壳调用）；
+4. 保留 ``--headless``（引擎验收）与 ``--debug-raw``（Raw Input 诊断）两个开发模式。
 
 ``python -m padlend`` 与 ``padlend`` 控制台脚本都转调 :func:`main`。
 """
@@ -15,10 +14,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import ctypes
 import logging
 import os
-import signal
 import sys
 import threading
 import time
@@ -61,9 +58,9 @@ def _safe_log_dir() -> Path | None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="padlend",
-        description="把 Android 平板变成 Windows 的扩展输入屏",
+        description="把 Android 平板变成 Windows 的扩展输入屏（Tauri 业务服务）",
     )
-    parser.add_argument("--headless", action="store_true", help="不启动 GUI，只跑接管引擎")
+    parser.add_argument("--headless", action="store_true", help="只跑接管引擎，不启动业务服务")
     parser.add_argument("--serial", default=None, help="指定 adb serial（默认自动选择）")
     parser.add_argument(
         "--config",
@@ -71,32 +68,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="配置文件路径（默认 %%APPDATA%%\\PadLend\\config.yaml）",
     )
     parser.add_argument(
-        "--duration",
-        type=float,
-        default=0.0,
-        help="无头模式运行秒数（0=直到 Ctrl+C）",
+        "--duration", type=float, default=0.0, help="无头模式运行秒数（0=直到 Ctrl+C）"
     )
-    parser.add_argument(
-        "--debug-raw",
-        action="store_true",
-        help="打印 Raw Input 计数后退出（诊断用）",
-    )
-    parser.add_argument("--no-wizard", action="store_true", help="首次运行也不弹向导")
+    parser.add_argument("--debug-raw", action="store_true", help="打印 Raw Input 计数后退出")
     parser.add_argument(
         "--simulate",
         action="store_true",
         default=bool(os.environ.get("PADLEND_SIMULATE")),
-        help="用内存里的假平板代替真机（无硬件验收/演示用）",
+        help="用内存里的假平板代替真机（验收/演示用）",
     )
+    parser.add_argument("--no-single-instance", action="store_true", help="跳过单实例锁（调试用）")
     parser.add_argument(
-        "--no-single-instance",
-        action="store_true",
-        help="跳过单实例锁（调试用）",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     parser.add_argument("--version", action="version", version=f"{C.APP_NAME} {C.VERSION}")
     return parser.parse_args(argv)
@@ -125,56 +108,6 @@ def _force_utf8_console() -> None:
             reconfigure(encoding="utf-8", errors="replace")
 
 
-def _wake_existing_instance() -> None:
-    """第二实例：把已有主窗还原并置前（7.5）。
-
-    这是没有命名事件时的兜底路径（旧版本首实例）：优先找标题**正好**是
-    ``PadLend`` 的窗口，避免误选设置/向导等标题里也含产品名的窗口。
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-    except (AttributeError, OSError):
-        return
-
-    exact: list[int] = []
-    fuzzy: list[int] = []
-    enum_proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-    def _enum(hwnd: int, _lparam: int) -> bool:
-        length = user32.GetWindowTextLengthW(hwnd)
-        if not length:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value.strip()
-        if title.lower() == C.APP_NAME.lower():
-            exact.append(int(hwnd))
-            return False
-        if C.APP_NAME.lower() in title.lower():
-            fuzzy.append(int(hwnd))
-        return True
-
-    try:
-        user32.EnumWindows(enum_proc_type(_enum), 0)
-    except Exception:  # noqa: BLE001 - 唤醒失败不应阻塞退出
-        return
-    found = exact or fuzzy
-    if not found:
-        return
-    hwnd = found[0]
-    try:
-        user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        if not user32.SetForegroundWindow(hwnd):
-            switch = getattr(user32, "SwitchToThisWindow", None)
-            if callable(switch):
-                switch(hwnd, True)
-    except Exception:  # noqa: BLE001 - 置顶失败不应阻塞退出
-        return
-
-
 def _stale_cleanup(cfg: Config) -> None:
     """``exit.clean`` 缺失 = 上次没正常退出；先清理幽灵设备/指针速度（12.3）。"""
     marker = C.clean_exit_marker()
@@ -195,14 +128,11 @@ def _stale_cleanup(cfg: Config) -> None:
             LOG.warning("adb 不可用，跳过残留清理：%s", exc.user_message)
             adb = None
 
-    # 无条件恢复上次没还原的 pointer_speed：exit.clean 在也照样查（崩溃点可能在
-    # session._teardown 之前），恢复成功会清掉状态文件。
     if adb is not None and pending is not None:
         with contextlib.suppress(Exception):
             restore_pending_pointer_speed(adb)
 
     if marker.exists() or not had_config:
-        # 首次运行没有历史残留；写一次标记，避免第一次崩溃被误判。
         try:
             C.config_dir().mkdir(parents=True, exist_ok=True)
             marker.touch()
@@ -246,10 +176,9 @@ def _mark_clean_exit() -> None:
 # 后端组装
 # ---------------------------------------------------------------------------
 class Runtime:
-    """一组协作对象；GUI 与无头模式共用。"""
+    """一组协作对象；业务服务与无头模式共用。"""
 
     def __init__(self, cfg: Config, *, simulate: bool = False) -> None:
-        # 延迟导入：--version / 参数错误时不必加载 ctypes 后端。
         from core.router import Router
         from win.desktop import DesktopMap
         from win.keyboard_hook import KeyboardHook
@@ -259,10 +188,8 @@ class Runtime:
         self.cfg = cfg
         self.simulated = bool(simulate)
         if self.simulated:
-            # --simulate：不碰 ADB / scrcpy，设备端由内存替身扮演。
             from tablet.simulated import SimulatedAdb, SimulatedSession
 
-            # 假 ADB 让设备页/“添加设备”照常工作：列表里有一台已授权的假平板。
             self.adb: Any = SimulatedAdb()
             self.session: Any = SimulatedSession()
         else:
@@ -274,15 +201,9 @@ class Runtime:
         self.desktop = DesktopMap()
         self.mask: CursorMask = CursorMask()
         self.router: Router = Router(cfg, self.session, self.desktop, self.mask)
-        # Raw Input 在独立线程回调 Router；是否接管由 Router 状态机决定。
         self.rawinput: RawInputSource = RawInputSource(self.router.on_raw)
-        # 低级钩子必须在 GUI 线程外独立线程；回调只把事件交给 Router，
-        # 是否吞键完全由 Router 的状态机/白名单决定。
         self.keyboard_hook: KeyboardHook = KeyboardHook(self.router.on_key)
-        # 光标轮询兜底：Raw Input 在焦点/桌面切换后可能静默，但绝对光标仍在动；
-        # 仅在 Raw Input 长时间无事件时合成位移，恢复后让位。
         self.cursor_watch: Any = None
-        # 诊断模式：主线程计数由 Router 外的旁路 RawInput 读取，不影响接管。
         self.raw_debug: Any = None
         self.facts: DeviceFacts | None = None
 
@@ -292,7 +213,6 @@ class Runtime:
             self.rawinput.start()
             LOG.info("Raw Input 已启动")
         except PadLendError as exc:
-            # 无 Raw Input 时鼠标仍可用，只是无法触发边缘接管；不阻断 GUI。
             LOG.warning("Raw Input 不可用：%s", exc.user_message)
         try:
             from win.cursor_watch import CursorWatch
@@ -303,9 +223,6 @@ class Runtime:
             LOG.debug("cursor watch 启动失败", exc_info=True)
 
     def stop(self) -> None:
-        # 关键顺序：遮罩窗口由 rawinput 线程创建，必须在 rawinput 线程仍运行、
-        # 还能处理 WM_CLOSE 时先让 router.stop() 释放遮罩；否则跨线程销毁只能
-        # 排队到线程退出，期间遮罩会一直盖住屏幕并把系统光标“藏”掉。
         try:
             try:
                 self.keyboard_hook.uninstall()
@@ -328,7 +245,6 @@ class Runtime:
                 finally:
                     if self.raw_debug is not None:
                         self.raw_debug.stop()
-                    # adb fork-server 默认常驻；退出时主动关掉它，避免“关了界面还在跑后台”。
                     try:
                         if self.adb is not None:
                             self.adb.kill_server()
@@ -337,7 +253,7 @@ class Runtime:
 
 
 # ---------------------------------------------------------------------------
-# 无头模式
+# 无头模式（引擎验收）
 # ---------------------------------------------------------------------------
 def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     from tablet.cursor import CursorEstimator
@@ -350,8 +266,6 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     def _on_state(old: Any, new: Any, reason: str) -> None:
         print(f"[state] {old} -> {new} ({reason})", flush=True)
 
-    # S1-6：无 GUI 时把 Raw Input 位移直接换算成 UHID 相对报告，
-    # 不经过边缘状态机（没有遮罩/ClipCursor），用于验证 1:1 指针链路。
     estimator: CursorEstimator | None = None
     estimator_key: tuple[int, int, float] | None = None
     wheel_accum = 0
@@ -378,7 +292,6 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
         try:
             runtime.session.send_mouse(ev.buttons, cx, cy, detents)
         except PadLendError:
-            # 断线期间丢弃；supervisor 会重连并重新发布 facts。
             return
 
     runtime.router.on_state_changed = _on_state
@@ -396,8 +309,6 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
                 if not connected:
                     facts = runtime.session.facts
                     if facts is None:
-                        # session 先置 started，随后才发布 facts；等下一轮再查。
-                        # 定时模式已在循环顶部按 deadline 退出，不会卡在这里。
                         stop_event.wait(0.05)
                         continue
                     runtime.facts = facts
@@ -415,10 +326,7 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
                         except PadLendError as exc:
                             LOG.warning("Raw Input 不可用：%s", exc.user_message)
             elif not connected and now >= deadline:
-                print(
-                    "[error] 未发现可用设备（见 tools/probe.py 或 docs/TROUBLESHOOTING.md）",
-                    flush=True,
-                )
+                print("[error] 未发现可用设备（见 tools/probe.py）", flush=True)
                 return 2
             stop_event.wait(0.25)
     except KeyboardInterrupt:
@@ -431,16 +339,13 @@ def run_headless(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Raw Input 诊断
-# ---------------------------------------------------------------------------
 def run_raw_debug() -> int:
     from win.rawinput import RawInputSource
 
     count = 0
     last = time.monotonic()
 
-    def _on_raw(ev: Any) -> None:
+    def _on_raw(_ev: Any) -> None:
         nonlocal count
         count += 1
 
@@ -461,212 +366,52 @@ def run_raw_debug() -> int:
 
 
 # ---------------------------------------------------------------------------
-# GUI
-# ---------------------------------------------------------------------------
-def run_gui(cfg: Config, args: argparse.Namespace, first_run: bool) -> int:
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
-
-    from ui.main_window import MainWindow
-    from ui.style import apply_theme
-
-    app = QApplication.instance() or QApplication([sys.argv[0]])
-    app.setApplicationName(C.APP_NAME)
-    app.setApplicationDisplayName(C.APP_NAME)
-    app.setApplicationVersion(C.VERSION)
-    app.setQuitOnLastWindowClosed(False)  # 托盘常驻
-
-    apply_theme(app, getattr(cfg.ui, "theme", "dark"))
-    runtime = Runtime(cfg, simulate=getattr(args, "simulate", False))
-    window = MainWindow(
-        cfg,
-        runtime.router,
-        runtime.desktop,
-        config_path=Path(args.config) if args.config else None,
-        adb=runtime.adb,
-    )
-    window.show()
-    window.center_on_screen()  # 每次启动都摆在屏幕正中间（0.3.11）
-    # 第二实例通过命名事件请求“显示窗口”；回调只发 Qt 信号，真正操作
-    # 窗口仍在 GUI 线程上做（1.0.2）。
-    try:
-        from win.single_instance import start_activation_watcher
-
-        start_activation_watcher(lambda: window.presentRequested.emit())
-    except Exception:  # noqa: BLE001 - 唤起监听失败不影响主流程
-        LOG.warning("单实例唤起监听启动失败", exc_info=True)
-    # 先确认上次那台平板还在不在线，再决定设备列表里那行怎么写（0.3.13）。
-    QTimer.singleShot(400, window.probe_last_device)
-
-    hotkeys = None
-    if sys.platform == "win32":
-        from win.hotkeys import HotkeyManager
-
-        def _toggle() -> None:
-            try:
-                runtime.router.toggle_manual()
-            except Exception as exc:  # noqa: BLE001 - 热键线程不能抛
-                LOG.warning("toggle_manual failed: %r", exc)
-
-        def _panic() -> None:
-            action = getattr(runtime.router, "emergency_stop", None) or getattr(
-                runtime.router, "stop", None
-            )
-            try:
-                if callable(action):
-                    action()
-            except Exception as exc:  # noqa: BLE001
-                LOG.warning("panic failed: %r", exc)
-            finally:
-                with contextlib.suppress(Exception):
-                    runtime.mask.release()
-
-        hotkeys = HotkeyManager(_toggle, _panic)
-        try:
-            hotkeys.start()
-        except PadLendError as exc:
-            LOG.warning("全局热键不可用：%s", exc.user_message)
-            hotkeys = None
-
-    runtime.start()
-
-    if sys.platform == "win32":
-        try:
-            runtime.keyboard_hook.install()
-            LOG.info("键盘钩子已安装")
-        except PadLendError as exc:
-            # 钩子失败不阻断鼠标链路；GUI 仍可用，只是键盘不转发/不屏蔽。
-            LOG.warning("键盘钩子不可用：%s", exc.user_message)
-
-    # 设备信息同步到设备页/顶栏/画布（只在事实变化时）。
-    last_facts: tuple[Any, ...] | None = None
-
-    def _sync_device() -> None:
-        nonlocal last_facts
-        facts = getattr(runtime.router, "facts", None)
-        key = None
-        if facts is not None:
-            key = (facts.serial, facts.width, facts.height, facts.orientation)
-        if key == last_facts:
-            return
-        last_facts = key
-        runtime.facts = facts
-        window.update_device(facts)
-
-    timer = QTimer()
-    timer.setInterval(1000)
-    timer.timeout.connect(_sync_device)
-    timer.start()
-
-    stopping = threading.Event()
-
-    def _shutdown() -> None:
-        if stopping.is_set():
-            return
-        stopping.set()
-        timer.stop()
-        if hotkeys is not None:
-            try:
-                hotkeys.stop()
-            except Exception as exc:  # noqa: BLE001
-                LOG.debug("hotkeys.stop failed: %r", exc)
-        # 先藏窗口，让用户立刻看到“已经关了”，再把可能卡 10s+ 的 adb 清理
-        # 挪到后台线程；GUI 线程在这里最多等 _SHUTDOWN_CLEANUP_WAIT_S。
-        with contextlib.suppress(Exception):
-            window.hide()
-        done = threading.Event()
-
-        def _clean() -> None:
-            try:
-                runtime.stop()
-            except Exception:  # noqa: BLE001 - 退出路径不能抛
-                LOG.exception("退出清理异常")
-            finally:
-                done.set()
-
-        started = time.monotonic()
-        worker = threading.Thread(target=_clean, name="padlend-shutdown", daemon=True)
-        worker.start()
-        finished = done.wait(_SHUTDOWN_CLEANUP_WAIT_S)
-        elapsed = time.monotonic() - started
-        if finished:
-            LOG.info("退出清理完成（%.1fs）", elapsed)
-        else:
-            # 不清 exit.clean：下次启动走强制清理（force_cleanup 会处理半截状态）。
-            LOG.warning(
-                "退出清理超过 %.0fs 未完成，保持未清理标记，下次启动强制清理",
-                _SHUTDOWN_CLEANUP_WAIT_S,
-            )
-            _mark_running()
-        # 托盘/窗口可能已经销毁，不再触碰 Qt 对象。
-        with contextlib.suppress(Exception):
-            window._shutdown()  # noqa: SLF001 - 组合根负责最终清理
-        if finished:
-            _mark_clean_exit()
-        LOG.info("已退出（清理 %s，%.1fs）", "完成" if finished else "未完成", elapsed)
-
-    app.aboutToQuit.connect(_shutdown)
-
-    # Ctrl+C（控制台）/ SIGTERM：交给 Qt 事件循环退出。
-    def _signal_handler(_signum: int, _frame: Any) -> None:
-        QTimer.singleShot(0, app.quit)
-
-    try:
-        signal.signal(signal.SIGINT, _signal_handler)
-        signal.signal(signal.SIGTERM, _signal_handler)
-    except (ValueError, OSError):
-        pass
-
-    if first_run and not args.no_wizard:
-        QTimer.singleShot(400, window.show_wizard)
-
-    try:
-        return int(app.exec())
-    finally:
-        with contextlib.suppress(Exception):
-            from win.single_instance import stop_activation_watcher
-
-            stop_activation_watcher()
-        _shutdown()
-
-
-# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
-_SHUTDOWN_CLEANUP_WAIT_S = 8.0
+def _service_argv(args: argparse.Namespace) -> list[str]:
+    """把兼容 CLI 的参数映射成业务服务参数。"""
+    argv: list[str] = ["--log-level", args.log_level]
+    if args.simulate:
+        argv.append("--simulate")
+    if args.config:
+        argv.extend(["--config", str(args.config)])
+    return argv
 
 
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_console()
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    from core.crash import install_crash_handlers, report_crash, show_startup_error
+    from core.crash import install_crash_handlers, show_startup_error
 
     log_dir = _safe_log_dir()
-    try:
+    with contextlib.suppress(Exception):
         install_crash_handlers(log_dir, version=C.VERSION)
-    except Exception:  # noqa: BLE001 - 崩溃钩子失败不能阻断启动
-        LOG.debug("崩溃钩子安装失败", exc_info=True)
     try:
-        return _run(args)
+        if args.debug_raw:
+            _set_dpi_awareness()
+            return run_raw_debug()
+        if args.headless:
+            return _run(args)
+        # 默认：Tauri 外壳的业务服务（stdin/stdout NDJSON）。
+        from service.server import main as service_main
+
+        return service_main(_service_argv(args))
     except PadLendError as exc:
         LOG.error("%s", exc.user_message)
         _safe_print(f"[error] {exc.user_message}")
-        report_crash(exc, kind="startup", notify=False)
         show_startup_error(exc.user_message)
         return 1
     except KeyboardInterrupt:
         return 0
-    except BaseException as exc:  # noqa: BLE001 - 最外层兜底，保证有日志/弹窗
+    except BaseException as exc:  # noqa: BLE001 - 最外层兜底，保证有日志
         LOG.exception("未捕获异常，程序即将退出")
-        report_crash(exc, kind="main", notify=False)
         show_startup_error(f"程序遇到未处理的错误：{exc!r}")
         return 1
 
 
 def _run(args: argparse.Namespace) -> int:
-    # 必须在任何窗口/Raw Input 之前。
+    """无头引擎模式：DPI、日志、配置、单实例锁、残留清理。"""
     _set_dpi_awareness()
-
     log_dir = _safe_log_dir()
     setup_logging(
         level=getattr(logging, args.log_level, logging.INFO),
@@ -675,57 +420,27 @@ def _run(args: argparse.Namespace) -> int:
     LOG.info("%s %s 启动 (pid=%d)", C.APP_NAME, C.VERSION, os.getpid())
 
     config_file = Path(args.config) if args.config else C.config_path()
-    first_run = not config_file.exists()
     cfg = load_config(config_file)
     if args.serial:
         cfg.device.serial = args.serial
     issues = cfg.validate()
     if issues:
         LOG.warning("配置校验发现问题：%s", "; ".join(issues))
-    if first_run:
-        try:
-            cfg.save(config_file)
-        except OSError as exc:
-            LOG.warning("无法写入默认配置：%r", exc)
-
-    if args.debug_raw:
-        return run_raw_debug()
 
     acquired = True
     release_fn = None
     if not args.no_single_instance:
-        from win.single_instance import (
-            acquire,
-            create_activation_event,
-            release,
-            signal_running_instance,
-        )
+        from win.single_instance import acquire, release
 
         release_fn = release
         acquired = acquire()
         if not acquired:
-            woke = False
-            try:
-                woke = signal_running_instance()
-            except Exception:  # noqa: BLE001 - 通知失败退回窗口查找
-                LOG.debug("发送单实例唤起事件失败", exc_info=True)
-            if woke:
-                LOG.info("已有实例在运行，已通知它显示窗口")
-            else:
-                LOG.info("已有实例在运行，按窗口标题唤起")
-                _wake_existing_instance()
+            LOG.info("已有实例在运行，本次退出")
             return 0
-        try:
-            create_activation_event()
-        except Exception:  # noqa: BLE001 - 没有事件仍可启动
-            LOG.warning("单实例唤起事件创建失败", exc_info=True)
-
     try:
         _stale_cleanup(cfg)
         _mark_running()
-        if args.headless:
-            return run_headless(cfg, args)
-        return run_gui(cfg, args, first_run)
+        return run_headless(cfg, args)
     except PadLendError as exc:
         LOG.error("%s", exc.user_message)
         _safe_print(f"[error] {exc.user_message}")

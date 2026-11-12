@@ -16,10 +16,10 @@ from pathlib import Path
 import constants as C
 from config import load_config
 from core import crash
+from core import diagnostics as diag
 from tablet import adb as adb_mod
 from tablet import session as session_mod
 from tablet.adb import Adb
-from ui import diagnostics as diag
 
 
 def test_config_non_utf8_falls_back_without_destroying_file(tmp_path: Path) -> None:

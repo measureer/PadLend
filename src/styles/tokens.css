@@ -1,0 +1,207 @@
+/* PadLend 视觉规范 v2 —— 唯一令牌源。
+   所有颜色/字体/间距/圆角/动效都在这里定义，组件里不允许出现裸色值。 */
+
+:root {
+  /* 字体：沿用 Windows 原生字体栈，保证中文清晰、无额外字体下载 */
+  --font-ui: 'Segoe UI Variable Text', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', 'SFMono-Regular', monospace;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-26: 26px;
+  --lh-tight: 1.25;
+  --lh-body: 1.55;
+
+  /* 8px 基准间距 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  --h-control: 34px;
+  --h-compact: 28px;
+  --h-titlebar: 36px;
+  --h-header: 68px;
+  --h-bottom: 34px;
+  --w-sidebar: 216px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+
+  --brand-from: #5b8cff;
+  --brand-to: #8b6cff;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-app: #0b0f16;
+  --bg-shell: #0f1520;
+  --bg-surface: #151c28;
+  --bg-raised: #1c2534;
+  --bg-sunken: #0d131d;
+  --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-active: rgba(110, 155, 255, 0.14);
+  --border: #253041;
+  --border-strong: #36455b;
+  --text: #edf3fb;
+  --text-2: #9aabc2;
+  --text-3: #6c7d94;
+  --text-on-accent: #071018;
+  --accent: #6e9bff;
+  --accent-hover: #8fb2ff;
+  --accent-soft: rgba(110, 155, 255, 0.14);
+  --accent-border: rgba(110, 155, 255, 0.38);
+  --ok: #3ddc97;
+  --warn: #ffc857;
+  --err: #ff6b6b;
+  --capturing: #ff5c7a;
+  --disconnected: #6b7c92;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 18px 60px rgba(0, 0, 0, 0.5);
+  --canvas-grid: rgba(255, 255, 255, 0.035);
+  --scroll-thumb: #35445a;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-app: #f3f6fb;
+  --bg-shell: #ffffff;
+  --bg-surface: #ffffff;
+  --bg-raised: #f1f5fb;
+  --bg-sunken: #e9eef6;
+  --bg-hover: rgba(24, 44, 79, 0.045);
+  --bg-active: rgba(61, 111, 224, 0.1);
+  --border: #dde5f0;
+  --border-strong: #bdc9da;
+  --text: #16212e;
+  --text-2: #5a6b80;
+  --text-3: #8794a6;
+  --text-on-accent: #ffffff;
+  --accent: #3d6fe0;
+  --accent-hover: #2d5fcc;
+  --accent-soft: rgba(61, 111, 224, 0.1);
+  --accent-border: rgba(61, 111, 224, 0.32);
+  --ok: #1f9d6b;
+  --warn: #a96a12;
+  --err: #d14343;
+  --capturing: #d9485f;
+  --disconnected: #8794a5;
+  --shadow-1: 0 1px 2px rgba(24, 44, 79, 0.06), 0 10px 30px rgba(24, 44, 79, 0.08);
+  --shadow-2: 0 18px 60px rgba(24, 44, 79, 0.18);
+  --canvas-grid: rgba(24, 44, 79, 0.04);
+  --scroll-thumb: #c3cedd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  line-height: var(--lh-body);
+  color: var(--text);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-strong);
+  background-clip: content-box;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-2);
+}
+.subtle {
+  color: var(--text-3);
+}
+
+.tone-ok {
+  color: var(--ok);
+}
+.tone-warn {
+  color: var(--warn);
+}
+.tone-err {
+  color: var(--err);
+}
+.tone-capturing {
+  color: var(--capturing);
+}
+.tone-accent {
+  color: var(--accent);
+}
+.tone-muted {
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
