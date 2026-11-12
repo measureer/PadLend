@@ -2,7 +2,8 @@
 
 > **版本提示**：本文记录 1.0.x 的实施约定；`ui/`、`PadLend.spec` 等 Qt 相关路径
 > 已在 1.1.0 删除。当前目录结构与构建流程见 [README.md](../README.md) 与
-> [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。
+> [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。开发期踩坑与失效安全记录见
+> [PITFALLS.md](PITFALLS.md)。
 
 本文件记录设计文档之下的**实施约定与已冻结的共享地基**。动手前先读：
 

@@ -811,7 +811,7 @@ UHID 键盘被识别为**物理键盘** ⇒ 输入法按物理键位工作，候
 |---|---|---|
 | `suppress_pc: true` | 接管期钩子 `return 1`，PC 收不到 | ✅ |
 | `suppress_pc: false` | 两边都收到 | — |
-| 白名单 | `passthrough_keys`（如 `VK_LWIN`）永远只给 PC | — |
+| 白名单 | `passthrough_keys` 中的**其它**键只给 PC；Win 键在接管期强制吞掉（1.2.0） | — |
 | 保命键 | `Ctrl+Alt+S` / `Ctrl+Alt+Q` 永不屏蔽 + `RegisterHotKey` 兜底 | 强制 |
 
 ### 6.7.6 防粘键
@@ -892,7 +892,7 @@ keyboard:
   forward: true
   suppress_pc: true
   layout: us
-  passthrough_keys: ["VK_LWIN", "VK_RWIN"]
+  passthrough_keys: []          # 1.2.0 起 Win 键接管期强制吞掉；此处只配其它放行键
 
 hotkeys:
   toggle: "Ctrl+Alt+S"

@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前版本 **1.1.2**，Apache-2.0。1.1.2 修复接管交还后遮罩窗口残留（整块屏幕没有光标、点击被吞）的问题；1.1.1 修复了接管期间电脑屏幕上重新出现鼠标指针的问题，并把产品描述统一为「跨设备共享键鼠无缝操作平板」。1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+当前版本 **1.2.0**，Apache-2.0。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ![桌面布局页](docs/screenshots/tauri-layout.png)
 
@@ -45,12 +45,12 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载最新发布：
 
-- `PadLend-1.1.2-setup.exe`：NSIS 安装器，装到当前用户目录，不需要管理员权限。
-- `PadLend-1.1.2-win64.zip`：免安装包，解压即用。
+- `PadLend-1.2.0-setup.exe`：NSIS 安装器，装到当前用户目录，不需要管理员权限。
+- `PadLend-1.2.0-win64.zip`：免安装包，解压即用。
 - `SHA256SUMS.txt`：下载后建议核对。
 
 ```powershell
-Get-FileHash .\PadLend-1.1.2-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 ```
 
 安装器默认装到 `%LOCALAPPDATA%\Programs\PadLend`。配置和日志默认写在 `%APPDATA%\PadLend\`，升级覆盖程序目录不会丢配置。免安装包请保持 `PadLend.exe`、sidecar exe 与 `vendor\` 在同一目录。
@@ -126,7 +126,7 @@ keyboard:
   forward: true
   suppress_pc: true
   layout: us
-  passthrough_keys: ["VK_LWIN", "VK_RWIN"]
+  passthrough_keys: []    # 1.2.0 起接管期 Win 键由 Router 强制吞掉；这里只配其它放行键
 hotkeys:
   toggle: "Ctrl+Alt+S"
   panic: "Ctrl+Alt+Q"
@@ -168,7 +168,7 @@ YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `c
 | 边缘手势被平板抢走 | 调大 `motion.boundary_inset_px`（8–16） |
 | 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 120）或 `debounce_ms` |
 
-更完整的排障步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+更完整的排障步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)；开发期踩坑与失效安全记录见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ## 架构
 

@@ -1,40 +1,60 @@
-# PadLend 1.1.2
+# PadLend 1.2.0
 
 跨设备共享键鼠无缝操作平板：鼠标从屏幕边缘穿到平板上，平板显示真实的系统指针，键盘和剪贴板双向同步。
 
-**1.1.2 是修复版本**：解决接管交还后遮罩窗口残留——整块屏幕没有光标、所有点击被吞、只能退出应用的问题。1.1.1 的「接管期间电脑上重新出现鼠标指针」修复继续有效。
+**1.2.0 是可靠性与退出流程修复版本**：解决托盘点「退出」不退出、接管期按 Win 键把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题。1.1.2 的交还后遮罩线程修复继续有效。
 
-## 修复：交还后遮罩泄漏，屏幕被盖死
+## 修复：托盘「退出」不再只隐藏窗口
 
-1.1.1 的遮罩窗口只会在创建它的线程上处理 `WM_CLOSE`。点界面按钮进入接管时，那条线程是 RPC 线程池线程，**没有消息泵**；鼠标划到平板边缘自动交还发生在 raw input 线程。于是 `PostMessage(WM_CLOSE)` 永远没人处理，`ClipCursor` 已经复位，遮罩却一直盖在屏幕上：看不到光标，点哪里都没反应。
+1.1.2 的退出复用了窗口关闭路径。开启 `close_to_tray` 时，Tauri 的 `CloseRequested` 会 `prevent_close()` + `hide()`，于是点「退出」只是把窗口藏起来，进程、sidecar、托盘图标和热键都还在。
 
-- 遮罩窗口改由专用线程 `padlend-mask-win` 拥有：创建、`WM_SETCURSOR`、销毁都在这条线程上；
-- 释放时把 `DestroyWindow` 直接投递到该线程执行，不再依赖跨线程 `WM_CLOSE`（实测 9 ms 内销毁）；
-- 投递超时（线程卡死）时，退路是先 `ShowWindow(SW_HIDE)` 把屏幕立刻让出来，再补发 `WM_CLOSE` 收尾；
-- `ClipCursor` 释放路径保持不变，退出时仍然无条件复位。
+- 新增显式 `quit_app` 命令：先同步停 sidecar，再 `app.exit(0)`；
+- 托盘菜单和托盘 quit 事件都走这条路径；
+- 关窗（X）仍按 `close_to_tray` 的语义：默认 `false` 时停 sidecar 退出，`true` 时隐藏到托盘；
+- Rust 等待 sidecar 的上限从 4s 提到 8s（遮罩线程最坏等 5s），超时才强杀并按进程树清理。
+
+## 修复：接管期 Win 键不再打开开始菜单
+
+`passthrough_keys` 默认把左右 Win 放给 Windows，开始菜单弹出后被 topmost 遮罩挡住；鼠标点不进去，其余按键又被吞掉，观感就是「整屏卡死」。
+
+- CAPTURED 期间 Router 无条件吞掉 L/R Win 的 down/up，不转发平板、不进 keymap；
+- `_swallowed_win` 锁存到 keyup，交还瞬间也不会漏掉松键；
+- 兼容 `vk == 0` 的 scan code 路径；
+- IDLE 状态下 Win 键行为不变。
+
+## 修复：崩溃/强杀后不再留下孤儿遮罩
+
+遮罩窗口属于 Python sidecar，真正退出的进程不会留下窗口；残留只可能来自「sidecar 还活着但卡住」或「建了窗口却没被跟踪」。
+
+- 建窗拆成「拿 hwnd → 先登记 → 再配置 alpha/置顶」，配置阶段卡住也能被释放路径找到；
+- 遮罩线程任务超时直接报错，不再回调用线程重复建窗；
+- 启动时 `cleanup_orphan_mask()` 按窗口类名找到残留，先隐藏/关闭，必要时终止仍挂起的 sidecar，并复位 `ClipCursor`；
+- Rust 给 sidecar 注入 `PADLEND_PARENT_PID`，Python 每秒检查父进程，Tauri 崩溃后 sidecar 会同步 teardown 再退出；
+- `service.shutdown()` / `Runtime.stop()` 改为同步、幂等，重复或并发调用安全；首次运行误报「上次未正常退出」也一并修复。
+
+## 关于「按 Win 键崩溃」
+
+本轮**没有拿到真实崩溃栈**：日志目录、WER 和事件查看器都没有 PadLend 的 `crash-*`/`faulthandler-*` 记录，复现时桌面已锁屏无法回放。因此上面的 Win 键修复针对的是已确认的输入路径与假死观感，失效安全则保证「即使再崩，屏幕也不会被遮罩吃掉」。若现场再次出现，请按 `docs/PITFALLS.md` 4.1 收集完整日志与 WER 报告。
 
 ## 验证
 
-- 真机复现原故障：在**没有消息泵**的线程创建遮罩、从另一线程释放托管。修复后遮罩在专用线程创建，释放 9 ms 完成，`EnumWindows` 剩余遮罩 0 个、光标恢复可见；修复前遮罩持续残留，`WindowFromPoint` 命中遮罩。
-- `pytest` 全量通过（新增跨线程释放保留在遮罩线程、消息泵卡死时隐藏兜底两组单测），`ruff check .` 通过，前端 `vitest` / `tsc --noEmit` / `npm run build` 通过。
+- `pytest` 421 passed / 3 skipped（收集 424）（新增 Win 键锁存、遮罩先登记/配置超时、孤儿遮罩清理、adb 故障映射、UHID 半包、teardown 幂等/父进程看门狗/首启假阳性等用例）；
+- `vitest` 29 tests 通过（新增托盘退出走 `quit_app` 而非 `windowClose` 的用例）；
+- `ruff check .`、`tsc --noEmit` 通过；Rust 由 GitHub Actions 在 `windows-latest` 上编译。
 
 ## 下载
 
-- `PadLend-1.1.2-setup.exe` — NSIS 安装器，安装到当前用户目录，不需要管理员权限
-- `PadLend-1.1.2-win64.zip` — 免安装包，解压后运行 `PadLend.exe`
+- `PadLend-1.2.0-setup.exe` — NSIS 安装器，安装到当前用户目录，不需要管理员权限
+- `PadLend-1.2.0-win64.zip` — 免安装包，解压后运行 `PadLend.exe`
 - `SHA256SUMS.txt` — 下载后建议核对
 
 ```powershell
-Get-FileHash .\PadLend-1.1.2-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 ```
 
 ## 环境要求
 
 - Windows 10/11 x64；系统需具备 WebView2 Runtime（缺失时安装器会引导安装）
 - Android 8.0+ 且 `/dev/uhid` 可写；USB 数据线或无线 adb
-
-## 校验
-
-`ruff check .`、`pytest`、`vitest`、`tsc --noEmit` 与 `npm run build` 全部通过；发布产物由 GitHub Actions 在 `windows-latest` 上构建（含 Rust/MSVC 与 WebView2）。
 
 > 当前构建没有代码签名，Windows 可能提示「未知发布者」；点「更多信息 → 仍要运行」即可，或用 SHA256SUMS.txt 核对。

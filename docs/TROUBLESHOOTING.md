@@ -3,6 +3,9 @@
 > **版本提示**：配置/日志路径、adb 与 UHID 排障步骤在 1.1.0 仍然有效；
 > 文中提到的 Qt 窗口/托盘行为已改为 Tauri 2 外壳，界面问题另见
 > [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。
+>
+> 本文只保留**用户可执行**的排障步骤；开发期的根因、代码位置与回归测试见
+> [PITFALLS.md](PITFALLS.md)。
 
 ## 0. 先拿到日志
 
@@ -217,7 +220,7 @@ adb shell dumpsys input | grep -c scrcpy    # 期望输出 0
 
 ### PC 上某些键被吞/卡键
 
-- `keyboard.passthrough_keys` 中加入不想转发的键（默认 Win 键）；
+- `keyboard.passthrough_keys` 中加入不想转发的**其它**键；Win 键在接管期会被强制吞掉（1.2.0 起，避免开始菜单盖在遮罩下），不受此配置影响；
 - 离开接管时程序会发送全零报告清键；若仍卡键，按一次对应键或重新接管再交还；
 - UAC/管理员窗口收不到钩子，属 Windows 固有限制。
 

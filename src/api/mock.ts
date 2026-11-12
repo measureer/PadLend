@@ -176,7 +176,7 @@ export class MockBackend {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
-    this.pushLog('APP', 'PadLend 1.0.5 业务服务已就绪（演示模式）');
+    this.pushLog('APP', 'PadLend 1.2.0 业务服务已就绪（演示模式）');
     this.pushLog('DEVICE', '扫描设备：1 台设备');
     this.pushLog('STATE', 'idle → idle（启动）');
   }
@@ -225,7 +225,7 @@ export class MockBackend {
 
   private snapshot(): Bootstrap {
     return {
-      version: '1.1.0',
+      version: '1.2.0',
       config: this.config,
       configIssues: [],
       configPath: '%APPDATA%\\PadLend\\config.yaml',
@@ -364,7 +364,7 @@ export class MockBackend {
         break;
       case 'diagnostics.run': {
         this.diagnosticsText = [
-          'PadLend 1.0.5 诊断报告',
+          'PadLend 1.2.0 诊断报告',
           '（设备序列号、IP/MAC、用户名与用户目录路径已自动打码）',
           '',
           '== 概要 ==',
@@ -385,14 +385,14 @@ export class MockBackend {
         result = { path: 'C:\\Users\\<user>\\Desktop\\padlend-diagnostics-demo.zip' };
         break;
       case 'diagnostics.static':
-        result = { text: 'PadLend 1.0.5 · Windows · jar 已就绪（未运行 adb 采集）' };
+        result = { text: 'PadLend 1.2.0 · Windows · jar 已就绪（未运行 adb 采集）' };
         break;
       case 'system.paths':
         result = {
           configPath: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\config.yaml',
           logDir: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\logs',
           noticesPath: 'C:\\Program Files\\PadLend\\THIRD_PARTY_NOTICES.md',
-          version: '1.1.0',
+          version: '1.2.0',
           license: 'Apache-2.0',
           appName: 'PadLend',
         };
@@ -462,4 +462,5 @@ export class MockBackend {
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}
   async shutdown(): Promise<void> {}
+  async quitApp(): Promise<void> {}
 }

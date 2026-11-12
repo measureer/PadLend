@@ -4,6 +4,24 @@
 > 1.1.0 起界面不再使用 PySide6；第 0 节及以下历史记录中的 Qt 相关内容仅作回归对照。
 > 记录原则：每条都写命令、期望、实际、结论；无硬件时明确标"待复验"，不得默认为通过。
 
+## 1.2.0 发布验收（2026-11-13）
+
+自动化门禁在本机 Windows 11 + bundled Python 3.12.14 / Node 24.21.0 上执行：
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| Python 回归 | `python -m pytest -o addopts="" -q` | **421 passed, 3 skipped**（基线 HEAD `07218c6` 为 403 passed, 3 skipped，新增 18 例） |
+| 代码风格 | `python -m ruff check .` | All checks passed（F401/F811/F841 为 0） |
+| 前端单测 | `pnpm exec vitest run` | 7 files / 29 tests passed（基线 28，新增托盘退出 1 例） |
+| 类型检查 | `pnpm exec tsc --noEmit` | 通过（`noUnusedLocals`/`noUnusedParameters` 已开启） |
+| 原生外壳编译 | GitHub Actions `windows-latest` | 本机无 Rust/MSVC，必须由 CI 的 `npx tauri build --no-bundle` 与 Release 工作流验证；本地结果不代签 |
+| 托盘退出实测 | 启动 → 托盘「退出 PadLend」 | **待复验**：本轮桌面会话被系统锁定，无法点托盘；代码路径以 `tests/quit.test.ts` 与 Rust 单测面代替，发布前需在解锁桌面点一次并确认进程树/托盘/遮罩全清 |
+| Win 键实测 | 接管中按 L/R Win | **部分复验**：Router 单测覆盖 down/up/scan code/交还后迟到 keyup；真实外壳的「开始菜单不再盖在遮罩下」需解锁桌面手工确认 |
+| 崩溃栈 | 事件查看器 / WER / `logs\crash-*` | **未取得**：无 PadLend 崩溃记录，缺陷 A 的崩溃本身未复现；按 `docs/PITFALLS.md` 4.1 保留证据收集步骤 |
+
+> 结论：自动化门禁全绿；两项 GUI 实测因会话锁定标为待复验，不能据此宣称「已手工验收」。
+> 发布说明与 CHANGELOG 已同步写入该限制。
+
 ## 1.1.0 发布验收（2026-11-12）
 
 | 项 | 命令 | 结果 |

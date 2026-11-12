@@ -1,4 +1,9 @@
-"""托盘注册自检（Windows）。
+"""托盘注册自检（Windows，手工诊断模块）。
+
+**当前 runtime 没有调用本模块**：1.0 起托盘由 Tauri（Rust 侧）创建，Qt 时代
+从 UI 调用的入口已删除；`tools/build_sidecar.py` 仍把它列进 hidden imports，
+方便需要时用诊断脚本/REPL 调用 `probe_icon()`。如果要重新接入运行时，先补
+调用点与测试，不要假定它已经在跑。
 
 ``QSystemTrayIcon.isVisible()`` 只反映 Qt 自己的状态：图标在通知区里到底有没有
 挂上，Qt 并不知道。0.3.16/0.3.17 里用户报「关闭到托盘后找不到 PadLend」，

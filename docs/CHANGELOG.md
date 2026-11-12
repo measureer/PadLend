@@ -2,6 +2,64 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.2.0] — 2026-11-13
+
+### 修复
+
+- **托盘「退出」只隐藏窗口，进程和 sidecar 继续跑**：1.1.2 的退出复用了窗口关闭路径，
+  而 `ui.close_to_tray=true` 时 Tauri 的 `CloseRequested` 会 `prevent_close()` + `hide()`，
+  所以点「退出」只是把窗口藏起来。1.2.0 新增显式 `quit_app` 命令：先同步停 sidecar，
+  再 `app.exit(0)`；托盘菜单和托盘的 quit 事件都走这条路径，窗口关闭（X）仍按
+  `close_to_tray` 的语义隐藏。`close_to_tray` 默认仍是 `false`，行为未变。
+- **接管期 Win 键会把开始菜单盖在遮罩下，看起来像崩溃/黑屏**：`passthrough_keys`
+  默认把左右 Win 放给 Windows，开始菜单弹出后被 topmost 遮罩挡住；鼠标点不进去，
+  其余按键又被吞掉，用户只能强杀。1.2.0 在 Router 的 CAPTURED 状态无条件吞掉
+  L/R Win 的 down/up（含 `vk==0` 的 scan code 路径），不转发平板、不进 keymap；
+  `_swallowed_win` 锁存到 keyup，交还瞬间也不会漏掉松键。IDLE 下 Win 键行为不变。
+- **崩溃/强杀后遗留孤儿遮罩**：遮罩窗口属于 Python sidecar；1.1.2 的建窗函数把
+  `CreateWindowExW` 与 `SetLayeredWindowAttributes`/`ShowWindow`/`SetWindowPos` 放在
+  一次调用里，超时重试会在调用线程再建一个未被跟踪的 topmost 窗口。1.2.0 把创建
+  拆成「`create_mask_window` 拿 hwnd → 登记 → `configure_mask_window` 配置」，
+  超时直接报错而不再重跑；启动时 `cleanup_orphan_mask()` 按窗口类名找到残留，
+  先隐藏/关闭，必要时终止仍挂起的 sidecar，并复位 `ClipCursor`。
+- **Python 关闭被守护线程截断**：`service.shutdown()` 以前只起一个 daemon 线程就返回，
+  解释器退出会截断 `hotkeys.stop`/`runtime.stop`/`_mark_clean_exit`。现在 shutdown
+  在调用线程串行执行并用锁防重；`Runtime.stop()` 也加了幂等保护，重复/并发调用安全。
+- **Tauri 崩溃后 sidecar 变孤儿**：Rust 启动 sidecar 时注入 `PADLEND_PARENT_PID`，
+  Python 每秒检查父进程；父进程消失就同步 teardown 后退出，不再等 stdin EOF。
+- **首次运行误报「上次未正常退出」**：`_stale_cleanup` 以前用 `config.yaml` 是否存在
+  判断是否运行过，但首次启动会先写默认配置。现在由调用方在写配置前传 `first_run`。
+
+### 变更
+
+- 托盘「退出」、窗口关闭（X）、`Ctrl+Alt+Q` 急停现在是三条明确不同的路径：
+  quit 停 sidecar 后退出进程；X 按 `close_to_tray` 隐藏或停 sidecar 退出；
+  急停只交还输入并释放遮罩，不退出程序。
+- `bridge.shutdown()` 改为同步等待 sidecar 退出（上限 8s，覆盖遮罩线程最坏 5s），
+  超时才 `kill()` 并用 `taskkill /T` 清进程树。
+- 清理经全仓引用检索确认零调用的死代码：`constants.py` 的 13 个孤立常量
+  （`APP_ID`、Qt 时代 `ASSETS_DIR`/`ICONS_DIR`、`RAW_QUEUE_MAXSIZE`、`KEY_QUEUE_MAXSIZE`、
+  `CLIPCURSOR_WATCHDOG_S`、DWM 主题常量、`EVENT_NAMES`、`SAFETY_HOTKEYS`、
+  `HEARTBEAT_INTERVAL_S`、`HID_MOUSE_REPORT_ID`）、`core/geometry.contains_rect/intersects`、
+  `core/logsetup.logger_for`、`core/metrics.record_rtt` 别名、`core/state.IllegalTransition`、
+  `win/dpi.py` 三个 awareness 常量、`win/hotkeys` 的 `MOD_SHIFT/MOD_WIN`、
+  `win/rawinput` 的 `MOUSE_VIRTUAL_DESKTOP/RI_MOUSE_HWHEEL`、`config.default_config/save_config`
+  和前端 `formatGain()`；`win/trayprobe.py` 保留为手工诊断模块，文档注明 runtime 无调用。
+- 新增 `docs/PITFALLS.md`（开发期踩坑，按模块分节），`TROUBLESHOOTING.md`
+  只保留用户可执行步骤，两处互链。
+
+### 验证
+
+- `pytest` 421 passed / 3 skipped（收集 424）（新增 Win 键锁存、遮罩先登记/配置超时、孤儿遮罩清理、
+  adb 故障映射、UHID 半包、teardown 幂等/父进程看门狗/首启假阳性等用例）；
+  `ruff check .` 通过。
+- `vitest` 29 tests 通过（新增托盘退出走 `quit_app` 而非 `windowClose` 的用例）；
+  `tsc --noEmit` 通过。
+- **缺陷 A 的崩溃本身未能复现**：日志目录、WER 与事件查看器都没有 PadLend 的
+  `crash-*`/`faulthandler-*` 记录，复现时桌面已锁屏无法回放。因此本轮只按已确认的
+  Win 键输入路径和失效安全修复，不声称拿到了崩溃栈；现场若再出现，请按
+  `docs/PITFALLS.md` 4.1 收集完整日志与 WER 报告。
+
 ## [1.1.2] — 2026-11-12
 
 ### 修复
@@ -664,31 +722,3 @@
 
 - 平板连接层：adb 枚举/推送/forward、scrcpy-server 5.0.1 headless 启动、1 字节握手（实测修正，原设计记 4 字节）、UHID 鼠标/键盘注册与销毁、幽灵进程清理、指针速度记录/归零/还原、断线重连。
 - 相对指针估计器：残差累加、±127 截断、边界夹紧、`warp_to` 批量定位、边缘命中判定。
-- 虚拟桌面几何：EnumDisplayMonitors 枚举、外轮廓边段计算（1px 扫描线 + 跨屏合并）、沿边映射、角落裁决、入口/落点计算、混合 DPI。
-- 状态机 Router：IDLE → ARMING → CAPTURED → RETURNING → IDLE，FAULT 与重连；不变量 I1–I6 校验。
-- Raw Input 捕获（RIDEV_INPUTSINK、绝对坐标归一化、按钮/滚轮、时间戳）与 1000Hz 发送线程。
-- CursorMask：每显示器透明遮罩 + ClipCursor 边缘锁，`release()` 幂等，多级兜底。
-- 键盘转发：VK→HID 全表、左右修饰键、6KRO、扩展键、passthrough 白名单、`Ctrl+Alt+S/Q` 保命键。
-- 剪贴板（G9，SHOULD）：接管瞬间与 `Ctrl+Alt+V` 把 PC 文本经 `INJECT_TEXT` 发给平板，UTF-8 上限 4KB，仅文本。
-- GUI：暗色主窗（状态条/画布/设置栏/日志/指标）、可拖拽吸附画布、设置面板、托盘状态色、首次向导、诊断页与诊断包导出。
-- 配置：YAML 读写、校验与自动修复、版本迁移、单实例锁、日志轮转。
-- 打包：PyInstaller 单文件 `dist/PadLend.exe`（约 51MB，内置 PySide6、scrcpy jar 与 adb），`runtime_tmpdir="."` 适配受限 Windows 临时目录；frozen 配置/日志目录固定在 exe 同目录 `.padlend/`；内置 adb 37.0.1 与图标。已实际构建并 GUI/无设备冒烟。
-- 测试：协议黄金字节、估计器、几何 8 种布局、配置、键盘映射、Router 状态机、UI offscreen smoke、键盘钩子安装。
-
-### 修复
-
-- `GetCurrentThreadId` 误从 user32 加载（全局热键与低级键盘钩子启动即失败）：改从 kernel32 加载，并加真实安装测试。
-- GUI 启动时安装低级键盘钩子、退出时卸载；此前键盘转发虽已实现但未接线。
-- GUI 启动时启动 RawInputSource 并接线 `Router.on_raw`；此前只有 `--debug-raw` 使用 Raw Input，正常 GUI 模式收不到鼠标事件。
-- `warp_to` 亚像素残差导致入口不命中/出口溢出失效：边界轴补一帧精确落边。
-- 错位双屏下默认吸附段取错（首条而非最长段）：改为同边同显示器取最长合法段。
-- `--headless` 此前只连接设备、不转发鼠标，且 `--duration` 在 session 已置 started 但 facts 未发布的窗口内失效（会卡到 40s 首连超时）：连接后启动 Raw Input，位移经 `CursorEstimator` 直接发 UHID（不经过边缘状态机），定时检查移到循环顶部。
-- 单文件打包：onefile 解包目录因环境 `%TEMP%` 不可写而失败 → `runtime_tmpdir="."`；frozen 时配置目录误落 `_MEIPASS` 导致退出即丢 → 拆 `APP_DIR`/`BUNDLE_DIR`。
-- 打包版缺少 adb：内置 platform-tools 37.0.1 到 `vendor/adb/`，`tablet/adb.py` 自动命中。
-
-### 已知限制
-
-- 管理员权限窗口（UAC）无法接收钩子输入。
-- A4–A6 多显示器真机场景待双屏环境复验。
-- 当前开发环境没有连接平板，A1–A13 真机验收记录见 `docs/TROUBLESHOOTING.md`。
-- 2026-11-02 晚补：Honor CGA-W00 已连接，真机验证通过 adb 无线连接、1 字节握手、UHID 鼠标/键盘注册、`pointer_location` 可见光标移动、正常退出还原 `pointer_speed`；边缘穿越/键盘输入等交互项仍待复验。
