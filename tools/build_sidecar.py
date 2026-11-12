@@ -12,10 +12,21 @@ Rust 侧 ``bridge::resolve_service`` 会优先在 exe 同目录 / resources 里�
 
 from __future__ import annotations
 
+import contextlib
 import platform
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _force_utf8() -> None:
+    """CI 的 PowerShell 默认 cp1252；中文输出不能让构建失败。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(Exception):
+                reconfigure(encoding="utf-8", errors="replace")
+
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src-tauri" / "binaries"
@@ -70,6 +81,7 @@ def target_triple() -> str:
 
 
 def main() -> int:
+    _force_utf8()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     name = f"padlend-service-{target_triple()}"

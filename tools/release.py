@@ -14,6 +14,7 @@ Tauri 自己产出 NSIS 安装器；本脚本负责前端静态资源、Python �
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import os
 import shutil
@@ -31,6 +32,15 @@ APP_NAME = "PadLend"
 
 sys.path.insert(0, str(ROOT))
 from padlend import __version__ as VERSION  # noqa: E402
+
+
+def _force_utf8() -> None:
+    """CI 的 PowerShell 默认 cp1252；中文输出不能让发版失败。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(Exception):
+                reconfigure(encoding="utf-8", errors="replace")
 
 
 def log(message: str) -> None:
@@ -161,6 +171,7 @@ def make_sha256() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", action="store_true", help="构建前端、sidecar 与 Tauri 外壳")
     parser.add_argument("--zip", action="store_true", help="生成免安装 zip")

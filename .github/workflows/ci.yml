@@ -59,6 +59,8 @@ jobs:
     name: tauri 2 shell (compile check)
     runs-on: windows-latest
     needs: [python, frontend]
+    env:
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
