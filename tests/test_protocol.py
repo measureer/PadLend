@@ -349,3 +349,20 @@ def test_deserialize_rejects_unknown_or_oversized_message() -> None:
         P.deserialize_device_message(b"\xff")
     with pytest.raises(ValueError, match="剪贴板消息过长"):
         P.deserialize_device_message(b"\x00" + (P.DEVICE_MSG_MAX_SIZE).to_bytes(4, "big"))
+
+
+def test_deserialize_uhid_output_waits_for_full_header_and_payload() -> None:
+    full = b"\x02\x00\x02\x00\x02\xab\xcd"
+    assert P.deserialize_device_message(full[:3]) == (None, 0)
+    assert P.deserialize_device_message(full[:6]) == (None, 0)
+    message, consumed = P.deserialize_device_message(full + b"tail")
+    assert message == P.DeviceMessage(P.DEVICE_MSG_UHID_OUTPUT, uhid_id=2, data=b"\xab\xcd")
+    assert consumed == len(full)
+
+
+def test_deserialize_ack_waits_for_full_sequence() -> None:
+    full = b"\x01" + (7).to_bytes(8, "big")
+    assert P.deserialize_device_message(full[:-1]) == (None, 0)
+    message, consumed = P.deserialize_device_message(full)
+    assert message == P.DeviceMessage(P.DEVICE_MSG_ACK_CLIPBOARD, sequence=7)
+    assert consumed == 9

@@ -88,6 +88,7 @@ def test_select_device_falls_back_to_only_online_device() -> None:
 # 无线调试：地址归一化与 connect/pair 的成败判定
 # ---------------------------------------------------------------------------
 import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -221,3 +222,79 @@ def test_wifi_mac_falls_back_to_scanning_interfaces() -> None:
 def test_wifi_mac_returns_empty_when_nothing_valid() -> None:
     adb = _ShellStub({"cat /sys/class/net/wlan0/address": (0, "not-a-mac\n")})
     assert adb.wifi_mac() == ""
+
+
+# ---------------------------------------------------------------------------
+# 子进程故障映射：超时 / adb 丢失 / 启动失败 / 断开吞错 / 未授权提示
+# ---------------------------------------------------------------------------
+
+
+def _bare_adb() -> Adb:
+    adb = Adb()
+    adb._path = Path("adb.exe")
+    return adb
+
+
+def test_run_maps_timeout_to_the_requested_error_code(monkeypatch) -> None:
+    from tablet import adb as adb_mod
+
+    monkeypatch.setattr(adb_mod, "_note_server_ownership", lambda args: None)
+
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise subprocess.TimeoutExpired(cmd="adb devices -l", timeout=1.5)
+
+    monkeypatch.setattr(adb_mod.subprocess, "run", fake_run)
+    with pytest.raises(PadLendError) as info:
+        _bare_adb()._run(["devices", "-l"], timeout=1.5, code=ErrorCode.DEVICE_OFFLINE)
+    assert info.value.code is ErrorCode.DEVICE_OFFLINE
+    assert "adb 超时" in info.value.detail
+
+
+def test_run_resets_cached_path_when_binary_disappears(monkeypatch) -> None:
+    from tablet import adb as adb_mod
+
+    monkeypatch.setattr(adb_mod, "_note_server_ownership", lambda args: None)
+
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise FileNotFoundError(2, "missing adb")
+
+    monkeypatch.setattr(adb_mod.subprocess, "run", fake_run)
+    adb = _bare_adb()
+    with pytest.raises(PadLendError) as info:
+        adb._run(["devices", "-l"], timeout=1.0)
+    assert info.value.code is ErrorCode.ADB_NOT_FOUND
+    assert adb._path is None
+
+
+def test_run_maps_oserror_to_adb_not_found(monkeypatch) -> None:
+    from tablet import adb as adb_mod
+
+    monkeypatch.setattr(adb_mod, "_note_server_ownership", lambda args: None)
+
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise OSError("cannot spawn")
+
+    monkeypatch.setattr(adb_mod.subprocess, "run", fake_run)
+    with pytest.raises(PadLendError) as info:
+        _bare_adb()._run(["devices", "-l"], timeout=1.0)
+    assert info.value.code is ErrorCode.ADB_NOT_FOUND
+
+
+def test_disconnect_swallows_adb_errors(monkeypatch) -> None:
+    adb = _bare_adb()
+
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise PadLendError(ErrorCode.DEVICE_OFFLINE, "adb 超时 1s")
+
+    monkeypatch.setattr(adb, "_run", fake_run)
+    assert adb.disconnect("192.168.1.8:37495") == ""
+
+
+def test_select_device_reports_unauthorized_hint() -> None:
+    output = """List of devices attached
+ABCD1234 unauthorized usb:1-1 transport_id:5
+"""
+    with pytest.raises(PadLendError) as info:
+        _StubAdb(output).select_device()
+    assert info.value.code is ErrorCode.DEVICE_OFFLINE
+    assert "允许" in info.value.user_message
