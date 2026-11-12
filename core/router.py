@@ -11,8 +11,9 @@
 - **supervisor 线程**（T6）：2s 健康检查、旋转归中、显示器热插拔、
   pointer_speed 轮询、断线指数退避重连（1/2/4/8/16s×5）。
 - **键盘**：``on_key`` 是钩子转发线程的唯一入口；CAPTURED 且 forward 时经
-  ``tablet.keymap`` 转 HID，``suppress_pc`` 决定是否吞掉本机按键；白名单键
-  （默认 Win 键）与保命热键永远不会被吞。
+  ``tablet.keymap`` 转 HID，``suppress_pc`` 决定是否吞掉本机按键。接管期间
+  Win 键（L/R）是无条件吞掉且不转发的：它没有平板语义，放行只会在 topmost
+  遮罩下打开开始菜单。白名单里的其它键与保命热键仍然只给 PC。
 
 依赖边界
 --------
@@ -106,6 +107,8 @@ def _fallback_vk_names() -> dict[str, int]:
 _CTRL_VKS: frozenset[int] = frozenset({0x11, 0xA2, 0xA3})
 _ALT_VKS: frozenset[int] = frozenset({0x12, 0xA4, 0xA5})
 _SAFETY_LETTERS: frozenset[int] = frozenset({0x53, 0x51})  # S / Q
+#: 左/右 Win。它们没有平板语义；CAPTURED 期间必须整键吞掉（1.2.0）。
+_WIN_VKS: frozenset[int] = frozenset({0x5B, 0x5C})
 
 
 def _timer_begin(period_ms: int) -> bool:
@@ -223,6 +226,8 @@ class Router:
         self._passthrough_vks = self._resolve_passthrough(cfg)
         self._ctrl_sides: set[int] = set()
         self._alt_sides: set[int] = set()
+        # CAPTURED 期间已经吞掉的 Win 键；keyup 必须继续吞，哪怕此刻已交还。
+        self._swallowed_win: set[int] = set()
         self._suppress_logged = False
         self._keymap_warned = False
 
@@ -1823,8 +1828,10 @@ class Router:
     def on_key(self, ev: KeyEvent) -> bool:
         """键盘入口；返回 ``True`` 表示本机应吞掉该键。
 
-        只有 CAPTURED 且 ``keyboard.forward`` / ``suppress_pc`` 同时成立时才可能
-        返回 ``True``；白名单键、保命热键、FAULT/IDLE/RETURNING 一律返回 ``False``。
+        CAPTURED 期间 Win 键（L/R）无条件返回 ``True`` 且不转发；对应的 keyup
+        即使发生在交还之后也继续吞掉。其余按键只有 CAPTURED 且
+        ``keyboard.forward`` / ``suppress_pc`` 同时成立时才可能返回 ``True``；
+        白名单里的其它键、保命热键、FAULT/IDLE/RETURNING 返回 ``False``。
         """
         try:
             if ev.down:
@@ -1864,6 +1871,19 @@ class Router:
     ) -> tuple[bool, tuple[int, tuple[int, ...]] | None]:
         """在锁内完成状态判定与键位表更新，返回 ``(是否屏蔽, 待发报告)``。"""
         self._track_safety(ev)
+        win_vk = self._win_vk(ev)
+        if win_vk is not None:
+            # Windows 键在接管期间必须整键消失：放行 keydown 会打开开始菜单，
+            # 而 topmost 遮罩会拦住它的鼠标交互，用户看到的就是"整屏卡死"。
+            # keyup 用锁存兜底：交还/急停发生在按住 Win 时，松键也不能漏给 PC。
+            if self._state is State.CAPTURED or win_vk in self._swallowed_win:
+                if ev.down:
+                    self._swallowed_win.add(win_vk)
+                else:
+                    self._swallowed_win.discard(win_vk)
+                return True, None
+            self._swallowed_win.discard(win_vk)
+            return False, None
         if self._is_passthrough(ev):
             return False, None
         if self._state is not State.CAPTURED:
@@ -1900,6 +1920,15 @@ class Router:
                 self._alt_sides.add(side)
             else:
                 self._alt_sides.discard(side)
+
+    @staticmethod
+    def _win_vk(ev: KeyEvent) -> int | None:
+        """识别左/右 Win；兼容只给扫描码的事件源（vk==0）。"""
+        if ev.vk in _WIN_VKS:
+            return int(ev.vk)
+        if ev.vk == 0 and (int(ev.scan) & 0xFF) in _WIN_VKS:
+            return int(ev.scan) & 0xFF
+        return None
 
     @staticmethod
     def _modifier_side(ev: KeyEvent, *, right_vk: int, generic_vk: int) -> int:

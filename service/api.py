@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import logging
 import os
@@ -100,6 +101,7 @@ class PadLendService:
         self._metrics: dict[str, Any] = {}
         self._state: str = "idle"
         self._shutdown_done = False
+        self._shutdown_lock = threading.Lock()
         self._ready = threading.Event()
         self._start_error: str = ""
 
@@ -134,7 +136,7 @@ class PadLendService:
         if not self.simulate:
             # 上次异常退出的残留清理；这是进程启动阶段的慢操作，
             # 但它在服务进程而非 WebView 里，界面从第一帧起就是可交互的。
-            _stale_cleanup(self.cfg)
+            _stale_cleanup(self.cfg, first_run=self.first_run)
         _mark_running()
 
         self.runtime = Runtime(self.cfg, simulate=self.simulate)
@@ -190,21 +192,25 @@ class PadLendService:
             self.hotkeys = None
 
     def shutdown(self) -> None:
-        if self._shutdown_done:
-            return
-        self._shutdown_done = True
+        """同步 teardown：返回时遮罩/ClipCursor/UHID/adb 都已释放。
+
+        1.1.2 把清理丢进 daemon 线程后立刻返回，主线程可能先退出，遮罩释放、
+        UHID 移除、exit.clean 写入都可能被截断；退出路径必须同步。
+        重复调用安全：第二次直接返回，不会重复 kill 子进程。
+        """
+        with self._shutdown_lock:
+            if self._shutdown_done:
+                return
+            self._shutdown_done = True
         self._stop.set()
-
-        def _clean() -> None:
-            if self.hotkeys is not None:
-                with __import__("contextlib").suppress(Exception):
-                    self.hotkeys.stop()
-            if self.runtime is not None:
-                with __import__("contextlib").suppress(Exception):
-                    self.runtime.stop()
-            _mark_clean_exit()
-
-        threading.Thread(target=_clean, name="service-shutdown", daemon=True).start()
+        if self.hotkeys is not None:
+            with contextlib.suppress(Exception):
+                self.hotkeys.stop()
+            self.hotkeys = None
+        if self.runtime is not None:
+            with contextlib.suppress(Exception):
+                self.runtime.stop()
+        _mark_clean_exit()
 
     # ------------------------------------------------------------------ 事件
     def emit_log(self, event: str, message: str) -> None:

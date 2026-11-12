@@ -23,7 +23,7 @@ type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>;
 pub struct Bridge {
     next_id: AtomicU64,
     pending: Pending,
-    stdin: Mutex<ChildStdin>,
+    stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
 }
 
@@ -37,7 +37,10 @@ impl Bridge {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .env("PYTHONUNBUFFERED", "1")
-            .env("PYTHONIOENCODING", "utf-8");
+            .env("PYTHONIOENCODING", "utf-8")
+            // 父进程看门狗：外壳崩溃后 sidecar 必须自行 teardown 退出，
+            // 否则它持有的全屏遮罩会留在桌面上（1.2.0 缺陷 A 的失效安全）。
+            .env("PADLEND_PARENT_PID", std::process::id().to_string());
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }
@@ -63,7 +66,7 @@ impl Bridge {
         let bridge = Arc::new(Self {
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
-            stdin: Mutex::new(stdin),
+            stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
         });
 
@@ -123,7 +126,10 @@ impl Bridge {
         let mut line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
         line.push('\n');
         {
-            let mut stdin = self.stdin.lock().unwrap();
+            let mut guard = self.stdin.lock().unwrap();
+            let Some(stdin) = guard.as_mut() else {
+                return Err("业务服务已退出".to_string());
+            };
             stdin
                 .write_all(line.as_bytes())
                 .map_err(|e| format!("写入业务服务失败：{e}"))?;
@@ -140,25 +146,53 @@ impl Bridge {
         }
     }
 
-    /// 请求优雅退出；不阻塞调用方（应用退出路径）。
+    /// 请求优雅退出并等待 sidecar 收尾。
+    ///
+    /// 1.1.2 把等待丢进后台线程后立即返回：Tauri 主进程随即退出，后台线程
+    /// 被一起终止，Python 的遮罩/ClipCursor/UHID/adb 清理可能只做了一半。
+    /// 退出路径必须等待，超时才强杀；sidecar 自己也有父进程看门狗兜底。
+    /// 上限 8s：遮罩释放最坏会等专用线程 5s，4s 会在它完成前就强杀。
     pub fn shutdown(&self) {
         let request = r#"{"id":0,"method":"app.shutdown","params":{}}"#.to_string();
         {
-            let mut stdin = self.stdin.lock().unwrap();
-            let _ = stdin.write_all(request.as_bytes());
-            let _ = stdin.write_all(b"\n");
-            let _ = stdin.flush();
+            let mut guard = self.stdin.lock().unwrap();
+            if let Some(mut stdin) = guard.take() {
+                let _ = stdin.write_all(request.as_bytes());
+                let _ = stdin.write_all(b"\n");
+                let _ = stdin.flush();
+            }
+            // 关掉 stdin 让 Python 的读循环立即 EOF。只发 app.shutdown 不行：
+            // 它把 stopping 置位，但主线程还阻塞在 sys.stdin 上，进程不会退出，
+            // Rust 只能等满 8s 再强杀。
         }
-        if let Some(mut child) = self.child.lock().unwrap().take() {
-            std::thread::spawn(move || {
-                for _ in 0..40 {
-                    if matches!(child.try_wait(), Ok(Some(_))) {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
+        let child = self.child.lock().unwrap().take();
+        if let Some(mut child) = child {
+            for _ in 0..80 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    return;
                 }
-                let _ = child.kill();
-            });
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let pid = child.id();
+            // PyInstaller onefile 会再派生一个真正的 Python 子进程；
+            // 只 kill 外层父进程会留下它。必须先按进程树强杀，再 wait：
+            // 先 kill 父进程的话，taskkill 可能已经找不到这棵树。
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                let pid_arg = pid.to_string();
+                let _ = Command::new("taskkill")
+                    .args(["/PID", pid_arg.as_str(), "/T", "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = pid;
+            }
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

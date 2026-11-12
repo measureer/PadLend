@@ -80,6 +80,10 @@ class FakeMaskApi:
         self.alive.add(handle)
         return handle
 
+    def configure_mask_window(self, hwnd: int, rect: Rect) -> None:
+        assert hwnd in self.alive, f"配置前窗口必须已登记: {hwnd}"
+        self.topmost[hwnd] = True
+
     def destroy_window(self, hwnd: int) -> None:
         if self.fail_destroy:
             raise OSError("DestroyWindow 失败（测试注入）")
@@ -579,21 +583,195 @@ def test_cross_thread_release_destroys_on_mask_thread() -> None:
     api.pump_stop.set()
 
 
+def test_configure_failure_tears_down_registered_window() -> None:
+    """配置阶段失败时，已登记的窗口必须被销毁，不能留下 topmost 孤儿。"""
+
+    class _ConfigureFails(FakeMaskApi):
+        def configure_mask_window(self, hwnd: int, rect: Rect) -> None:
+            raise OSError("SetWindowPos 失败（测试注入）")
+
+    api = _ConfigureFails([MON_A])
+    mask = CursorMask(api=api)
+
+    with pytest.raises(OSError):
+        mask.show(None)
+
+    assert api.created == [MON_A]
+    assert api.destroyed == [100]
+    assert api.alive == set()
+    assert mask.active is False
+
+
+def test_create_timeout_does_not_build_a_second_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """建窗任务已在线程上执行时，调用线程绝不能超时重跑、建出第二个窗口。"""
+
+    class _SlowCreateApi(ThreadedFakeMaskApi):
+        def __init__(self, monitors: Sequence[Rect]) -> None:
+            super().__init__(monitors)
+            self.gate = threading.Event()
+
+        def create_mask_window(self, rect: Rect) -> int:
+            handle = super().create_mask_window(rect)
+            self.gate.wait(2.0)
+            return handle
+
+    monkeypatch.setattr(mask_module, "_MASK_THREAD_TIMEOUT_S", 0.05)
+    api = _SlowCreateApi([MON_A])
+    mask = CursorMask(api=api)
+
+    with pytest.raises(TimeoutError):
+        mask.show(None)
+    api.gate.set()
+    mask.release()
+    deadline = time.monotonic() + 2.0
+    while api.alive and time.monotonic() < deadline:
+        time.sleep(0.01)
+    api.pump_stop.set()
+
+    # 只有一个窗口被创建；迟到的建窗任务看到过期代次后自行销毁。
+    assert api.created == [MON_A]
+    assert api.destroyed == [100]
+    assert api.alive == set()
+    assert mask.active is False
+
+
 def test_destroy_falls_back_to_hiding_when_mask_thread_stalls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """遮罩线程卡死时先 ShowWindow(SW_HIDE)，绝不让遮罩继续盖住屏幕。"""
 
     class _StalledApi(FakeMaskApi):
+        def __init__(self, monitors: Sequence[Rect]) -> None:
+            super().__init__(monitors)
+            self.stall = threading.Event()
+
         def run_mask_message_loop(self, idle: Callable[[], None]) -> None:
+            while not self.stall.is_set():
+                idle()
+                time.sleep(0.001)
             threading.Event().wait()  # 不取任务，模拟消息泵卡死
 
     monkeypatch.setattr(mask_module, "_MASK_THREAD_TIMEOUT_S", 0.05)
     api = _StalledApi([MON_A])
     mask = CursorMask(api=api)
     mask.show(None)
+    api.stall.set()
+    time.sleep(0.01)
     mask.release()
 
     assert api.hidden == [100]
     assert api.close_posted == [100]
     assert mask.active is False
+
+
+class _FakeWinFn:
+    """可被设置 argtypes/restype 的假 Win32 函数。"""
+
+    def __init__(self, fn: Callable[..., object]) -> None:
+        self._fn = fn
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        return self._fn(*args, **kwargs)
+
+
+class _FakeWinLib:
+    def __init__(self, **functions: Callable[..., object]) -> None:
+        for name, fn in functions.items():
+            setattr(self, name, _FakeWinFn(fn))
+
+
+def _install_fake_win32(monkeypatch: pytest.MonkeyPatch, user32, kernel32) -> None:
+    for name in ("OpenProcess", "TerminateProcess", "CloseHandle"):
+        if not hasattr(kernel32, name):
+            setattr(kernel32, name, _FakeWinFn(lambda *_args: None))
+    monkeypatch.setattr(mask_module, "_require_windows", lambda: None)
+    monkeypatch.setattr(mask_module, "_user32", lambda: user32)
+    monkeypatch.setattr(mask_module, "_kernel32", lambda: kernel32)
+    monkeypatch.setattr(mask_module.time, "sleep", lambda _seconds: None)
+
+
+def test_cleanup_orphan_mask_hides_and_closes_window(monkeypatch) -> None:
+    state = {"exists": True}
+    calls: dict[str, object] = {}
+
+    def find_window(_cls, _title):
+        return 123 if state["exists"] else None
+
+    def get_pid(_hwnd, pid_ptr):
+        pid_ptr._obj.value = 4242
+        return 1
+
+    def show_window(_hwnd, command):
+        calls["show"] = command
+
+    def post_message(_hwnd, message, _wparam, _lparam):
+        calls["post"] = message
+        state["exists"] = False
+        return True
+
+    def clip_cursor(rect):
+        calls["clip"] = rect
+        return True
+
+    user32 = _FakeWinLib(
+        FindWindowW=find_window,
+        GetWindowThreadProcessId=get_pid,
+        ShowWindow=show_window,
+        PostMessageW=post_message,
+        ClipCursor=clip_cursor,
+    )
+    kernel32 = _FakeWinLib()
+    _install_fake_win32(monkeypatch, user32, kernel32)
+
+    assert mask_module.cleanup_orphan_mask() == 4242
+    assert calls["show"] == mask_module.SW_HIDE
+    assert calls["post"] == mask_module.WM_CLOSE
+    assert calls["clip"] is None
+
+
+def test_cleanup_orphan_mask_terminates_stuck_sidecar(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    user32 = _FakeWinLib(
+        FindWindowW=lambda _cls, _title: 123,
+        GetWindowThreadProcessId=lambda _hwnd, pid_ptr: setattr(pid_ptr._obj, "value", 4242),
+        ShowWindow=lambda *_args: None,
+        PostMessageW=lambda *_args: True,
+        ClipCursor=lambda _rect: True,
+    )
+
+    def open_process(access, inherit, pid):
+        calls["open"] = (access, inherit, pid)
+        return 77
+
+    kernel32 = _FakeWinLib(
+        OpenProcess=open_process,
+        TerminateProcess=lambda handle, code: calls.setdefault("terminate", (handle, code)),
+        CloseHandle=lambda handle: calls.setdefault("close", handle),
+    )
+    _install_fake_win32(monkeypatch, user32, kernel32)
+
+    assert mask_module.cleanup_orphan_mask() == 4242
+    assert calls["open"] == (0x0001, False, 4242)
+    assert calls["terminate"] == (77, 1)
+    assert calls["close"] == 77
+
+
+def test_cleanup_orphan_mask_ignores_own_process(monkeypatch) -> None:
+    user32 = _FakeWinLib(
+        FindWindowW=lambda _cls, _title: 123,
+        GetWindowThreadProcessId=lambda _hwnd, pid_ptr: setattr(
+            pid_ptr._obj, "value", os.getpid()
+        ),
+        ShowWindow=lambda *_args: None,
+        PostMessageW=lambda *_args: True,
+        ClipCursor=lambda _rect: True,
+    )
+    _install_fake_win32(monkeypatch, user32, _FakeWinLib())
+
+    assert mask_module.cleanup_orphan_mask() is None
+

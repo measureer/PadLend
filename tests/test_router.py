@@ -739,9 +739,13 @@ def test_keyboard_suppress_passthrough_and_safety() -> None:
     assert rig.router.on_key(key(0x42)) is False
     assert len(rig.session.key_reports) == before + 2
 
+    # 1.2.0：接管期间 Win 键整键吞掉，不转发、不交给 keymap。
     sent = len(rig.session.key_reports)
-    assert rig.router.on_key(key(0x5B)) is False
+    keymap_events = len(rig.keymap.events) if rig.keymap is not None else 0
+    assert rig.router.on_key(key(0x5B)) is True
+    assert rig.router.on_key(key(0x5B, down=False)) is True
     assert len(rig.session.key_reports) == sent
+    assert rig.keymap is not None and len(rig.keymap.events) == keymap_events
 
     rig.config.keyboard.suppress_pc = True
     assert rig.router.on_key(key(0xA2)) is True
@@ -749,6 +753,35 @@ def test_keyboard_suppress_passthrough_and_safety() -> None:
     sent = len(rig.session.key_reports)
     assert rig.router.on_key(key(0x53)) is False
     assert len(rig.session.key_reports) == sent
+
+
+def test_win_key_swallowed_latched_and_passthrough_when_idle() -> None:
+    """接管中 L/R Win 的 down/up 都必须吞掉；交还后迟到的 keyup 也不能漏。"""
+    rig = make_rig()
+    assert rig.router.on_key(key(0x5B)) is False  # IDLE 仍归 PC
+    assert rig.router.on_key(key(0x5B, down=False)) is False
+
+    capture_manually(rig)
+    before = len(rig.session.key_reports)
+    events_before = len(rig.keymap.events) if rig.keymap is not None else 0
+
+    # 扫描码路径（vk=0）与扩展位两种事件源都要识别。
+    assert rig.router.on_key(key(0x5B, scan=0x5B)) is True
+    assert rig.router.on_key(key(0x5C, scan=0x1D5C, extended=True)) is True
+    assert rig.router.on_key(key(0, scan=0x5B)) is True  # 重复 keydown 仍吞
+    assert rig.router.on_key(key(0x5C, scan=0x1D5C, extended=True, down=False)) is True
+
+    assert len(rig.session.key_reports) == before
+    assert rig.keymap is not None and len(rig.keymap.events) == events_before
+
+    # 交还后迟到的 Win keyup：锁存仍在，继续吞，避免打开开始菜单。
+    rig.router.emergency_stop()
+    assert rig.router.state is State.IDLE
+    assert rig.router.on_key(key(0x5B, down=False)) is True
+    assert rig.router.on_key(key(0x5B, down=False)) is False  # 锁存已清
+
+    # 急停自己会补一条全零键盘报告；不能有任何 Win 的转发报告。
+    assert all(report == (0, ()) for report in rig.session.key_reports[before:])
 
 
 def test_keyboard_forward_disabled_does_not_send() -> None:

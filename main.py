@@ -108,10 +108,30 @@ def _force_utf8_console() -> None:
             reconfigure(encoding="utf-8", errors="replace")
 
 
-def _stale_cleanup(cfg: Config) -> None:
+def _cleanup_orphan_mask() -> None:
+    """收掉上一个 sidecar 可能留下的 topmost 遮罩，并解除 ClipCursor。
+
+    必须早于单实例锁：挂起的旧进程可能仍持有互斥体，晚一步清就会先被
+    “已有实例在运行”挡回去，屏幕上的遮罩永远没人收。
+    """
+    try:
+        from win.mask import cleanup_orphan_mask
+
+        cleanup_orphan_mask()
+    except Exception as exc:  # noqa: BLE001 - 清理失败不能阻断启动
+        LOG.debug("孤儿遮罩清理跳过: %r", exc)
+
+
+def _stale_cleanup(cfg: Config, *, first_run: bool = False) -> None:
     """``exit.clean`` 缺失 = 上次没正常退出；先清理幽灵设备/指针速度（12.3）。"""
     marker = C.clean_exit_marker()
-    had_config = C.config_path().exists()
+    # first_run 必须由调用方在写配置文件之前判定：service/api.py 会先保存默认
+    # 配置再调用本函数，若这里再看 config.yaml 是否存在，首次启动就会被误判成
+    # “上次未正常退出”（1.2.0 修复的假阳性）。
+    had_config = not first_run and C.config_path().exists()
+    # 服务模式没有单实例互斥体，在这里再清一次；_run 已在加锁前清过，
+    # 两次都幂等。
+    _cleanup_orphan_mask()
     try:
         from tablet.adb import Adb
         from tablet.session import force_cleanup, load_pointer_state, restore_pending_pointer_speed
@@ -206,6 +226,8 @@ class Runtime:
         self.cursor_watch: Any = None
         self.raw_debug: Any = None
         self.facts: DeviceFacts | None = None
+        self._stop_lock = threading.Lock()
+        self._stopped = False
 
     def start(self) -> None:
         self.router.start()
@@ -223,6 +245,12 @@ class Runtime:
             LOG.debug("cursor watch 启动失败", exc_info=True)
 
     def stop(self) -> None:
+        # teardown 可能被正常退出、父进程看门狗、RPC shutdown 三条路径同时触发；
+        # 先到的执行，后到的直接返回，避免重复 kill 子进程/重复释放遮罩。
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
         try:
             try:
                 self.keyboard_hook.uninstall()
@@ -420,12 +448,17 @@ def _run(args: argparse.Namespace) -> int:
     LOG.info("%s %s 启动 (pid=%d)", C.APP_NAME, C.VERSION, os.getpid())
 
     config_file = Path(args.config) if args.config else C.config_path()
+    first_run = not config_file.exists()
     cfg = load_config(config_file)
     if args.serial:
         cfg.device.serial = args.serial
     issues = cfg.validate()
     if issues:
         LOG.warning("配置校验发现问题：%s", "; ".join(issues))
+
+    # 先收孤儿遮罩，再抢单实例锁：旧 sidecar 若挂起并持有互斥体，先抢锁只会
+    # 得到“已有实例在运行”，没人能清掉屏幕上那块 topmost 窗口。
+    _cleanup_orphan_mask()
 
     acquired = True
     release_fn = None
@@ -438,7 +471,7 @@ def _run(args: argparse.Namespace) -> int:
             LOG.info("已有实例在运行，本次退出")
             return 0
     try:
-        _stale_cleanup(cfg)
+        _stale_cleanup(cfg, first_run=first_run)
         _mark_running()
         return run_headless(cfg, args)
     except PadLendError as exc:

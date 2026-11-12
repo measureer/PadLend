@@ -34,9 +34,9 @@
 from __future__ import annotations
 
 import atexit
-import contextlib
 import ctypes
 import logging
+import os
 import sys
 import threading
 import time
@@ -319,6 +319,60 @@ def _user32() -> ctypes.WinDLL:
     return _user32_lib
 
 
+def cleanup_orphan_mask() -> int | None:
+    """收掉上一个 sidecar 留下的遮罩窗口，返回其 PID（没有则 None）。
+
+    进程真正退出时 Windows 会销毁窗口；能留在这里的只可能是“sidecar 还活着但
+    主线程/消息泵卡死”或“外壳已崩溃、sidecar 变成孤儿”。启动时先按窗口类名
+    找到它，隐藏、补发 WM_CLOSE，仍不消失就直接终止那个进程，最后解除
+    ClipCursor。窗口类名是 PadLend 私有常量，不会命中其它应用的窗口。
+    """
+    _require_windows()
+    user32 = _user32()
+    kernel32 = _kernel32()
+    user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+    user32.FindWindowW.restype = ctypes.c_void_p
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.PostMessageW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    user32.ClipCursor.argtypes = [ctypes.POINTER(_RECT)]
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+    hwnd = user32.FindWindowW(_WINDOW_CLASS_NAME, _WINDOW_TITLE)
+    if not hwnd:
+        return None
+    pid = ctypes.c_uint32()
+    user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+    if pid.value == 0 or pid.value == os.getpid():
+        return None
+
+    _log.warning("发现孤儿遮罩窗口 hwnd=%s pid=%s，执行清理", hwnd, pid.value)
+    user32.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
+    user32.PostMessageW(ctypes.c_void_p(hwnd), WM_CLOSE, None, None)
+    for _ in range(20):
+        time.sleep(0.05)
+        if not user32.FindWindowW(_WINDOW_CLASS_NAME, _WINDOW_TITLE):
+            break
+    else:
+        handle = kernel32.OpenProcess(0x0001, False, pid.value)  # PROCESS_TERMINATE
+        if handle:
+            kernel32.TerminateProcess(handle, 1)
+            kernel32.CloseHandle(handle)
+        else:
+            _log.warning("无法终止孤儿 sidecar pid=%s（可能已退出）", pid.value)
+    user32.ClipCursor(None)
+    return int(pid.value or 0) or None
+
+
 def _kernel32() -> ctypes.WinDLL:
     global _kernel32_lib
     _require_windows()
@@ -364,6 +418,8 @@ class MaskApi(Protocol):
     def monitor_rects(self) -> list[Rect]: ...
 
     def create_mask_window(self, rect: Rect) -> int: ...
+
+    def configure_mask_window(self, hwnd: int, rect: Rect) -> None: ...
 
     def destroy_window(self, hwnd: int) -> None: ...
 
@@ -415,6 +471,12 @@ class Win32MaskApi:
         return rects
 
     def create_mask_window(self, rect: Rect) -> int:
+        """只创建窗口并返回 hwnd；alpha/置顶等配置放到 configure。
+
+        1.2.0：创建与配置拆开，调用方在 CreateWindowExW 返回后立刻登记 hwnd。
+        1.1.2 把四步塞在一个函数里，配置阶段一旦被 DWM/开始菜单卡住，hwnd
+        还没返回、调用方也没登记，超时重试就会再建一个窗口并把第一个漏掉。
+        """
         user32 = _user32()
         _ensure_window_class()
         hinst = _kernel32().GetModuleHandleW(None)
@@ -436,12 +498,18 @@ class Win32MaskApi:
         )
         if not hwnd:
             raise OSError(f"CreateWindowExW 失败 err={ctypes.get_last_error()}")
+        return int(hwnd)
+
+    def configure_mask_window(self, hwnd: int, rect: Rect) -> None:
+        user32 = _user32()
+        width = max(1, rect.width)
+        height = max(1, rect.height)
         # alpha=1：近乎全透明，用户不应看到任何遮挡（6.6）。
         user32.SetLayeredWindowAttributes(hwnd, 0, 1, LWA_ALPHA)
         user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
         # 用物理矩形重排一次，确保跨显示器 / DPI 变化后位置正确。
         user32.SetWindowPos(
-            hwnd,
+            ctypes.c_void_p(hwnd),
             ctypes.c_void_p(HWND_TOPMOST & 0xFFFFFFFFFFFFFFFF),
             rect.left,
             rect.top,
@@ -462,7 +530,6 @@ class Win32MaskApi:
                 _log.error(
                     "遮罩无法置顶 hwnd=%s：接管期电脑光标可能重新显示", hwnd
                 )
-        return int(hwnd)
 
     def ensure_topmost(self, hwnd: int) -> bool:
         """把遮罩重新放到最顶层，并回读 ``WS_EX_TOPMOST`` 确认。
@@ -741,6 +808,8 @@ class CursorMask:
         # 遮罩专用线程（1.1.2）：窗口创建、消息泵、销毁都在这一条线程上。
         self._work_lock = threading.Lock()
         self._work: deque[_MaskTask] = deque()
+        # 建窗代次：释放/重试会让旧任务失效，避免它晚到一步又建出孤儿窗口。
+        self._creation_epoch = 0
         self._mask_thread: threading.Thread | None = None
         self._mask_thread_id: int | None = None
         self._mask_thread_failed = False
@@ -778,8 +847,7 @@ class CursorMask:
             clip = self._api.clip_rect()
         except Exception:  # pragma: no cover
             clip = None
-        with self._lock:
-            windows = len(self._windows)
+        windows = len(self._windows_snapshot())
         return (
             f"visible={visible} clip={clip} windows={windows} "
             f"topmost={self._topmost_state()} active={self._active}"
@@ -836,32 +904,63 @@ class CursorMask:
 
     # -- 内部 -------------------------------------------------------------
     def _create_windows(self) -> None:
-        if self._windows:
+        if self._windows_snapshot():
             # 复用上一轮的窗口：系统可能在两次接管之间把 topmost 抢走（任务栏重建、
             # 显示设置变更……），所以每次接管都重新置顶一次（1.1.1）。
             self._reassert_topmost()
             return
         rects = self._api.monitor_rects()
         created: list[int] = []
+        with self._work_lock:
+            self._creation_epoch += 1
+            epoch = self._creation_epoch
 
         def _create() -> None:
+            configure = getattr(self._api, "configure_mask_window", None)
             for rect in rects:
+                with self._work_lock:
+                    if epoch != self._creation_epoch:
+                        return
                 hwnd = self._api.create_mask_window(rect)
-                if hwnd:
-                    created.append(int(hwnd))
+                if not hwnd:
+                    continue
+                hwnd = int(hwnd)
+                # 先登记再配置：配置阶段（ShowWindow/SetWindowPos）在真实故障
+                # 现场可能被 DWM/开始菜单卡住；只要 hwnd 已登记，释放路径就能
+                # 找到它，不会出现无人认领的 topmost 窗口。
+                with self._work_lock:
+                    stale = epoch != self._creation_epoch
+                    if not stale:
+                        self._windows.append(hwnd)
+                if stale:
+                    self._destroy_untracked(hwnd)
+                    return
+                created.append(hwnd)
+                if callable(configure):
+                    configure(hwnd, rect)
 
         try:
             _result, on_worker = self._run_on_mask_thread(_create)
         except Exception:
-            for hwnd in created:
-                self._destroy_one(hwnd)
+            # 超时/异常时旧任务可能还在跑：代次失效 + 清理已登记的窗口。
+            self._destroy_windows()
             raise
         if created:
-            self._windows.extend(created)
             self._owner_thread = self._mask_thread_id if on_worker else threading.get_ident()
 
+    def _destroy_untracked(self, hwnd: int) -> None:
+        """销毁一个尚未登记/已过期的窗口；本函数保证在遮罩线程上调用。"""
+        try:
+            self._api.destroy_window(hwnd)
+        except Exception:
+            _log.exception("销毁未登记的遮罩窗口失败 hwnd=%s", hwnd)
+
     def _destroy_windows(self) -> None:
-        windows, self._windows = self._windows, []
+        with self._work_lock:
+            # 先失效在建任务，再取走窗口：两者在同一把锁内，晚到的建窗任务
+            # 要么把 hwnd 放进列表（被这里取走），要么看到过期代次自己销毁。
+            self._creation_epoch += 1
+            windows, self._windows = self._windows, []
         for hwnd in windows:
             self._destroy_one(hwnd)
         self._owner_thread = None
@@ -966,11 +1065,23 @@ class CursorMask:
         with self._work_lock:
             self._work.append(task)
         if not task.done.wait(_MASK_THREAD_TIMEOUT_S):
-            with self._work_lock, contextlib.suppress(ValueError):
-                # 已被取走，可能正在执行
-                self._work.remove(task)
-            _log.error("遮罩线程 %.1fs 未响应，退回调用线程执行", _MASK_THREAD_TIMEOUT_S)
-            return fn(), False
+            with self._work_lock:
+                try:
+                    self._work.remove(task)
+                except ValueError:
+                    taken = True
+                else:
+                    taken = False
+            if taken:
+                # 任务已经被线程取走，可能正卡在 CreateWindowExW/SetWindowPos 里。
+                # 绝不能再在调用线程执行一次：那会建出第二个无人跟踪的窗口。
+                _log.error(
+                    "遮罩线程 %.1fs 未完成，任务仍在执行；不再重复执行",
+                    _MASK_THREAD_TIMEOUT_S,
+                )
+                raise TimeoutError("遮罩线程任务超时（仍在执行）")
+            _log.error("遮罩线程 %.1fs 未响应，任务未被执行", _MASK_THREAD_TIMEOUT_S)
+            raise TimeoutError("遮罩线程任务超时（未执行）")
         if task.error is not None:
             raise task.error
         return task.result, True
@@ -1015,7 +1126,9 @@ class CursorMask:
             self._cursor_hidden = False
 
     def _windows_snapshot(self) -> list[int]:
-        with self._lock:
+        # 用 _work_lock 而不是 _lock：遮罩线程在配置窗口时也要登记 hwnd，
+        # 而 show()/release() 可能正握着 _lock 等它，不能再让它去抢 _lock。
+        with self._work_lock:
             return list(self._windows)
 
     def _reassert_topmost(self) -> bool:
@@ -1104,7 +1217,7 @@ class CursorMask:
 
     def _watchdog_tick(self) -> None:
         with self._lock:
-            if not self._active or not self._windows:
+            if not self._active or not self._windows_snapshot():
                 return
         repaired = False
         query = getattr(self._api, "window_topmost", None)

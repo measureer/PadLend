@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -145,6 +147,56 @@ def _prepare_stdio() -> None:
                 reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 
+def _parent_alive(pid: int) -> bool:
+    """父进程是否仍存活（Windows 用 OpenProcess/GetExitCodeProcess）。"""
+    if pid <= 0:
+        return False
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_uint32()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _start_parent_watchdog(
+    service: PadLendService, parent_pid: int, *, interval: float = 1.0
+) -> threading.Thread:
+    """外壳消失时立刻同步 teardown 并退出，避免遮罩/ClipCursor 留给用户。
+
+    Tauri 主进程崩溃后，stdin 不一定马上关闭（管道仍开着）；只靠读循环 EOF
+    可能永远等不到。这个看门狗是缺陷 A 的失效安全：父子进程绑定，父死子退。
+    """
+
+    def _watch() -> None:
+        while True:
+            time.sleep(interval)
+            if not _parent_alive(parent_pid):
+                LOG.warning("父进程 %s 已退出，sidecar 执行 teardown 后退出", parent_pid)
+                service.shutdown()
+                os._exit(0)
+                return  # 仅测试替身会走到；真实 os._exit 不返回
+
+    thread = threading.Thread(target=_watch, name="service-parent-watch", daemon=True)
+    thread.start()
+    return thread
+
+
 def main(argv: list[str] | None = None) -> int:
     _prepare_stdio()
     args = _parse_args(sys.argv[1:] if argv is None else argv)
@@ -165,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         no_hooks=args.no_hooks,
         config_path=args.config,
     )
+    parent_pid = os.environ.get("PADLEND_PARENT_PID", "").strip()
+    if parent_pid.isdigit():
+        _start_parent_watchdog(service, int(parent_pid))
 
     def _boot() -> None:
         service.start()
