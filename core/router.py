@@ -1011,6 +1011,9 @@ class Router:
             point=f"{entry[0]:.0f},{entry[1]:.0f}",
             buttons=f"0x{self._buttons:02x}",
         )
+        # 1.1.1 回归排查用：遮罩是否真的置顶、光标是否真的藏住。DEBUG 级别只在
+        # 用户开日志时可见，现场问题却恰好要看这几个值，所以进 INFO。
+        log.info("cap.mask %s", self._mask.diagnose())
 
     def _clip_rect(
         self,

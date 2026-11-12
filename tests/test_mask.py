@@ -20,6 +20,7 @@ from win.mask import (
     WS_EX_LAYERED,
     WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST,
     WS_EX_TRANSPARENT,
     CursorMask,
     Win32MaskApi,
@@ -44,17 +45,23 @@ class FakeMaskApi:
         fail_destroy: bool = False,
         fail_clip: bool = False,
         clip_ok: bool = True,
+        topmost_repair_ok: bool = True,
     ) -> None:
         self.monitors: list[Rect] = list(MON_A if monitors is None else monitors)
         self.fail_create_at = fail_create_at
         self.fail_destroy = fail_destroy
         self.fail_clip = fail_clip
         self.clip_ok = clip_ok
+        self.topmost_repair_ok = topmost_repair_ok
         self.created: list[Rect] = []
         self.destroyed: list[int] = []
         self.close_posted: list[int] = []
         self.clip_calls: list[Rect | None] = []
         self.cursor_hidden_calls: list[bool] = []
+        self.cursor_refreshes: list[int] = []
+        self.ensure_topmost_calls: list[int] = []
+        self.topmost: dict[int, bool] = {}
+        self.cursor_shown = False
         self._next_handle = 100
 
     def monitor_rects(self) -> list[Rect]:
@@ -66,6 +73,7 @@ class FakeMaskApi:
         handle = self._next_handle
         self._next_handle += 1
         self.created.append(rect)
+        self.topmost[handle] = True
         return handle
 
     def destroy_window(self, hwnd: int) -> None:
@@ -87,6 +95,23 @@ class FakeMaskApi:
 
     def set_cursor_hidden(self, hidden: bool) -> None:
         self.cursor_hidden_calls.append(hidden)
+        self.cursor_shown = not hidden
+
+    def cursor_visible(self) -> bool | None:
+        return self.cursor_shown
+
+    def ensure_topmost(self, hwnd: int) -> bool:
+        self.ensure_topmost_calls.append(hwnd)
+        if not self.topmost_repair_ok:
+            return False
+        self.topmost[hwnd] = True
+        return True
+
+    def window_topmost(self, hwnd: int) -> bool | None:
+        return self.topmost.get(hwnd)
+
+    def refresh_cursor(self, hwnd: int) -> None:
+        self.cursor_refreshes.append(hwnd)
 
     def post_close_window(self, hwnd: int) -> bool:
         self.close_posted.append(hwnd)
@@ -297,9 +322,88 @@ def test_show_registers_atexit_guard() -> None:
 
 def test_ex_style_matches_design() -> None:
     # 接管期遮罩必须接收 WM_SETCURSOR，所以不再使用 WS_EX_TRANSPARENT。
-    expected = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    # 1.1.1：样式里必须带 WS_EX_TOPMOST，否则任务栏会盖住遮罩、PC 光标重新显示。
+    expected = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
     assert expected == CursorMask.EX_STYLE
     assert not (CursorMask.EX_STYLE & WS_EX_TRANSPARENT)
+
+
+def test_show_refreshes_cursor_without_mouse_move() -> None:
+    # 1.1.1：遮罩创建后不能等用户动鼠标才执行 WM_SETCURSOR，必须立即投递一次。
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+
+    mask.show(BAND_LEFT)
+
+    assert api.cursor_refreshes == [100]
+    mask.hide()
+
+
+def test_repeated_show_reasserts_topmost() -> None:
+    # 两次接管之间系统可能把 topmost 抢走；复用窗口时必须重新置顶。
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+
+    mask.show(None)
+    assert api.ensure_topmost_calls == []
+
+    api.topmost[100] = False
+    mask.show(None)
+
+    assert api.ensure_topmost_calls == [100]
+    assert api.topmost[100] is True
+    mask.hide()
+
+
+def test_watchdog_repairs_topmost_and_cursor() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+    mask.show(BAND_LEFT)
+    api.cursor_refreshes.clear()
+
+    api.topmost[100] = False
+    api.cursor_shown = True  # 模拟别的进程把系统光标显示回来
+    mask._watchdog_tick()
+
+    assert api.ensure_topmost_calls == [100]
+    assert api.topmost[100] is True
+    assert api.cursor_refreshes == [100]
+    mask.hide()
+
+
+def test_watchdog_tick_is_noop_before_show() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+
+    mask._watchdog_tick()
+
+    assert api.ensure_topmost_calls == []
+    assert api.cursor_refreshes == []
+
+
+def test_watchdog_stops_on_hide() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+    mask.show(None)
+    thread = mask._watchdog_thread
+    assert thread is not None
+    assert thread.is_alive()
+
+    mask.hide()
+
+    assert mask._watchdog_thread is None
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_diagnose_reports_topmost() -> None:
+    api = FakeMaskApi([MON_A])
+    mask = make_mask(api)
+
+    mask.show(None)
+
+    assert "topmost=[True]" in mask.diagnose()
+    mask.hide()
 
 
 # ---------------------------------------------------------------------------

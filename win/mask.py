@@ -1,11 +1,14 @@
 """光标遮罩与 ClipCursor（设计文档 6.6 / 8.2 / 12.3）。
 
 接管期把 PC 光标"藏起来"：``ClipCursor`` 把它钉在屏幕边缘 1px 条上，同时每个显示器
-盖一个几乎全透明（alpha=1）的 ``WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW``
-窗口。遮罩窗口：
+盖一个几乎全透明（alpha=1）的
+``WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`` 窗口。遮罩窗口：
 
 - 不抢焦点（``WS_EX_NOACTIVATE`` + ``SW_SHOWNOACTIVATE`` + ``SWP_NOACTIVATE``）；
 - 不进 Alt-Tab（``WS_EX_TOOLWINDOW``）；
+- **永远在最顶层**（``WS_EX_TOPMOST`` + 接管期看门狗）：任务栏、输入法面板等置顶
+  窗口一旦盖到遮罩上面，光标就会重新显示 —— 用户看到的"电脑和平板同时出现鼠标
+  指针"正是这个（1.1.1 回归修复）；
 - 接管期**接收**鼠标消息（不再加 ``WS_EX_TRANSPARENT``），以便 ``WM_SETCURSOR``
   把系统光标置空；此时 PC 点击本就应被忽略，不会影响平板输入；
 - 永远不调用 ``SetForegroundWindow``。
@@ -30,6 +33,7 @@ import ctypes
 import logging
 import sys
 import threading
+import time
 from typing import Protocol
 
 import constants
@@ -42,10 +46,17 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020  # 仅保留常量供旧测试/文档引用，当前不再使用
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
-_MASK_EX_STYLE = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+# 1.1.1 回归：非 topmost 的遮罩会被任务栏 / 其它置顶窗口盖住，光标落到它们上面
+# 就重新显示（"电脑和平板同时出现鼠标指针"）。因此从创建起就带 WS_EX_TOPMOST，
+# 并在接管期由看门狗持续回读确认。
+WS_EX_TOPMOST = 0x00000008
+_MASK_EX_STYLE = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
 
 WM_SETCURSOR = 0x0020
 WM_CLOSE = 0x0010
+WM_MOUSEMOVE = 0x0200
+HTCLIENT = 1
+GWL_EXSTYLE = -20
 IDC_ARROW = 32512
 
 WS_POPUP = 0x80000000
@@ -53,6 +64,9 @@ SW_SHOWNOACTIVATE = 4
 LWA_ALPHA = 0x00000002
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOOWNERZORDER = 0x0200
 
 HWND_TOPMOST = -1
 
@@ -64,6 +78,10 @@ SM_CXVIRTUALSCREEN = 78
 SM_CYVIRTUALSCREEN = 79
 
 ERROR_CLASS_ALREADY_EXISTS = 1410
+
+# 接管期看门狗（1.1.1）：每秒回读一次遮罩是否仍置顶、光标是否仍隐藏。
+_WATCHDOG_INTERVAL_S = 1.0
+_REPAIR_LOG_INTERVAL_S = 5.0
 
 _WINDOW_CLASS_NAME = "PadLendCursorMaskWindow"
 _WINDOW_TITLE = "PadLend Cursor Mask"
@@ -238,6 +256,13 @@ def _user32() -> ctypes.WinDLL:
         lib.PostMessageW.restype = ctypes.c_int
         lib.LoadCursorW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         lib.LoadCursorW.restype = ctypes.c_void_p
+        # 回读扩展样式用；32 位进程没有 GetWindowLongPtrW，退回 GetWindowLongW。
+        get_ptr = getattr(lib, "GetWindowLongPtrW", None)
+        if get_ptr is not None:
+            get_ptr.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            get_ptr.restype = ctypes.c_ssize_t
+        lib.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.GetWindowLongW.restype = ctypes.c_long
         _user32_lib = lib
     return _user32_lib
 
@@ -251,6 +276,18 @@ def _kernel32() -> ctypes.WinDLL:
         lib.GetModuleHandleW.restype = ctypes.c_void_p
         _kernel32_lib = lib
     return _kernel32_lib
+
+
+def _window_ex_style(hwnd: int) -> int | None:
+    """回读窗口扩展样式；失败返回 ``None``（窗口已销毁 / 跨进程拒绝都可能失败）。"""
+    user32 = _user32()
+    get_ptr = getattr(user32, "GetWindowLongPtrW", None)
+    try:
+        if get_ptr is not None:
+            return int(get_ptr(ctypes.c_void_p(hwnd), GWL_EXSTYLE))
+        return int(user32.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE))
+    except Exception:  # pragma: no cover - 诊断路径不应抛
+        return None
 
 
 def _virtual_desktop_rect() -> Rect:
@@ -285,6 +322,12 @@ class MaskApi(Protocol):
     def set_cursor_hidden(self, hidden: bool) -> None: ...
 
     def post_close_window(self, hwnd: int) -> bool: ...
+
+    def ensure_topmost(self, hwnd: int) -> bool: ...
+
+    def window_topmost(self, hwnd: int) -> bool | None: ...
+
+    def refresh_cursor(self, hwnd: int) -> None: ...
 
 
 class Win32MaskApi:
@@ -350,8 +393,58 @@ class Win32MaskApi:
             height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         )
+        # 1.1.1 现场：这一步会"返回 TRUE 但不生效"，遮罩被任务栏压住、PC 光标重新
+        # 显示。样式里已带 WS_EX_TOPMOST，但必须回读确认，不能相信返回值。
+        if self.window_topmost(hwnd) is not True:
+            _log.warning(
+                "遮罩创建后未置顶 hwnd=%s err=%s，重试一次",
+                hwnd,
+                ctypes.get_last_error(),
+            )
+            self.ensure_topmost(hwnd)
+            if self.window_topmost(hwnd) is not True:
+                _log.error(
+                    "遮罩无法置顶 hwnd=%s：接管期电脑光标可能重新显示", hwnd
+                )
         return int(hwnd)
 
+    def ensure_topmost(self, hwnd: int) -> bool:
+        """把遮罩重新放到最顶层，并回读 ``WS_EX_TOPMOST`` 确认。
+
+        ``SetWindowPos(HWND_TOPMOST)`` 在真实故障现场会返回成功却没真的置顶
+        （遮罩仍在任务栏下面），所以这里以回读结果为准。
+        """
+        _user32().SetWindowPos(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_void_p(HWND_TOPMOST & 0xFFFFFFFFFFFFFFFF),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        )
+        return self.window_topmost(hwnd) is True
+
+    def window_topmost(self, hwnd: int) -> bool | None:
+        """遮罩当前是否真的带 ``WS_EX_TOPMOST``；读不到返回 ``None``。"""
+        style = _window_ex_style(hwnd)
+        if style is None:
+            return None
+        return bool(style & WS_EX_TOPMOST)
+
+    def refresh_cursor(self, hwnd: int) -> None:
+        """让遮罩立刻重新决定光标，不必等用户移动鼠标。
+
+        向窗口过程投递一条 ``WM_SETCURSOR``（命中测试 ``HTCLIENT``、
+        鼠标消息 ``WM_MOUSEMOVE``）：窗口过程收到后会 ``SetCursor(NULL)``，
+        把光标重新藏起来。
+        """
+        _user32().PostMessageW(
+            ctypes.c_void_p(hwnd),
+            WM_SETCURSOR,
+            hwnd & 0xFFFFFFFFFFFFFFFF,
+            (HTCLIENT << 16) | WM_MOUSEMOVE,
+        )
     def destroy_window(self, hwnd: int) -> None:
         _user32().DestroyWindow(ctypes.c_void_p(hwnd))
 
@@ -544,6 +637,10 @@ class CursorMask:
         self._clip_rect: Rect | None = None
         self._cursor_hidden = False
         self._owner_thread: int | None = None
+        # 接管期看门狗（1.1.1）：定期确认遮罩仍置顶、光标仍隐藏。
+        self._watchdog_stop: threading.Event | None = None
+        self._watchdog_thread: threading.Thread | None = None
+        self._repair_log_at = 0.0
 
     # -- 状态 -------------------------------------------------------------
     @property
@@ -580,7 +677,10 @@ class CursorMask:
             clip = None
         with self._lock:
             windows = len(self._windows)
-        return f"visible={visible} clip={clip} windows={windows} active={self._active}"
+        return (
+            f"visible={visible} clip={clip} windows={windows} "
+            f"topmost={self._topmost_state()} active={self._active}"
+        )
 
     # -- 生命周期 ---------------------------------------------------------
     def show(self, clip_rect: Rect | None) -> None:
@@ -591,11 +691,13 @@ class CursorMask:
                 self._create_windows()
                 self._active = True
                 self._hide_cursor()
+                self._refresh_cursor()
                 if clip_rect is None:
                     if self._clip_owned:
                         self._apply_clip(None)
                 else:
                     self._apply_clip(clip_rect)
+                self._start_watchdog()
             except Exception:
                 self._cleanup_quietly(unclip=True)
                 raise
@@ -603,6 +705,7 @@ class CursorMask:
     def hide(self) -> None:
         """销毁遮罩窗口；只解除本对象持有的光标锁。幂等。"""
         with self._lock:
+            self._stop_watchdog()
             if self._clip_owned:
                 self._apply_clip(None)
             self._show_cursor()
@@ -612,6 +715,7 @@ class CursorMask:
     def release(self) -> None:
         """兜底释放：无条件 ``ClipCursor(None)``，再销毁窗口。幂等且绝不抛异常。"""
         with self._lock:
+            self._stop_watchdog()
             self._clip_owned = False
             self._clip_rect = None
             try:
@@ -630,6 +734,9 @@ class CursorMask:
     # -- 内部 -------------------------------------------------------------
     def _create_windows(self) -> None:
         if self._windows:
+            # 复用上一轮的窗口：系统可能在两次接管之间把 topmost 抢走（任务栏重建、
+            # 显示设置变更……），所以每次接管都重新置顶一次（1.1.1）。
+            self._reassert_topmost()
             return
         created: list[int] = []
         try:
@@ -699,7 +806,133 @@ class CursorMask:
         finally:
             self._cursor_hidden = False
 
+    def _windows_snapshot(self) -> list[int]:
+        with self._lock:
+            return list(self._windows)
+
+    def _reassert_topmost(self) -> bool:
+        """把已在使用的遮罩重新置顶；平台后端不支持时视为成功。"""
+        ensure = getattr(self._api, "ensure_topmost", None)
+        if not callable(ensure):
+            return True
+        ok = True
+        for hwnd in self._windows_snapshot():
+            try:
+                if not ensure(hwnd):
+                    ok = False
+                    _log.warning("遮罩重新置顶失败 hwnd=%s", hwnd)
+            except Exception:
+                ok = False
+                _log.exception("遮罩重新置顶异常 hwnd=%s", hwnd)
+        return ok
+
+    def _refresh_cursor(self) -> None:
+        """让所有遮罩立刻重设一次光标（不依赖用户移动鼠标）。"""
+        refresh = getattr(self._api, "refresh_cursor", None)
+        if not callable(refresh):
+            return
+        for hwnd in self._windows_snapshot():
+            try:
+                refresh(hwnd)
+            except Exception:
+                _log.debug("刷新遮罩光标失败 hwnd=%s", hwnd, exc_info=True)
+
+    def _topmost_state(self) -> list[bool | None]:
+        """每个遮罩的 topmost 状态；读不到为 ``None``（诊断用）。"""
+        query = getattr(self._api, "window_topmost", None)
+        if not callable(query):
+            return []
+        state: list[bool | None] = []
+        for hwnd in self._windows_snapshot():
+            try:
+                topmost = query(hwnd)
+            except Exception:
+                state.append(None)
+                continue
+            state.append(None if topmost is None else bool(topmost))
+        return state
+
+    def _cursor_visible(self) -> bool | None:
+        query = getattr(self._api, "cursor_visible", None)
+        if not callable(query):
+            return None
+        try:
+            return query()
+        except Exception:
+            return None
+
+    def _start_watchdog(self) -> None:
+        """接管期间每秒复查遮罩是否仍置顶、光标是否仍藏住（1.1.1）。
+
+        1.1.1 的现场故障是：遮罩偶尔拿不到 / 丢失 WS_EX_TOPMOST（SetWindowPos
+        返回成功却没生效），任务栏压在遮罩上面，PC 光标就重新显示出来。遮罩一旦
+        丢了顶层位置，只能靠定期回读 + 重设兜底，不能指望某一次调用一定成功。
+        """
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            return
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._watchdog_loop,
+            args=(stop,),
+            name="padlend-mask-watch",
+            daemon=True,
+        )
+        self._watchdog_stop = stop
+        self._watchdog_thread = thread
+        thread.start()
+
+    def _stop_watchdog(self) -> None:
+        stop, self._watchdog_stop = self._watchdog_stop, None
+        self._watchdog_thread = None
+        if stop is not None:
+            stop.set()
+
+    def _watchdog_loop(self, stop: threading.Event) -> None:
+        while not stop.wait(_WATCHDOG_INTERVAL_S):
+            try:
+                self._watchdog_tick()
+            except Exception:  # pragma: no cover - 看门狗自身永不致命
+                _log.debug("遮罩看门狗异常", exc_info=True)
+
+    def _watchdog_tick(self) -> None:
+        with self._lock:
+            if not self._active or not self._windows:
+                return
+        repaired = False
+        query = getattr(self._api, "window_topmost", None)
+        if callable(query):
+            for hwnd in self._windows_snapshot():
+                try:
+                    topmost = query(hwnd)
+                except Exception:
+                    continue
+                if topmost is False:
+                    self._reassert_topmost()
+                    repaired = True
+                    break
+        visible = self._cursor_visible()
+        if visible:
+            # 光标又露出来了：让遮罩立刻重设一次光标（顶层被抢是最常见原因，
+            # 上面已经修过；这里兜住其它把光标显示回来的进程）。
+            self._refresh_cursor()
+            repaired = True
+        if repaired:
+            self._log_repair(visible)
+
+    def _log_repair(self, visible: bool | None) -> None:
+        """限流记录修复动作，避免每秒一条淹没日志。"""
+        now = time.monotonic()
+        if now - self._repair_log_at < _REPAIR_LOG_INTERVAL_S:
+            return
+        self._repair_log_at = now
+        _log.warning(
+            "mask.repair topmost=%s visible=%s active=%s",
+            self._topmost_state(),
+            visible,
+            self._active,
+        )
     def _cleanup_quietly(self, *, unclip: bool) -> None:
+        self._stop_watchdog()
         self._show_cursor()
         if unclip and self._clip_owned:
             try:

@@ -23,7 +23,7 @@ export const TitleBar = memo(function TitleBar() {
       <div className="titlebar-drag" data-tauri-drag-region>
         <span className="titlebar-dot" />
         <span>PadLend</span>
-        <span style={{ opacity: 0.6 }}>把平板变成第二块屏幕</span>
+        <span style={{ opacity: 0.6 }}>跨设备共享键鼠无缝操作平板</span>
       </div>
       <div className="titlebar-actions">
         <button className="win-btn" aria-label="最小化" onClick={() => void backend.windowMinimize()} disabled={!isTauri}>

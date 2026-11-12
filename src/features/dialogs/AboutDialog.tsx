@@ -13,7 +13,7 @@ export function AboutDialog() {
   return (
     <Modal
       title="关于 PadLend"
-      subtitle="把 Android 平板变成 Windows 的第二块输入屏"
+      subtitle="跨设备共享键鼠无缝操作平板"
       onClose={close}
       footer={
         <>
