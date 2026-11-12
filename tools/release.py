@@ -54,7 +54,9 @@ def fail(message: str) -> int:
 
 def run(command: list[str], *, cwd: Path = ROOT) -> int:
     log("执行：" + " ".join(command))
-    result = subprocess.run(command, cwd=cwd, check=False)
+    # Windows 上 npm/npx 是 .cmd 垫片，CreateProcess 无法直接执行，
+    # 必须经 cmd.exe；命令全部为本脚本硬编码，不含外部输入。
+    result = subprocess.run(command, cwd=cwd, check=False, shell=(os.name == "nt"))
     if result.returncode != 0:
         log(f"失败（exit {result.returncode}）：{' '.join(command)}")
     return result.returncode
