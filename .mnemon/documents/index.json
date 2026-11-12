@@ -348,7 +348,7 @@
       ],
       "createdAt": "2026-11-03T03:58:45.039Z",
       "updatedAt": "2026-11-03T03:58:45.039Z",
-      "lastAccessedAt": "2026-11-03T05:02:44.503Z",
+      "lastAccessedAt": "2026-11-12T15:35:10.022Z",
       "revision": 1,
       "contentHash": "68e8737f90f3a46c6737c1283a90481f03c35bbbd1fd1fa1dd139a2872a0f1cd",
       "sizeBytes": 4032,
@@ -405,7 +405,7 @@
       ],
       "createdAt": "2026-11-03T05:02:57.326Z",
       "updatedAt": "2026-11-03T05:02:57.326Z",
-      "lastAccessedAt": "2026-11-05T03:21:54.310Z",
+      "lastAccessedAt": "2026-11-12T15:35:10.022Z",
       "revision": 1,
       "contentHash": "bd25949a913093c24c5da9544370d22ef12708c3f1423332791da909c41503d7",
       "sizeBytes": 5389,
@@ -435,7 +435,7 @@
       ],
       "createdAt": "2026-11-04T08:00:38.840Z",
       "updatedAt": "2026-11-04T08:00:38.840Z",
-      "lastAccessedAt": "2026-11-06T10:27:22.468Z",
+      "lastAccessedAt": "2026-11-12T15:35:10.022Z",
       "revision": 1,
       "contentHash": "87dd9090335d7c0a13bf641eea5d2fa3c45c61f9aaa6aff2d66f789e86ddec58",
       "sizeBytes": 6929,
@@ -910,7 +910,7 @@
       ],
       "createdAt": "2026-11-06T10:27:41.212Z",
       "updatedAt": "2026-11-06T10:27:41.212Z",
-      "lastAccessedAt": "2026-11-06T15:03:48.397Z",
+      "lastAccessedAt": "2026-11-12T15:35:10.022Z",
       "revision": 1,
       "contentHash": "a85b7766da88fc094b45b6f6eb83f41a963b28b6a781f8384fbd96d03e0659e1",
       "sizeBytes": 7503,
@@ -972,6 +972,32 @@
       "revision": 1,
       "contentHash": "8e0507c972e62b7d362ee759d798cc532de4642d3b204e473330168c94d30a96",
       "sizeBytes": 4903,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c7097fb3-4a48-40d4-b18a-612ae9ddfcb7",
+      "title": "PadLend 1.1.2：遮罩窗口移交专用线程，修复交还后全屏遮罩泄漏",
+      "description": "1.1.1 置顶在 Tauri 侧车进程静默失效（ex-style 0x8080080 vs 0x8080088）、1.1.2 无消息泵 RPC 线程创建遮罩导致交还后全屏遮罩泄漏的根因、专用线程 padlend-mask-win 修法、实测证据、Win32 线程与置顶不变量及 v1.1.2 交付记录。",
+      "status": "active",
+      "filename": "padlend-1-1-2-c7097fb3.md",
+      "relativePath": "documents/active/padlend-1-1-2-c7097fb3.md",
+      "sourcePaths": [
+        "win/mask.py",
+        "docs/CHANGELOG.md",
+        ".github/release-notes.md",
+        "README.md",
+        "src/features/shell/Shell.tsx",
+        "src/features/dialogs/AboutDialog.tsx"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-9de64c37-5edb-4bdd-a4bd-c2ae4c850e27"
+      ],
+      "createdAt": "2026-11-12T15:35:54.817Z",
+      "updatedAt": "2026-11-12T15:35:54.817Z",
+      "lastAccessedAt": "2026-11-12T15:35:54.817Z",
+      "revision": 1,
+      "contentHash": "85f910bbee486f0a7bf34f22ea13678afd96599e72b838bdb2c3de52b21037bc",
+      "sizeBytes": 6407,
       "memoryBodyIds": []
     }
   ]
