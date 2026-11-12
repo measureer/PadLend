@@ -308,7 +308,9 @@ export async function wizardFinish(autoConnect: boolean, closeToTray: boolean): 
 
 export async function quitApp(): Promise<void> {
   await backend.shutdown().catch(() => undefined);
-  if (isTauri) await backend.windowClose().catch(() => undefined);
+  // 不能用 windowClose()：close_to_tray=true 时它会被 prevent_close 拦下，
+  // 只隐藏窗口，进程/托盘/遮罩都还在（缺陷 B）。
+  if (isTauri) await backend.quitApp().catch(() => undefined);
 }
 
 export async function loadRecentLogs(): Promise<void> {

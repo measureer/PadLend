@@ -20,6 +20,7 @@ export interface Backend {
   setCloseToTray(enabled: boolean): Promise<void>;
   setTrayState(captured: boolean, connected: boolean, device: string): Promise<void>;
   shutdown(): Promise<void>;
+  quitApp(): Promise<void>;
 }
 
 function normalizeError(error: unknown): Error {
@@ -92,6 +93,10 @@ class TauriBackend implements Backend {
   async shutdown(): Promise<void> {
     await this.call('app.shutdown').catch(() => undefined);
     await invoke('service_shutdown').catch(() => undefined);
+  }
+
+  async quitApp(): Promise<void> {
+    await invoke('quit_app');
   }
 }
 

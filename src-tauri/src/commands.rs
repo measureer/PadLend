@@ -42,6 +42,16 @@ pub fn service_shutdown(bridge: State<'_, Arc<Bridge>>) {
     bridge.shutdown();
 }
 
+/// 真正的退出：先等 sidecar 完成 teardown，再让 Tauri 退出。
+///
+/// 不能复用 `window.close()`：`close_to_tray=true` 时它会被 `prevent_close()`
+/// 拦下，只隐藏窗口，进程和托盘图标都还在（1.2.0 缺陷 B）。
+#[tauri::command]
+pub fn quit_app(app: AppHandle, bridge: State<'_, Arc<Bridge>>) {
+    bridge.shutdown();
+    app.exit(0);
+}
+
 #[tauri::command]
 pub fn app_info() -> Value {
     json!({

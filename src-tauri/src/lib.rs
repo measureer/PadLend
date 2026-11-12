@@ -45,6 +45,7 @@ pub fn run() {
             commands::set_close_to_tray,
             commands::set_tray_state,
             commands::service_shutdown,
+            commands::quit_app,
             commands::app_info,
         ])
         .on_window_event(|window, event| {

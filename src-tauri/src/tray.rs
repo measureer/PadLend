@@ -3,6 +3,8 @@
 use serde_json::json;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
+use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 fn build_menu(app: &AppHandle, captured: bool, connected: bool) -> Result<Menu<Wry>, String> {
@@ -63,6 +65,13 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
     builder
         .on_menu_event(|app, event| {
             let action = event.id.as_ref().to_string();
+            if action == "quit" {
+                // 退出不能交给前端的 windowClose()：close_to_tray=true 时它只会
+                // 隐藏窗口（缺陷 B）。这里直接走与 quit_app 相同的同步退出路径。
+                app.state::<Arc<crate::bridge::Bridge>>().shutdown();
+                app.exit(0);
+                return;
+            }
             let _ = app.emit("tray:action", json!({ "action": action }));
         })
         .on_tray_icon_event(|tray, event| {
