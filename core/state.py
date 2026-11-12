@@ -28,12 +28,3 @@ LEGAL_TRANSITIONS: dict[State, frozenset[State]] = {
 def can_transition(src: State, dst: State) -> bool:
     """``src -> dst`` 是否合法。同状态不算迁移。"""
     return dst in LEGAL_TRANSITIONS.get(src, frozenset())
-
-
-class IllegalTransition(RuntimeError):
-    """状态机被非法驱动（测试与断言用）。"""
-
-    def __init__(self, src: State, dst: State):
-        self.src = src
-        self.dst = dst
-        super().__init__(f"illegal state transition {src.value} -> {dst.value}")

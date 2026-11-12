@@ -16,7 +16,6 @@ from padlend import __version__
 # 应用标识
 # ---------------------------------------------------------------------------
 APP_NAME = "PadLend"
-APP_ID = "PadLend"
 VERSION = __version__  # 唯一版本源：padlend/__init__.py
 LICENSE = "Apache-2.0"
 
@@ -38,8 +37,6 @@ else:
     APP_DIR = PROJECT_ROOT
     BUNDLE_DIR = PROJECT_ROOT
 VENDOR_DIR = BUNDLE_DIR / "vendor"
-ASSETS_DIR = BUNDLE_DIR / "ui" / "theme"
-ICONS_DIR = ASSETS_DIR / "icons"
 
 
 def _writable_dir(base: Path, name: str = APP_NAME) -> Path | None:
@@ -160,7 +157,6 @@ HANDSHAKE_RETRY_INTERVAL_S = 0.1
 SOCKET_SEND_TIMEOUT = 2.0
 
 # 6.1.4 健康检查与重连
-HEARTBEAT_INTERVAL_S = 2.0
 HEALTHCHECK_INTERVAL_S = 2.0
 RECONNECT_BACKOFF_S = (1.0, 2.0, 4.0, 8.0, 16.0)
 CONSECUTIVE_WRITE_FAILURES = 3
@@ -216,7 +212,6 @@ HID_KEYBOARD_DESCRIPTOR = bytes(
 MOUSE_REPORT_SIZE = 4
 KEYBOARD_REPORT_SIZE = 8
 
-HID_MOUSE_REPORT_ID = 0  # 描述符未声明 Report ID
 KEYBOARD_KRO = 6
 
 # 描述符 Logical Max = 127，单报文位移上限
@@ -284,23 +279,17 @@ MAX_REPORT_HZ = 1000
 REPORT_HZ_CHOICES = (125, 250, 500, 1000)
 MAX_BATCH = 8  # 单帧最多 8 报文（D12）
 SEND_QUEUE_MAXLEN = 64
-RAW_QUEUE_MAXSIZE = 4096
-KEY_QUEUE_MAXSIZE = 256
 
 # 10.3 timeBeginPeriod(1)
 TIMER_PERIOD_MS = 1
 
 # 12.1 看门狗
-CLIPCURSOR_WATCHDOG_S = 5.0
 HOOK_WATCHDOG_S = 30.0
 
 # ---------------------------------------------------------------------------
-# Windows DPI / DWM（6.3.1 / 6.10.4）
+# Windows DPI（6.3.1）
 # ---------------------------------------------------------------------------
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
-DWM_USE_IMMERSIVE_DARK_MODE = 20
-DWM_WINDOW_CORNER_PREFERENCE = 33
-DWMWCP_ROUND = 2
 
 # ---------------------------------------------------------------------------
 # 事件词表（7.4，测试据此断言，勿改）
@@ -314,22 +303,5 @@ EVENT_TABLET_CONNECT = "tablet.connect"
 EVENT_TABLET_RECONNECT = "tablet.reconnect"
 EVENT_TABLET_CLEANUP_GHOST = "tablet.cleanup.ghost"
 EVENT_KBD_SUPPRESS_ON = "kbd.suppress.on"
+# 设计文档 7.4 的固定词表承诺；当前 Python 侧没有发送者，保留供前端/后续配置热载使用。
 EVENT_CFG_RELOAD = "cfg.reload"
-
-EVENT_NAMES = frozenset(
-    {
-        EVENT_CAP_START,
-        EVENT_CAP_HIT,
-        EVENT_CAP_END,
-        EVENT_ARM_FAIL,
-        EVENT_STATE_FAULT,
-        EVENT_TABLET_CONNECT,
-        EVENT_TABLET_RECONNECT,
-        EVENT_TABLET_CLEANUP_GHOST,
-        EVENT_KBD_SUPPRESS_ON,
-        EVENT_CFG_RELOAD,
-    }
-)
-
-# 安全键（6.2.3）：永不被屏蔽
-SAFETY_HOTKEYS = ("Ctrl+Alt+S", "Ctrl+Alt+Q")

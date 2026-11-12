@@ -115,9 +115,6 @@ class Metrics:
         with self._lock:
             self._latencies.append(value)
 
-    #: ``record_latency`` 的别名（7.4 的 ``rtt_ms``）。
-    record_rtt = record_latency
-
     def record_drop(self, count: int = 1) -> None:
         """记录因发送队列满而丢弃的报告数。"""
         if count <= 0:

@@ -85,7 +85,3 @@ export function parseLogLine(line: string): LogEntry {
   if (!match || !match.groups) return { timestamp: '', event: '', message: line.trim() };
   return { timestamp: match.groups.ts, event: match.groups.event, message: match.groups.message };
 }
-
-export function formatGain(value: number): string {
-  return `${value.toFixed(2)}×`;
-}

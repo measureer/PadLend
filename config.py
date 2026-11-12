@@ -633,14 +633,6 @@ def _backup(path: Path, *, reason: str = "invalid") -> Path | None:
         return None
 
 
-def default_config() -> Config:
-    return Config()
-
-
 def load_config(path: Path | None = None) -> Config:
     """快捷入口：默认路径为 ``%APPDATA%\\PadLend\\config.yaml``。"""
     return Config.load(Path(path) if path is not None else C.config_path())
-
-
-def save_config(cfg: Config, path: Path | None = None) -> None:
-    cfg.save(Path(path) if path is not None else C.config_path())

@@ -74,10 +74,6 @@ def setup_logging(level: int = logging.INFO, log_file: Path | None = None) -> No
         )
 
 
-def logger_for(name: str) -> logging.Logger:
-    return logging.getLogger(name)
-
-
 def log_event(logger: logging.Logger, event: str, **fields: object) -> None:
     """按 7.4 的 "事件名 key=value" 格式输出一行 INFO 日志。"""
     parts = [event]

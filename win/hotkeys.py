@@ -23,8 +23,6 @@ log = logging.getLogger("win.hotkeys")
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
-MOD_SHIFT = 0x0004
-MOD_WIN = 0x0008
 
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
