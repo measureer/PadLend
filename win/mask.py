@@ -15,9 +15,14 @@
 
 光标隐藏只依赖遮罩窗口：窗口过程处理 ``WM_SETCURSOR`` → ``SetCursor(NULL)`` 并
 返回 1。**绝不使用进程级 ``ShowCursor`` 计数**——计数跨线程不平衡时会把光标永久
-压成隐藏；遮罩窗口若因跨线程 ``DestroyWindow`` 失败而泄漏，也会一直盖住光标
-（只有开始菜单等更高层窗口能显示自己的光标）。跨线程释放改为向窗口所属线程
-``PostMessageW(WM_CLOSE)``，由窗口过程销毁自己。
+压成隐藏。
+
+**遮罩窗口只属于一条专用线程**（1.1.2）：创建、消息泵、销毁都跑在``padlend-mask-win``
+线程上。1.1.1 的跨线程释放靠 ``PostMessageW(WM_CLOSE)`` 交给窗口所属线程处理，但 UI
+按钮经 RPC 线程池进入接管时，那个线程没有消息泵，``WM_CLOSE`` 永远不被处理 → 遮罩
+窗口泄漏，整块屏幕没有光标而且吞掉所有点击。现在由窗口线程自己泵消息，释放时把
+``DestroyWindow`` 直接投递到该线程执行；万一投递超时，退路是先 ``ShowWindow(SW_HIDE)``
+把屏幕让出来，再补发 ``WM_CLOSE``。
 
 **`ClipCursor` 泄漏是灾难级故障**（6.6 的教训）：用户光标会被锁死在 1px 条里。
 因此 `release()` 幂等、无异常、``ClipCursor(None)`` 走无条件路径，并在首次
@@ -29,11 +34,14 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import ctypes
 import logging
 import sys
 import threading
 import time
+from collections import deque
+from collections.abc import Callable
 from typing import Protocol
 
 import constants
@@ -58,6 +66,9 @@ WM_MOUSEMOVE = 0x0200
 HTCLIENT = 1
 GWL_EXSTYLE = -20
 IDC_ARROW = 32512
+SW_HIDE = 0
+PM_REMOVE = 0x0001
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 
 WS_POPUP = 0x80000000
 SW_SHOWNOACTIVATE = 4
@@ -82,6 +93,10 @@ ERROR_CLASS_ALREADY_EXISTS = 1410
 # 接管期看门狗（1.1.1）：每秒回读一次遮罩是否仍置顶、光标是否仍隐藏。
 _WATCHDOG_INTERVAL_S = 1.0
 _REPAIR_LOG_INTERVAL_S = 5.0
+
+# 遮罩专用线程（1.1.2）：窗口创建 / 消息泵 / 销毁都投递到这一条线程执行。
+_MASK_THREAD_TIMEOUT_S = 5.0
+_MASK_PUMP_SLEEP_S = 0.005
 
 _WINDOW_CLASS_NAME = "PadLendCursorMaskWindow"
 _WINDOW_TITLE = "PadLend Cursor Mask"
@@ -112,6 +127,27 @@ class _CURSORINFO(ctypes.Structure):
 
 
 CURSOR_SHOWING = 0x0001
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int32),
+        ("y", ctypes.c_int32),
+    ]
+
+
+class _MSG(ctypes.Structure):
+    """``PeekMessageW`` 用的 MSG；只服务于遮罩线程的消息泵。"""
+
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", ctypes.c_uint32),
+        ("wParam", ctypes.c_size_t),
+        ("lParam", ctypes.c_ssize_t),
+        ("time", ctypes.c_uint32),
+        ("pt", _POINT),
+        ("lPrivate", ctypes.c_uint32),
+    ]
 
 
 class _MONITORINFO(ctypes.Structure):
@@ -263,6 +299,22 @@ def _user32() -> ctypes.WinDLL:
             get_ptr.restype = ctypes.c_ssize_t
         lib.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
         lib.GetWindowLongW.restype = ctypes.c_long
+        lib.PeekMessageW.argtypes = [
+            ctypes.POINTER(_MSG),
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+        ]
+        lib.PeekMessageW.restype = ctypes.c_int
+        lib.TranslateMessage.argtypes = [ctypes.POINTER(_MSG)]
+        lib.TranslateMessage.restype = ctypes.c_int
+        lib.DispatchMessageW.argtypes = [ctypes.POINTER(_MSG)]
+        lib.DispatchMessageW.restype = ctypes.c_ssize_t
+        set_dpi = getattr(lib, "SetThreadDpiAwarenessContext", None)
+        if set_dpi is not None:
+            set_dpi.argtypes = [ctypes.c_void_p]
+            set_dpi.restype = ctypes.c_void_p
         _user32_lib = lib
     return _user32_lib
 
@@ -328,6 +380,10 @@ class MaskApi(Protocol):
     def window_topmost(self, hwnd: int) -> bool | None: ...
 
     def refresh_cursor(self, hwnd: int) -> None: ...
+
+    def run_mask_message_loop(self, idle: Callable[[], None]) -> None: ...
+
+    def hide_window(self, hwnd: int) -> None: ...
 
 
 class Win32MaskApi:
@@ -447,6 +503,35 @@ class Win32MaskApi:
         )
     def destroy_window(self, hwnd: int) -> None:
         _user32().DestroyWindow(ctypes.c_void_p(hwnd))
+
+    def hide_window(self, hwnd: int) -> None:
+        """立刻把窗口藏起来（跨线程安全）；窗口本身仍等待销毁。"""
+        _user32().ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
+
+    def run_mask_message_loop(self, idle: Callable[[], None]) -> None:
+        """在当前线程泵消息，直到进程退出（守护线程里调用）。
+
+        遮罩窗口的 ``WM_SETCURSOR`` / ``WM_CLOSE`` 都只能在本线程处理，所以
+        ``idle`` 被反复调用来取走投递进来的建窗 / 销窗任务。
+        """
+        user32 = _user32()
+        set_dpi = getattr(user32, "SetThreadDpiAwarenessContext", None)
+        if set_dpi is not None:
+            try:
+                set_dpi(
+                    ctypes.c_void_p(
+                        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 & 0xFFFFFFFFFFFFFFFF
+                    )
+                )
+            except Exception:  # pragma: no cover - 老系统没有该 API
+                _log.debug("遮罩线程设置 DPI 感知失败", exc_info=True)
+        msg = _MSG()
+        while True:
+            idle()
+            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            time.sleep(_MASK_PUMP_SLEEP_S)
 
     def clip_cursor(self, rect: Rect | None) -> bool:
         user32 = _user32()
@@ -612,6 +697,18 @@ def _register_atexit_guard() -> None:
         _guard_registered = True
 
 
+class _MaskTask:
+    """投递给遮罩线程执行的一项工作（建窗 / 销窗）。"""
+
+    __slots__ = ("fn", "done", "result", "error")
+
+    def __init__(self, fn: Callable[[], object]) -> None:
+        self.fn = fn
+        self.done = threading.Event()
+        self.result: object = None
+        self.error: BaseException | None = None
+
+
 # ---------------------------------------------------------------------------
 # 对外入口
 # ---------------------------------------------------------------------------
@@ -641,6 +738,12 @@ class CursorMask:
         self._watchdog_stop: threading.Event | None = None
         self._watchdog_thread: threading.Thread | None = None
         self._repair_log_at = 0.0
+        # 遮罩专用线程（1.1.2）：窗口创建、消息泵、销毁都在这一条线程上。
+        self._work_lock = threading.Lock()
+        self._work: deque[_MaskTask] = deque()
+        self._mask_thread: threading.Thread | None = None
+        self._mask_thread_id: int | None = None
+        self._mask_thread_failed = False
 
     # -- 状态 -------------------------------------------------------------
     @property
@@ -738,34 +841,139 @@ class CursorMask:
             # 显示设置变更……），所以每次接管都重新置顶一次（1.1.1）。
             self._reassert_topmost()
             return
+        rects = self._api.monitor_rects()
         created: list[int] = []
+
+        def _create() -> None:
+            for rect in rects:
+                hwnd = self._api.create_mask_window(rect)
+                if hwnd:
+                    created.append(int(hwnd))
+
         try:
-            for rect in self._api.monitor_rects():
-                created.append(self._api.create_mask_window(rect))
+            _result, on_worker = self._run_on_mask_thread(_create)
         except Exception:
             for hwnd in created:
-                try:
-                    self._api.destroy_window(hwnd)
-                except Exception:
-                    _log.exception("回滚遮罩窗口失败 hwnd=%s", hwnd)
+                self._destroy_one(hwnd)
             raise
-        self._windows.extend(created)
-        self._owner_thread = threading.get_ident()
+        if created:
+            self._windows.extend(created)
+            self._owner_thread = self._mask_thread_id if on_worker else threading.get_ident()
 
     def _destroy_windows(self) -> None:
         windows, self._windows = self._windows, []
-        same_thread = self._owner_thread == threading.get_ident()
-        post = getattr(self._api, "post_close_window", None)
         for hwnd in windows:
-            try:
-                if not same_thread and callable(post):
-                    if not post(hwnd):
-                        _log.warning("PostMessage(WM_CLOSE) 失败 hwnd=%s", hwnd)
-                else:
-                    self._api.destroy_window(hwnd)
-            except Exception:
-                _log.exception("销毁遮罩窗口失败 hwnd=%s", hwnd)
+            self._destroy_one(hwnd)
         self._owner_thread = None
+
+    def _destroy_one(self, hwnd: int) -> None:
+        """销毁一个遮罩窗口；必须落在建窗的那条线程上（1.1.2）。"""
+        delivered = False
+        try:
+            _result, delivered = self._run_on_mask_thread(
+                lambda: self._api.destroy_window(hwnd)
+            )
+        except Exception:
+            _log.exception("销毁遮罩窗口失败 hwnd=%s", hwnd)
+        if delivered or self._mask_thread is None:
+            return  # 线程内销毁成功；或平台没有遮罩线程，窗口本就在本线程创建
+        # 线程没接住任务：先让窗口隐藏（跨线程安全），把屏幕立刻让出来，再补发
+        # WM_CLOSE 让窗口线程稍后收尾。绝不能让遮罩继续盖着屏幕。
+        hide = getattr(self._api, "hide_window", None)
+        if callable(hide):
+            try:
+                hide(hwnd)
+            except Exception:
+                _log.debug("隐藏遮罩窗口失败 hwnd=%s", hwnd, exc_info=True)
+        post = getattr(self._api, "post_close_window", None)
+        if callable(post):
+            try:
+                post(hwnd)
+            except Exception:
+                _log.debug("补发 WM_CLOSE 失败 hwnd=%s", hwnd, exc_info=True)
+
+    # -- 遮罩线程 ---------------------------------------------------------
+    def _ensure_mask_thread(self) -> bool:
+        """确保遮罩专用线程已启动；平台后端没有消息泵时返回 False。"""
+        runner = getattr(self._api, "run_mask_message_loop", None)
+        if not callable(runner):
+            return False
+        with self._lock:
+            if self._mask_thread is not None and self._mask_thread.is_alive():
+                return True
+            if self._mask_thread_failed:
+                return False
+            thread = threading.Thread(
+                target=self._mask_thread_main,
+                args=(runner,),
+                name="padlend-mask-win",
+                daemon=True,
+            )
+            self._mask_thread = thread
+            thread.start()
+        return True
+
+    def _mask_thread_main(self, runner: Callable[[Callable[[], None]], None]) -> None:
+        self._mask_thread_id = threading.get_ident()
+        try:
+            runner(self._drain_mask_tasks)
+        except Exception:
+            _log.exception("遮罩线程消息泵异常退出")
+            self._mask_thread_failed = True
+        finally:
+            self._mask_thread_id = None
+            self._fail_pending_tasks()
+
+    def _drain_mask_tasks(self) -> None:
+        while True:
+            with self._work_lock:
+                if not self._work:
+                    return
+                task = self._work.popleft()
+            self._run_task(task)
+
+    @staticmethod
+    def _run_task(task: _MaskTask) -> None:
+        try:
+            task.result = task.fn()
+        except BaseException as exc:  # 回抛给发起的线程
+            task.error = exc
+        finally:
+            task.done.set()
+
+    def _fail_pending_tasks(self) -> None:
+        with self._work_lock:
+            pending = list(self._work)
+            self._work.clear()
+        for task in pending:
+            task.error = RuntimeError("遮罩线程已退出，任务未执行")
+            task.done.set()
+
+    def _run_on_mask_thread(self, fn: Callable[[], object]) -> tuple[object, bool]:
+        """在遮罩线程上执行 ``fn``，返回 ``(结果, 是否由该线程执行)``。
+
+        平台后端没有消息泵（测试假实现 / 非 Windows）时直接在调用线程执行，
+        保持 1.1.1 之前的行为。
+        """
+        if not self._ensure_mask_thread():
+            return fn(), False
+        if self._mask_thread_id == threading.get_ident():
+            return fn(), True
+        thread = self._mask_thread
+        if thread is None or not thread.is_alive():
+            return fn(), False
+        task = _MaskTask(fn)
+        with self._work_lock:
+            self._work.append(task)
+        if not task.done.wait(_MASK_THREAD_TIMEOUT_S):
+            with self._work_lock, contextlib.suppress(ValueError):
+                # 已被取走，可能正在执行
+                self._work.remove(task)
+            _log.error("遮罩线程 %.1fs 未响应，退回调用线程执行", _MASK_THREAD_TIMEOUT_S)
+            return fn(), False
+        if task.error is not None:
+            raise task.error
+        return task.result, True
 
     def _apply_clip(self, rect: Rect | None) -> None:
         try:

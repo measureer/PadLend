@@ -10,7 +10,8 @@ import ctypes
 import os
 import sys
 import threading
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -62,6 +63,8 @@ class FakeMaskApi:
         self.ensure_topmost_calls: list[int] = []
         self.topmost: dict[int, bool] = {}
         self.cursor_shown = False
+        self.hidden: list[int] = []
+        self.alive: set[int] = set()
         self._next_handle = 100
 
     def monitor_rects(self) -> list[Rect]:
@@ -74,12 +77,17 @@ class FakeMaskApi:
         self._next_handle += 1
         self.created.append(rect)
         self.topmost[handle] = True
+        self.alive.add(handle)
         return handle
 
     def destroy_window(self, hwnd: int) -> None:
         if self.fail_destroy:
             raise OSError("DestroyWindow 失败（测试注入）")
         self.destroyed.append(hwnd)
+        self.alive.discard(hwnd)
+
+    def hide_window(self, hwnd: int) -> None:
+        self.hidden.append(hwnd)
 
     def clip_cursor(self, rect: Rect | None) -> bool:
         self.clip_calls.append(rect)
@@ -519,16 +527,73 @@ def test_set_cursor_hidden_never_touches_show_cursor(monkeypatch: pytest.MonkeyP
     assert calls[2] == 123
 
 
-def test_cross_thread_release_posts_close_instead_of_destroy() -> None:
-    """遮罩窗口由 rawinput 线程创建；GUI 线程释放时必须 PostMessage(WM_CLOSE)。"""
-    api = FakeMaskApi([MON_A])
-    mask = make_mask(api)
+class ThreadedFakeMaskApi(FakeMaskApi):
+    """带消息泵的假后端：模拟真实遮罩线程。"""
+
+    def __init__(self, monitors: Sequence[Rect] | None = None) -> None:
+        super().__init__(monitors)
+        self.pump_stop = threading.Event()
+        self.pump_thread_id: int | None = None
+        self.create_threads: list[int] = []
+        self.destroy_threads: list[int] = []
+
+    def run_mask_message_loop(self, idle: Callable[[], None]) -> None:
+        self.pump_thread_id = threading.get_ident()
+        while not self.pump_stop.is_set():
+            idle()
+            time.sleep(0.002)
+
+    def create_mask_window(self, rect: Rect) -> int:
+        self.create_threads.append(threading.get_ident())
+        return super().create_mask_window(rect)
+
+    def destroy_window(self, hwnd: int) -> None:
+        self.destroy_threads.append(threading.get_ident())
+        super().destroy_window(hwnd)
+
+
+def test_cross_thread_release_destroys_on_mask_thread() -> None:
+    """1.1.2：UI/RPC 线程进入、rawinput 线程退出时，销窗必须落在遮罩线程。
+
+    1.1.1 走 ``PostMessage(WM_CLOSE)``，而 RPC 线程没有消息泵 → WM_CLOSE 永远
+    不被处理，遮罩窗口泄漏：整块屏幕没有光标，而且吞掉所有点击。
+    """
+    api = ThreadedFakeMaskApi([MON_A, MON_B])
+    mask = CursorMask(api=api)
     mask.show(None)
+
+    assert api.pump_thread_id is not None
+    assert api.create_threads == [api.pump_thread_id, api.pump_thread_id]
+    assert threading.get_ident() != api.pump_thread_id
 
     worker = threading.Thread(target=mask.release)
     worker.start()
-    worker.join(timeout=2.0)
+    worker.join(timeout=5.0)
 
     assert not worker.is_alive()
+    assert api.destroyed == [100, 101]
+    assert api.destroy_threads == [api.pump_thread_id, api.pump_thread_id]
+    # 不再依赖跨线程 PostMessage(WM_CLOSE)，也就不会漏窗。
+    assert api.close_posted == []
+    assert api.alive == set()
+    api.pump_stop.set()
+
+
+def test_destroy_falls_back_to_hiding_when_mask_thread_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """遮罩线程卡死时先 ShowWindow(SW_HIDE)，绝不让遮罩继续盖住屏幕。"""
+
+    class _StalledApi(FakeMaskApi):
+        def run_mask_message_loop(self, idle: Callable[[], None]) -> None:
+            threading.Event().wait()  # 不取任务，模拟消息泵卡死
+
+    monkeypatch.setattr(mask_module, "_MASK_THREAD_TIMEOUT_S", 0.05)
+    api = _StalledApi([MON_A])
+    mask = CursorMask(api=api)
+    mask.show(None)
+    mask.release()
+
+    assert api.hidden == [100]
     assert api.close_posted == [100]
-    assert api.destroyed == []
+    assert mask.active is False
