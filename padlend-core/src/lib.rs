@@ -6,6 +6,7 @@ pub mod decode;
 pub mod logic;
 pub mod methods;
 pub mod rpc;
+pub mod service;
 pub mod tablet;
 pub mod win;
 

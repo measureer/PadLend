@@ -86,6 +86,8 @@ def spawn(target: list[str], cwd: Path, home: Path) -> subprocess.Popen:
     env = dict(os.environ)
     env["PADLEND_HOME"] = str(home)
     env["PYTHONUNBUFFERED"] = "1"
+    # golden trace 是在 --simulate 下录的：Rust 侧默认连真实设备，这里显式打开模拟。
+    env["PADLEND_SIMULATE"] = "1"
     return subprocess.Popen(  # noqa: S603 - 被测对象是本地构建产物
         target,
         cwd=str(cwd),

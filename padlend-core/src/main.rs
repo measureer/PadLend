@@ -9,6 +9,7 @@
 //! * `--debug-raw`：与 `python main.py --debug-raw` 等价，用来做 M0 计数对拍；
 //! * `--serve`（默认）：NDJSON RPC 服务，供 Tauri 外壳调用。
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -101,13 +102,33 @@ fn main() -> ExitCode {
         };
     }
 
-    let _ = (&args.simulate, &args.no_hooks, &args.config, &args.log_level);
-    match rpc::serve() {
+    let _ = &args.log_level;
+    // 与 Python main.py 一致：--simulate 或 PADLEND_SIMULATE 为真即模拟。
+    // **默认必须是真实设备**——生产与调试行为不能靠构建类型分叉，否则本地调试时
+    // 一切"正常"而发布版连的是真平板。门禁与演示由 tools/rpc_trace.py 显式设
+    // PADLEND_SIMULATE=1。
+    let simulate = args.simulate || simulate_requested();
+    match rpc::serve(rpc::ServeOptions {
+        simulate,
+        no_hooks: args.no_hooks,
+        config_path: args.config.as_ref().map(PathBuf::from),
+    }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("[error] {err}");
             ExitCode::from(1)
         }
+    }
+}
+
+/// 是否请求模拟模式：只看环境变量，缺省为 false（真实设备）。
+fn simulate_requested() -> bool {
+    match std::env::var("PADLEND_SIMULATE") {
+        Ok(value) => matches!(
+            value.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
     }
 }
 
