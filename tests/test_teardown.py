@@ -158,7 +158,10 @@ _TEARDOWN_ORDER = (
 )
 
 
-def _runtime_with_one_failing_step(fail_step: str) -> tuple[main.Runtime, list[str]]:
+def _runtime_with_one_failing_step(
+    fail_step: str,
+    error_type: type[BaseException] = RuntimeError,
+) -> tuple[main.Runtime, list[str]]:
     runtime = main.Runtime.__new__(main.Runtime)
     runtime._stop_lock = threading.Lock()
     runtime._stopped = False
@@ -168,7 +171,7 @@ def _runtime_with_one_failing_step(fail_step: str) -> tuple[main.Runtime, list[s
         def run() -> None:
             seen.append(name)
             if name == fail_step:
-                raise RuntimeError(f"{name} failed")
+                raise error_type(f"{name} failed")
 
         return run
 
@@ -202,6 +205,16 @@ def test_runtime_stop_releases_every_resource_when_one_step_fails(fail_step: str
 
     # 已经进入过 teardown（哪怕中途有异常）后，再调用不得重复释放资源。
     runtime.stop()
+    assert seen == list(_TEARDOWN_ORDER)
+
+
+def test_runtime_stop_cleans_up_before_keyboard_interrupt() -> None:
+    """Ctrl+C 落在某一步清理中时，也不能把后续资源留在半释放状态。"""
+    runtime, seen = _runtime_with_one_failing_step("cursor_watch", KeyboardInterrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        runtime.stop()
+
     assert seen == list(_TEARDOWN_ORDER)
 
 

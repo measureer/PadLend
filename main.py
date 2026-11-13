@@ -275,15 +275,16 @@ class Runtime:
             if self._stopped:
                 return
             self._stopped = True
-        first_error: Exception | None = None
+        first_error: BaseException | None = None
 
         def run(action: Callable[[], None]) -> None:
             # 每一步独立兜底：遮罩、ClipCursor、钩子、adb 子进程都必须走到，
-            # 不能被前一步的异常截断；全部跑完后再把第一个异常抛给调用方。
+            # 不能被前一步的异常截断；KeyboardInterrupt/SystemExit 也要先清理完
+            # 全部资源，再把第一个异常抛给调用方。
             nonlocal first_error
             try:
                 action()
-            except Exception as exc:  # noqa: BLE001 - 记录后继续释放后续资源
+            except BaseException as exc:  # noqa: B036 - 清理完会重新抛出
                 if first_error is None:
                     first_error = exc
                 LOG.debug("teardown step failed", exc_info=True)
