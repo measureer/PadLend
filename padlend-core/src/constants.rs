@@ -39,9 +39,18 @@ pub const SINGLE_INSTANCE_EVENT: &str = r"Global\PadLend.Activate";
 /// 取不到时退化为当前工作目录，绝不 panic —— 路径解析失败也要让上层能继续
 /// 走 `config_dir()` 的候选链。
 pub fn app_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    // 打包后（Tauri 把 resources 放在 exe 同目录）：用 exe 目录，
+    // 与 Python 的 frozen 分支语义一致；源码运行时回到仓库根，对应 PROJECT_ROOT。
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if dir.join("THIRD_PARTY_NOTICES.md").is_file() || dir.join("vendor").is_dir() {
+                return dir.to_path_buf();
+            }
+        }
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
 }
 

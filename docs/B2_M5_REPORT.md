@@ -27,6 +27,24 @@
 
 相对现发布形态：启动 **34×**、体积 **9.4×**、RSS **5.6×**；相对 onedir：启动 **13.8×**、体积 **20×**。
 
+## 2.5 值级一致性（`tools/parity_probe.py`，新增）
+
+结构一致还不够：同机把 Python 与 Rust 两个 sidecar 都以**真实模式**拉起，对
+`system.paths` / `layout.desktop` / `layout.initial` / `config.get` / `app.bootstrap`
+做逐值 diff（临时配置目录归一化为 `<home>`，metrics/logs/facts 等易变字段跳过）：
+
+```
+system.paths     一致
+layout.desktop   一致      ← 显示器枚举、外轮廓边段、boundingBox、placement
+layout.initial   一致
+config.get       一致
+app.bootstrap    一致
+合计 0 处差异
+```
+
+这条比 25/25 更硬：`layout.desktop` 是几何与 DPI 换算的最终产物，两边逐值相同说明
+DesktopMap 的移植没有引入偏差。已作为 `parity` 门禁加入 `run_gates --stage M5`。
+
 ## 3. A/B 切换机制
 
 `src-tauri/src/bridge.rs` 的 `resolve_service()` 查找顺序改为：

@@ -69,6 +69,21 @@ def gate_router_replay() -> dict:
     }
 
 
+def gate_parity(rust_exe: Path) -> dict:
+    """值级一致性：Python 与 Rust 各自真实模式跑确定性方法，逐值比对。"""
+    print("  [G-parity] parity_probe")
+    code, output = run(
+        [sys.executable, "tools/parity_probe.py", "--exe", str(rust_exe.relative_to(ROOT))], ROOT
+    )
+    diffs = re.search(r"合计 (\d+) 处差异", output)
+    return {
+        "gate": "parity",
+        "ok": code == 0,
+        "differences": int(diffs.group(1)) if diffs else -1,
+        "tail": output[-800:] if code != 0 else "",
+    }
+
+
 def gate_python_suite() -> dict:
     """Python 侧回归（确认移植没有误伤原来的实现）。"""
     print("  [G-python] pytest -q")
@@ -160,7 +175,7 @@ STAGES = {
     "M2": ["rust-tests", "python-suite", "rawinput-live", "rpc-golden"],
     "M3": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
     "M4": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
-    "M5": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
+    "M5": ["rust-tests", "python-suite", "router-replay", "rpc-golden", "parity"],
 }
 RPC_MIN = {"M5": 25}
 
@@ -189,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         "rpc-golden": lambda: gate_rpc_golden(rust_exe, RPC_MIN.get(args.stage, 0)),
         "rawinput-live": lambda: gate_rawinput_live(rust_exe),
         "router-replay": gate_router_replay,
+        "parity": lambda: gate_parity(rust_exe),
     }
     results = [handlers[name]() for name in STAGES[args.stage]]
 
