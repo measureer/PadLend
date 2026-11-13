@@ -65,10 +65,10 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 0 | 完成：`B2_STAGE_0_REPORT.md`（onefile 366.6ms/14.51MB vs onedir 146.3ms/31.92MB） |
-| M0 | 部分完成：G1 无头 18/18 绿、GWLP_USERDATA 改造完成；**活体计数对拍被锁屏阻塞**（需人工解锁后 `run_gates --stage M0`） |
-| M1 | **完成**：`B2_M1_REPORT.md`；rust-tests 167 全绿、python-suite 411 全绿、跨语言字节对拍 274 项全绿；G3 4/25 |
-| M2 | 进行中：三路 Win32 移植（desktop/dpi、mask/cursor_watch、keyboard_hook/hotkeys/single_instance） |
-| M3 | 待开始：需先把 `KeyEvent`/`RawDelta` 统一到 `src/logic/events.rs`，再按 `router_scenarios.json` 建回放门禁 |
-| G3 进度 | 4/25（`app.shutdown`、`system.paths`、`config.get`、`config.save`） |
-| 待人工 | 解锁桌面跑活体门禁；M5 前确认配置补丁的逐字段错误文本 |
+| 阶段 0 | 完成（`B2_STAGE_0_REPORT.md`） |
+| M0 | 部分完成：G1 无头 18/18 绿；**活体计数对拍被锁屏阻塞** |
+| M1 | 完成（`B2_M1_REPORT.md`）：167 测试、274 项跨语言字节对拍、G3 4/25 |
+| M2 | 完成（`B2_M2_REPORT.md`）：295 测试全绿、7 个 Win32 模块、11 个 ignored 待解锁验证 |
+| 提交 | `bb33e4a` feat(b2): port M1/M2 engine layers to the Rust sidecar |
+| M3 | 进行中：`core/router.py` 移植，门槛是 router_scenarios.json 的 5 场景回放 |
+| 待人工 | 解锁桌面跑 `cargo test -- --ignored` 与 `run_gates --stage M0/M2` |

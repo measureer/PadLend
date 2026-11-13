@@ -85,6 +85,12 @@ fn main() -> ExitCode {
         }
     };
 
+    // PITFALLS 5.1：DPI 感知必须早于任何窗口创建，否则遮罩矩形与坐标换算全错。
+    // 失败不致命（96 DPI 单屏仍可用），但要在 stderr 留证据。
+    if !win::dpi::set_dpi_awareness() {
+        eprintln!("[warn] Per-Monitor V2 DPI 感知设置失败；高 DPI 下遮罩可能错位");
+    }
+
     if args.debug_raw {
         return match run_debug_raw(&args) {
             Ok(()) => ExitCode::SUCCESS,

@@ -3,5 +3,6 @@
 pub mod events;
 pub mod geometry;
 pub mod metrics;
+pub mod ports;
 pub mod router;
 pub mod state;
