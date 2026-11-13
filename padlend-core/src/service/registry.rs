@@ -864,7 +864,7 @@ impl Registry {
 }
 
 fn backup(path: &Path) -> Option<String> {
-    let stamp = clockfmt::UtcStamp::now().compact();
+    let stamp = clockfmt::Stamp::now().compact();
     let name = path.file_name()?.to_string_lossy().to_string();
     let target = path.with_file_name(format!("{name}.bad-{stamp}"));
     fs::copy(path, &target).ok()?;

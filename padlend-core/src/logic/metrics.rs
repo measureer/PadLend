@@ -141,6 +141,14 @@ fn perf_counter() -> f64 {
 }
 
 impl Metrics {
+    /// 替换进程采样器（默认是恒 0 的 NullProcessUsage）。
+    ///
+    /// 真实运行时接 win::process::Win32ProcessUsage，让 cpu_pct/mem_mb 与 Python 的
+    /// psutil 口径一致；测试保持 0.0，免得断言受机器负载影响。
+    pub fn set_process_usage(&mut self, usage: Box<dyn ProcessUsage>) {
+        self.usage = usage;
+    }
+
     /// 用默认时钟与“无 CPU/内存采样”构造（对应 Python `Metrics(window_s=..)`）。
     ///
     /// `window_s <= 0` 返回 [`MetricsError::WindowNotPositive`]（Python 抛 ValueError）。

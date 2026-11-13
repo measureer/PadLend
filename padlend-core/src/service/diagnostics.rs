@@ -297,24 +297,102 @@ impl DiagnosticsReport {
         serials
     }
 
-    /// 导出为文本报告，返回文件路径。
+    /// 导出为 zip（与 Python 的 `export_report` 同扩展名、同目录约定），返回文件路径。
     pub fn export(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
         let target_dir = match directory {
             Some(path) => path.to_path_buf(),
             None => desktop_dir(),
         };
         fs::create_dir_all(&target_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
-        let stamp = clockfmt::UtcStamp::now().compact();
-        let path = target_dir.join(format!("padlend-diagnostics-{stamp}.txt"));
-        let mut text = String::new();
-        text.push_str("PadLend 诊断包（Rust 版为纯文本；Python 版是 zip）\n");
-        text.push_str("已自动隐藏：设备序列号、IP/MAC 地址、Windows 用户名与用户目录路径。\n");
-        text.push_str("如仍看到隐私内容，请先自行删除再分享。\n\n");
-        text.push_str(&self.to_text());
-        text.push('\n');
-        fs::write(&path, text).map_err(|err| format!("写诊断包失败：{err}"))?;
+        let stamp = clockfmt::Stamp::now().compact();
+        let path = target_dir.join(format!("padlend-diagnostics-{stamp}.zip"));
+
+        let readme = "PadLend 诊断包\n\
+已自动隐藏：设备序列号、IP/MAC 地址、Windows 用户名与用户目录路径。\n\
+如仍看到隐私内容，请先自行删除再分享。\n";
+        let report = self.to_text();
+        let archive = zip_store(&[
+            ("README.txt", readme.as_bytes()),
+            ("diagnostics.txt", report.as_bytes()),
+        ]);
+        fs::write(&path, archive).map_err(|err| format!("写诊断包失败：{err}"))?;
         Ok(path)
     }
+}
+
+/// 生成一个**不压缩**（stored）的 zip 归档。
+///
+/// 不引第三方依赖：诊断包只需要"能被解压打开"，stored 方式完全合法；
+/// Python 版用 DEFLATE 只是体积更小。
+fn zip_store(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut central: Vec<u8> = Vec::new();
+
+    for (name, data) in entries {
+        let offset = out.len() as u32;
+        let crc = crc32(data);
+        let size = data.len() as u32;
+
+        out.extend_from_slice(&0x0403_4b50u32.to_le_bytes()); // local header
+        out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&0u16.to_le_bytes()); // flags
+        out.extend_from_slice(&0u16.to_le_bytes()); // method: stored
+        out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        out.extend_from_slice(&0x21u16.to_le_bytes()); // mod date (1980-01-01)
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // extra len
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+
+        central.extend_from_slice(&0x0201_4b50u32.to_le_bytes()); // central header
+        central.extend_from_slice(&20u16.to_le_bytes()); // version made by
+        central.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        central.extend_from_slice(&0u16.to_le_bytes()); // flags
+        central.extend_from_slice(&0u16.to_le_bytes()); // method
+        central.extend_from_slice(&0u16.to_le_bytes()); // time
+        central.extend_from_slice(&0x21u16.to_le_bytes()); // date
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes()); // extra
+        central.extend_from_slice(&0u16.to_le_bytes()); // comment
+        central.extend_from_slice(&0u16.to_le_bytes()); // disk
+        central.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        central.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+
+    let central_offset = out.len() as u32;
+    out.extend_from_slice(&central);
+    let central_size = central.len() as u32;
+
+    out.extend_from_slice(&0x0605_4b50u32.to_le_bytes()); // EOCD
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&central_size.to_le_bytes());
+    out.extend_from_slice(&central_offset.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out
+}
+
+/// CRC-32（IEEE，反射多项式 0xEDB88320）。
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in data {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 /// 仅静态摘要（不跑 adb）：只填 server jar 与一条错误。
@@ -569,14 +647,24 @@ mod tests {
     }
 
     #[test]
-    fn export_writes_a_text_report() {
+    fn export_writes_a_zip_archive() {
         let dir = std::env::temp_dir().join(format!("padlend-diag-{}", std::process::id()));
         let report = build_report(&results());
         let path = report.export(Some(&dir)).expect("应能导出");
         assert!(path.exists());
-        let text = fs::read_to_string(&path).expect("可读");
-        assert!(text.contains("PadLend"));
-        assert!(text.contains("== 概要 =="));
+        assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("zip"));
+        let bytes = fs::read(&path).expect("可读");
+        assert_eq!(&bytes[0..4], b"PK\x03\x04", "本地文件头签名");
+        assert_eq!(&bytes[bytes.len() - 22..bytes.len() - 18], b"PK\x05\x06", "EOCD 在末尾");
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("diagnostics.txt"));
+        assert!(text.contains("README.txt"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn crc32_matches_known_vector() {
+        // CRC-32/ISO-HDLC("123456789") = 0xCBF43926
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
 }

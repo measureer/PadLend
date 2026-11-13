@@ -39,9 +39,10 @@
 
 | 缺口 | 影响 | 处置建议 |
 |---|---|---|
-| `diagnostics.export` 写 `.txt` 而非 `.zip` | 诊断包格式与 Python 版不同 | 加 `zip` 依赖（M5+） |
-| 时间戳用 UTC，Python 用本地时 | 日志/诊断里的时刻差 8 小时 | 加 `Win32_System_SystemInformation` 或 `chrono` |
-| 未实现 `_capture_mac` | 设备记录少一个 MAC 字段 | 接 adb `shell ip link` |
+| ~~`diagnostics.export` 写 `.txt`~~ | **已修**：手写 stored-zip（无新依赖），`zipfile` 实测可解压 |
+| ~~时间戳用 UTC~~ | **已修**：改用 `GetLocalTime`，ISO 形式不再带 `+00:00`，与 Python 的本地时一致 |
+| ~~未实现 `_capture_mac`~~ | **已修**：无线设备连上后后台读 `Adb::wifi_mac` 并写回设备注册表 |
+| ~~`cpu_pct`/`mem_mb` 恒 0~~ | **已修**：Router 注入 `Win32ProcessUsage`，实测 `mem_mb=8.7` |
 | 模拟模式用 `NoopMask` | 模拟下不会真的遮罩 | 与 Python `--simulate` 行为一致，可接受 |
 | `devices.json` 与 Python 同 schema 同目录 | 两版可共用、可回退 | 已确认 |
 

@@ -90,6 +90,15 @@ def build() -> int:
         return fail(f"sidecar 未生成：{sidecar}")
     log(f"业务 sidecar：{sidecar.name}（{sidecar.stat().st_size // 1024 // 1024} MB）")
 
+    # Rust 引擎（B2）：与 Python sidecar 一起进包，外壳默认优先用它；
+    # PADLEND_ENGINE=python 可在运行时回退，无需重新打包。
+    if run([sys.executable, str(ROOT / "tools" / "build_core.py")]) != 0:
+        return fail("padlend-core 构建失败")
+    core = BINARIES / "padlend-core-x86_64-pc-windows-msvc.exe"
+    if not core.is_file():
+        return fail(f"Rust sidecar 未生成：{core}")
+    log(f"Rust sidecar：{core.name}（{core.stat().st_size / 1024 / 1024:.2f} MB）")
+
     if not has_cargo():
         log("本机没有 cargo，跳过 Tauri 原生外壳（CI 会构建并发布安装包）")
         return 0

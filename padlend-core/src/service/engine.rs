@@ -320,12 +320,11 @@ impl Engine {
             built
         };
         let _ = self.session.set(session.clone());
-        let router = Arc::new(Router::new(
-            cfg.clone(),
-            session,
-            self.desktop.clone(),
-            self.mask.clone(),
-        ));
+        // 真实 CPU/内存采样：UI 的指标条要显示真实占用，不能恒 0。
+        let router = Arc::new(
+            Router::new(cfg.clone(), session, self.desktop.clone(), self.mask.clone())
+                .with_process_usage(Box::new(crate::win::process::Win32ProcessUsage::new())),
+        );
         self.install_callbacks(&router);
         self.router
             .set(router)

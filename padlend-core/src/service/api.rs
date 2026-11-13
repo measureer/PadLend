@@ -217,6 +217,21 @@ fn devices_connect(engine: &Arc<Engine>, params: &Value) -> Result<Value, String
     match found {
         Some(facts) => {
             engine.remember_device(&serial, "", Some(&facts));
+            // 与 Python 的 _capture_mac 一致：无线设备连上后**后台**读一次 Wi-Fi MAC，
+            // 路由器换 IP 时还能靠它找回平板。读不到就保持空串，绝不阻塞连接流程。
+            if crate::service::registry::is_wireless_serial(&serial) {
+                if let Some(adb) = engine.adb_api() {
+                    let engine_bg = Arc::clone(engine);
+                    let serial_bg = serial.clone();
+                    std::thread::spawn(move || {
+                        let mac = adb.wifi_mac(Some(serial_bg.as_str()));
+                        let mac = mac.trim();
+                        if !mac.is_empty() {
+                            engine_bg.remember_device(&serial_bg, mac, None);
+                        }
+                    });
+                }
+            }
             engine.sync_facts_now();
             engine.emit_log("DEVICE", format!("已连接 {serial}"));
             Ok(json!({ "ok": true, "message": "" }))

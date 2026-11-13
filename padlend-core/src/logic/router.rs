@@ -1166,6 +1166,12 @@ impl Router {
     }
 
     /// 注入可推进的时钟（测试用；对应 Python 构造函数的 clock 参数）。
+    /// 注入进程 CPU/内存采样器（真实运行时用 win::process::Win32ProcessUsage）。
+    pub fn with_process_usage(mut self, usage: Box<dyn crate::logic::metrics::ProcessUsage>) -> Self {
+        self.metrics.set_process_usage(usage);
+        self
+    }
+
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.metrics = Self::build_metrics(&clock);
         self.clock = clock;
