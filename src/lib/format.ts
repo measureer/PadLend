@@ -50,6 +50,12 @@ export const LOCATED_LABELS: Record<string, string> = {
   offline: '不在线',
 };
 
+/** 只取 UTC 日期，避免不同系统时区让同一条记录显示成两天。 */
+export function formatLastSeen(value: string): string {
+  const day = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+}
+
 export function logEventTone(event: string): string {
   const key = event.split('.', 1)[0].toLowerCase();
   if (key === 'arm' || key === 'cfg') return 'warn';

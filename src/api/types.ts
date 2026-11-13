@@ -75,6 +75,8 @@ export interface DeviceFacts {
 
 export interface DeviceItem {
   serial: string;
+  /** 稳定设备 id（hw:… / ep:…）；换 IP、换端口后不变。 */
+  id: string;
   state: string;
   model: string;
   transport: string;
@@ -82,6 +84,8 @@ export interface DeviceItem {
   remembered: boolean;
   located: string;
   locatedDetail: string;
+  /** 最后一次成功连接的 UTC ISO 时间；从未成功时为空。 */
+  lastSeen: string;
 }
 
 export interface Metrics {

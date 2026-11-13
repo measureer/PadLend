@@ -3,24 +3,8 @@
 import { useState } from 'react';
 import { Button, Modal, TextInput } from '../../components/ui';
 import { addDevice } from '../../lib/actions';
+import { normalizeDeviceAddress, validateDeviceAddress } from '../../lib/deviceAddress';
 import { useAppStore } from '../../store/appStore';
-
-function normalizeAddress(raw: string): string {
-  const value = raw.trim();
-  if (!value) return '';
-  return value.includes(':') ? value : `${value}:5555`;
-}
-
-function validate(address: string, code: string): string {
-  const normalized = normalizeAddress(address);
-  if (!normalized) return '请填写平板上的 IP 地址与端口';
-  const match = /^(\d{1,3}(?:\.\d{1,3}){3}|[a-zA-Z0-9.-]+):(\d{1,5})$/.exec(normalized);
-  if (!match) return '地址格式应为 IP:端口，例如 192.168.1.23:5555';
-  const port = Number(match[2]);
-  if (port < 1 || port > 65535) return '端口必须在 1–65535 之间';
-  if (code && !/^\d{6}$/.test(code.trim())) return '配对码是平板上的 6 位数字';
-  return '';
-}
 
 export function AddDeviceDialog() {
   const close = () => useAppStore.getState().openDialog(null);
@@ -30,13 +14,13 @@ export function AddDeviceDialog() {
   const [error, setError] = useState('');
 
   const submit = () => {
-    const problem = validate(address, code);
+    const problem = validateDeviceAddress(address, code);
     if (problem) {
       setError(problem);
       return;
     }
     setError('');
-    void addDevice(normalizeAddress(address), code.trim());
+    void addDevice(normalizeDeviceAddress(address), code.trim());
   };
 
   return (
@@ -56,7 +40,8 @@ export function AddDeviceDialog() {
       <div style={{ display: 'grid', gap: 'var(--sp-5)' }}>
         <div className="help-block" style={{ marginTop: 0 }}>
           在平板的「开发者选项 → 无线调试」里查看 IP 地址和端口；首次使用点「使用配对码配对设备」，
-          把 6 位配对码填到下面。平板与电脑需要在同一 Wi-Fi，路由器不能开启客户端隔离。
+          把 6 位配对码填到下面。地址支持 IP、主机名和 [IPv6]:端口；跨网或 VPN 也能连，
+          只要电脑能访问平板的调试端口。mDNS 自动发现通常只在同一局域网有效。
         </div>
         <div className="field">
           <label className="field-label" htmlFor="addr">设备地址</label>
@@ -64,7 +49,7 @@ export function AddDeviceDialog() {
             label="设备地址"
             value={address}
             onChange={(value) => { setAddress(value); setError(''); }}
-            placeholder="平板 IP:端口，例如 192.168.1.23:5555"
+            placeholder="IP、主机名或 [IPv6]:端口，例如 192.168.1.23:5555"
             invalid={Boolean(error) && !code}
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           />

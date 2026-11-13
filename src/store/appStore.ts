@@ -92,7 +92,7 @@ export const MAX_LOGS = 2000;
 
 export const useAppStore = create<AppStore>()((set) => ({
   hydrated: false,
-  version: '1.2.1',
+  version: '1.3.0',
   config: defaultConfig(),
   configIssues: [],
   configPath: '',
@@ -119,7 +119,7 @@ export const useAppStore = create<AppStore>()((set) => ({
   toasts: [],
   configBanner: null,
   diagnostics: { text: '', status: '尚未采集', progress: '', collecting: false },
-  paths: { configPath: '', logDir: '', noticesPath: '', version: '1.2.1', license: 'Apache-2.0', appName: 'PadLend' },
+  paths: { configPath: '', logDir: '', noticesPath: '', version: '1.3.0', license: 'Apache-2.0', appName: 'PadLend' },
 
   hydrate: (data) =>
     set({
@@ -151,13 +151,17 @@ export const useAppStore = create<AppStore>()((set) => ({
   setPlacement: (placement, dirty = true) => set({ placement, layoutDirty: placement ? dirty : false }),
   setLayoutDirty: (layoutDirty) => set({ layoutDirty }),
   setDevices: (devices, error = '') =>
-    set((s) => ({
-      devices,
-      deviceError: error || s.deviceError,
-      selectedSerial: devices.some((d) => d.serial === s.selectedSerial)
-        ? s.selectedSerial
-        : (devices.find((d) => d.online)?.serial ?? devices[0]?.serial ?? ''),
-    })),
+    set((s) => {
+      const previous = s.devices.find((d) => d.serial === s.selectedSerial);
+      const kept =
+        devices.find((d) => d.serial === s.selectedSerial) ??
+        (previous ? devices.find((d) => d.id === previous.id) : undefined);
+      return {
+        devices,
+        deviceError: error || s.deviceError,
+        selectedSerial: kept?.serial ?? devices.find((d) => d.online)?.serial ?? devices[0]?.serial ?? '',
+      };
+    }),
   setSelectedSerial: (selectedSerial) => set({ selectedSerial }),
   setDeviceError: (deviceError) => set({ deviceError }),
   setScanHint: (scanHint) => set({ scanHint }),

@@ -6,8 +6,8 @@
 **怎么读**
 
 - 每条固定为：现象 → 触发条件 → 根因 → 修法 → 如何验证/回归 → 相关文件:行 → 版本，最后一句「再犯的代价」。
-- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1 的条目是这两个版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
-- 行号基于 1.2.1 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
+- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1/1.3.0 的条目是这些版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
+- 行号基于 1.3.0 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
 - 代码与文档的 `文件:行` 默认相对**仓库根**；只有 Markdown 链接用同目录相对路径。
 - 「遮罩」默认指 Python sidecar 创建的 `PadLendCursorMaskWindow`，不是 Tauri 窗口。这个心智模型错了，后面所有判断都会错。
 
@@ -21,6 +21,7 @@
 | 退出后下次启动报「上次未正常退出」 | [4.2](#42-python-关闭被守护线程截断) [4.3](#43-首次运行就报上次未正常退出) |
 | 高 DPI / 多屏遮罩错位、落点偏 | [5.1](#51-dpi-感知晚于建窗遮罩只盖住一部分) [5.2](#52-物理坐标与逻辑坐标混用) [5.3](#53-接管中显示器拓扑变化) [5.4](#54-负坐标副屏) |
 | 连上平板但输入乱/没反应 | [1.1](#11-幽灵-scrcpy-server-杀不掉) [2.2](#22-心跳把按住冲成松开) [2.4](#24-进入接管没有先补发全松) |
+| 换 Wi-Fi 后设备多出一台 / 自动连接卡 40 秒 | [1.6](#16-把-adb-serial-当设备身份换网就多出一台) [1.7](#17-坏历史地址把首连拖-40-秒) |
 | 安装版缺 jar/adb、sidecar 找不到 | [7.2](#72-sidecar-解析失败回退到开发期-python) [7.3](#73-资源清单双轨安装版与-zip-版不一致) |
 | 开启「保持平板亮屏」后开发者选项被改 | [1.5](#15-保持平板亮屏改坏了开发者选项的保持唤醒状态) |
 | 设置页开关没反应、疑似空开关 | [6.5](#65-只有开关没有实现的显示指针幽灵) |
@@ -86,6 +87,28 @@
 - **相关文件**：`tablet/session.py:610-658`（连接期设置/还原）、`tablet/session.py:1096-1144`（落盘与崩溃恢复）、`main.py:150-164`（启动恢复）、`src/lib/configSchema.ts:130-133`（设置页文案）
 - **版本**：1.2.1（替换 1.1.x–1.2.0 的 `svc power stayon` 实现）
 - **再犯的代价**：用户平板上的开发者选项被永久改掉，拔线即熄屏；这类「副作用外溢」比功能失效更难被发现，也最容易招来「PadLend 改我系统设置」的投诉。
+
+### 1.6 把 adb serial 当设备身份，换网就多出一台
+
+- **现象**：同一台平板换一个 Wi-Fi、路由器重新分配 IP，或无线调试重启换了端口后，设备页出现两台「不同」设备；旧的一直离线，新的一直被当成陌生设备。自动连接还可能拿着旧地址反复重试。
+- **触发条件**：无线 adb 的 serial 是 `IP:端口`（如 `192.168.1.9:5555`），它随网络和调试端口变化；旧实现把它当设备主键。
+- **根因**：`adb serial` 只是**当前端点**，不是设备身份。旧 `_publish_devices` 用 serial 去重，`_known_devices` 只存 serial 字符串；mDNS 解析虽然已经拿到 TXT 里的 hardware serial/model（`tablet/mdns.py:206`），但 `discovered_services` 只返回 `(ip, port)`，把身份信息丢了。换网后新 serial 自然被当成新设备。
+- **修法**：1.3.0 引入 `devices.json` 注册表（`service/device_registry.py`）：设备记录 `id = hw:<hardware serial>`，没有硬件号时临时用 `ep:<端点>`；一台设备下挂多个端点，端点有 host/port/last_ok/fail_count。拿到 facts 后按读到的 `ro.serialno`（`tablet/session.py:219`，先清洗 unknown/null/0 等无效值）合并；读不到时该记录保持 `ep:` 临时身份，不会瞎猜硬件号；不同硬件序列号即使 MAC 相同也**绝不合并**。mDNS 查询保留 TXT serial/model（`tablet/locator.py:153`），定位时先按硬件序列号匹配新 IP；MAC/ARP 只做最后兜底。前端按稳定 `id` 去重和保持选中（`src/store/appStore.ts:153`），不再用会变的 serial 当 key。
+- **如何验证 / 回归**：`tests/test_device_registry.py` 覆盖无线地址变化同设备、临时记录升级、不同硬件同 MAC 不合并、端点被另一设备复用；`tests/test_device_registry_service.py` 覆盖一台设备一行、迁移和布局搬迁；`tests/test_locator.py` 覆盖 mDNS 硬件序列号跨 IP 命中。手动：连上平板 → 换 Wi-Fi → 点「刷新设备」，应仍是一行，连接后 `devices.json` 里同一 `hw:` 记录新增端点。
+- **相关文件**：`service/device_registry.py:69`、`service/device_registry.py:282`、`service/api.py:184`、`service/api.py:421`、`service/api.py:714`、`tablet/locator.py:153`、`tablet/locator.py:244`、`src/store/appStore.ts:153`
+- **版本**：1.3.0
+- **再犯的代价**：用户每换一次网络就多一条幽灵设备，最后只能删记录重配；自动连接拿着旧地址空转，看起来像「无线调试不稳定」，实际是身份模型错了。
+
+### 1.7 坏历史地址把首连拖 40 秒
+
+- **现象**：平板已经换了 IP，或者旧无线端点早已失效，PadLend 启动/重连仍卡很久（约 20–40 秒）才报连接失败；期间界面像没反应，也不会自动换到有效地址。
+- **触发条件**：`device.serial` 指向一个已失效的无线端点，且启动时只有这一条候选。
+- **根因**：旧 `_select_device` 对一个 serial 调 `adb.wait_for_device(INITIAL_RETRY_WINDOW_S)`，默认窗口 40 秒、每 2 秒重扫；`adb connect` 自身还可能等 20 秒。一个坏地址就把首连拖满整个窗口，且没有「先探活、失败立刻换下一个」的层次。
+- **修法**：1.3.0 让 `TabletSession` 接收注册表候选（`tablet/session.py:594`）：当前端点优先，其余按 `last_ok/last_seen` 排序；无线候选先做 0.6 秒 `tcp_open` 预检（`tablet/session.py:71`），通了才 `adb connect`，超时 4 秒（`tablet/session.py:72`）；USB 候选直接查 `adb devices`。候选模式**只认指定 serial**，不再走「只有一台在线设备就换过去」的兜底；连上后校验硬件序列号，不符就 `mark_failure` 并换下一个。只有在没有注册表记录时，才保留旧的 40 秒首连路径。
+- **如何验证 / 回归**：`tests/test_session_candidates.py` 覆盖候选去重、预检跳过死地址、错误硬件换下一个、USB 不误连另一台平板；`tests/test_device_registry_service.py` 覆盖候选顺序和 `fail_count`。手动：把 `devices.json` 里当前端点改成一个不存在的 IP，重启后应在约 1 秒内跳到下一个端点，而不是卡 40 秒。
+- **相关文件**：`tablet/session.py:71-72`、`tablet/session.py:594`、`tablet/session.py:615`、`tablet/session.py:656`、`service/api.py:480`、`service/api.py:501`
+- **版本**：1.3.0
+- **再犯的代价**：用户会以为程序启动卡死，反复强杀；强杀又可能留下 UHID/遮罩副作用。更糟的是为了「快一点」去掉校验，直接连到另一台平板。
 
 ## 2. UHID 与输入注入
 ### 2.1 Win 键穿透开始菜单 + 遮罩 = 假死

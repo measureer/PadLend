@@ -122,6 +122,7 @@ def device_entry_dict(entry: Any) -> dict[str, Any]:
     wireless = bool(getattr(entry, "is_wireless", ":" in serial))
     return {
         "serial": serial,
+        "id": serial,
         "state": state,
         "model": str(getattr(entry, "model", "") or "").replace("_", " "),
         "transport": "无线" if wireless else "USB",
@@ -129,6 +130,7 @@ def device_entry_dict(entry: Any) -> dict[str, Any]:
         "remembered": False,
         "located": "",
         "locatedDetail": "",
+        "lastSeen": "",
     }
 
 

@@ -4,7 +4,7 @@ import { memo, useCallback } from 'react';
 import type { DeviceItem } from '../../api/types';
 import { Icon } from '../../components/Icon';
 import { Banner, Button, Card, EmptyState, StatusPill } from '../../components/ui';
-import { LOCATED_LABELS, presentState } from '../../lib/format';
+import { LOCATED_LABELS, formatLastSeen, presentState } from '../../lib/format';
 import { connectDevice, disconnectDevice, forgetDevice, refreshDevices } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
 
@@ -15,6 +15,7 @@ const DeviceRow = memo(function DeviceRow({ device, active, onSelect }: {
 }) {
   const serial = device.serial;
   const located = device.located ? (LOCATED_LABELS[device.located] ?? device.located) : '';
+  const lastSeen = !device.online ? formatLastSeen(device.lastSeen) : '';
   return (
     <button
       type="button"
@@ -28,6 +29,7 @@ const DeviceRow = memo(function DeviceRow({ device, active, onSelect }: {
         <span className="device-row-head">{device.model || serial}</span>
         <span className="device-row-meta mono">
           {serial} · {device.transport} · {device.online ? device.state : (located || '不在线')}
+          {lastSeen ? ` · 最后在线 ${lastSeen}` : ''}
         </span>
       </span>
       <span className={`badge ${device.online ? 'ok' : device.located === 'moved' ? 'warn' : ''}`}>
@@ -78,7 +80,7 @@ export function DevicesPage() {
       <div className="grid-2">
         <Card
           title="设备列表"
-          desc="双击一行可直接连接；「从列表移除」只删除记忆记录，不影响在线设备。"
+          desc="一台设备只占一行；双击可直接连接。「从列表移除」只删除记忆记录，不影响在线设备。"
           footer={
             <>
               <Button
@@ -109,7 +111,7 @@ export function DevicesPage() {
             <div className="device-list">
               {devices.map((device) => (
                 <DeviceRow
-                  key={device.serial}
+                  key={device.id || device.serial}
                   device={device}
                   active={device.serial === selected}
                   onSelect={onSelect}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectedHint, logEventTone, metricLine, parseLogLine, presentState, stateLabel } from '../lib/format';
+import { connectedHint, formatLastSeen, logEventTone, metricLine, parseLogLine, presentState, stateLabel } from '../lib/format';
 
 describe('状态与格式化', () => {
   it('没有设备事实时不把 fault 显示成故障', () => {
@@ -21,6 +21,12 @@ describe('状态与格式化', () => {
       timestamp: '12:00:00.123', event: 'STATE', message: 'idle → captured',
     });
     expect(parseLogLine('裸文本')).toEqual({ timestamp: '', event: '', message: '裸文本' });
+  });
+
+  it('最后在线只取 UTC 日期，坏值不显示', () => {
+    expect(formatLastSeen('2026-11-12T23:30:00+00:00')).toBe('2026-11-12');
+    expect(formatLastSeen('')).toBe('');
+    expect(formatLastSeen('not-a-date')).toBe('');
   });
 
   it('日志事件着色与底栏提示', () => {

@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 **1.2.1**（最新发布仍为 1.2.0），Apache-2.0。1.2.1 把「保持平板亮屏」从开发者选项的 `svc power stayon` 改为连接期间临时调大系统的 `screen_off_timeout`（断开还原），删除没有运行时实现的「显示指针幽灵」开关，并把首次向导从 5 步压成 3 步；adb 与 scrcpy-server 仍随包内置。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
+当前源码版本 **1.3.0**（最新发布仍为 1.2.0），Apache-2.0。1.3.0 新增设备注册表 `devices.json`：同一台平板换 IP、换端口或重启无线调试后，仍按硬件序列号认成同一台，只在这台设备的记录内自动切换端点；连接前先做 0.6 秒 TCP 预检，不再被失效的历史地址拖住 40 秒；设备地址输入支持主机名和 `[IPv6]:端口`。1.2.1 把「保持平板亮屏」从开发者选项的 `svc power stayon` 改为连接期间临时调大系统的 `screen_off_timeout`（断开还原），删除没有运行时实现的「显示指针幽灵」开关，并把首次向导从 5 步压成 3 步；adb 与 scrcpy-server 仍随包内置。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ![桌面布局页](docs/screenshots/tauri-layout.png)
 
@@ -60,7 +60,7 @@ Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 ## 快速开始
 
 1. 运行 PadLend。第一次启动会打开向导，检查平板连接/USB 调试和 UHID，最后可以设置是否自动连接、关闭窗口时是否收进托盘。adb 和 scrcpy-server 已随安装包内置，不需要另外安装。
-2. 在平板上打开「开发者选项 → USB 调试」，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。设备页的「刷新设备」会重新扫描 adb；如果 adb 自带的 mDNS 不可用，PadLend 会自己发 mDNS 查询找无线调试端口，再按每台设备保存的 MAC 用 ARP 表确认新 IP。
+2. 在平板上打开「开发者选项 → USB 调试」，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP、主机名或 `[IPv6]:端口`；首次配对还要填 6 位配对码。连接成功后 PadLend 会把设备记进 `devices.json`；以后同一台平板换 IP/端口，会先试记录里的历史端点，再按 mDNS 里的硬件序列号、最后按 MAC/ARP 找回来。跨网或 VPN 只要电脑能访问平板的调试端口也能用；mDNS 自动发现通常只在同一局域网有效。
 3. 选中平板，点「连接此设备」。
 4. 切到「布局」页，把平板拖到某个屏幕边缘的红色虚线区域，点「保存布局」。拖动和松手只是预览，不点保存不会改变实际摆位；「显示全部」会把所有显示器和平板缩放到视野内。角落位置按 `Shift` 切换优先边。布局按「设备 + 横屏/竖屏」分别保存，旋转平板后会自动切到该方向保存过的布局。
 5. 把鼠标移到该边缘并继续往外推，进入接管：PC 光标隐藏，平板出现指针。把指针推到平板对应边缘再往外推，交还给 PC。
@@ -88,7 +88,7 @@ Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 
 ## 配置
 
-配置文件在 `%APPDATA%\PadLend\config.yaml`，日志在同目录的 `logs\` 下。设置 `PADLEND_HOME` 可以换一个根目录；`%APPDATA%` 不可写时会依次回退到 `%LOCALAPPDATA%\PadLend` 和程序目录下的 `.padlend\`。
+配置文件在 `%APPDATA%\PadLend\config.yaml`，设备记录在同目录的 `devices.json`（自动维护，不要手改），日志在 `logs\` 下。设置 `PADLEND_HOME` 可以换一个根目录；`%APPDATA%` 不可写时会依次回退到 `%LOCALAPPDATA%\PadLend` 和程序目录下的 `.padlend\`。
 
 首次启动会自动生成配置。常用字段：
 
@@ -99,8 +99,8 @@ device:
   prefer_usb: true
   auto_connect: true      # false = 启动后不自动连接，在设备页手动连接
   server_port: 1234       # 1024–65535
-  known: []               # 最近连接过的序列号（自动维护）
-  macs: {}                # 每台无线设备的 Wi-Fi MAC，键为地址（自动维护）
+  known: []               # 已停用：仅首次升级时迁移到 devices.json
+  macs: {}                # 已停用：仅首次升级时迁移到 devices.json
 placement:
   monitor: ""             # 空 = 主屏
   edge: right             # left / right / top / bottom
@@ -163,7 +163,7 @@ YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `c
 | 找不到 scrcpy-server jar，或校验失败 | 重新解压发布包；`vendor/scrcpy-server-v5.0.1.jar` 缺失或与 `vendor/SHA256SUMS` 不符 |
 | 平板不显示光标，键鼠没反应 | UHID 不可写，先按上面的命令自检 |
 | 设备页显示 unauthorized | 在平板上点「允许 USB 调试」，勾选「始终允许」，再刷新 |
-| 无线 adb 连不上 | 确认平板和电脑在同一网段，无线调试端口没被路由器隔离；重新配对 |
+| 无线 adb 连不上 | 确认电脑能访问平板的调试端口；跨网/VPN 直接填 IP、主机名或 `[IPv6]:端口`，mDNS 自动发现通常只同一局域网；重新配对 |
 | 边缘手势被平板抢走 | 调大 `motion.boundary_inset_px`（8–16） |
 | 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 80）或 `debounce_ms` |
 

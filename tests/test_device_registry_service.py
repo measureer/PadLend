@@ -71,12 +71,16 @@ def test_publish_keeps_one_row_per_record_and_shows_offline(tmp_path: Path) -> N
     )
     assert [row["serial"] for row in rows] == ["USB123"]
     assert rows[0]["online"] is True
+    assert rows[0]["id"] == "hw:hw1"
+    assert rows[0]["lastSeen"]
 
     rows = svc._publish_devices([])
     assert len(rows) == 1
     assert rows[0]["online"] is False
     assert rows[0]["remembered"] is True
     assert rows[0]["model"] == "Pad"
+    assert rows[0]["id"] == "hw:hw1"
+    assert rows[0]["lastSeen"]
 
 
 def test_remember_promotes_provisional_record_and_moves_layout(tmp_path: Path) -> None:

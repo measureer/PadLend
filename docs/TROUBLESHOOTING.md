@@ -90,13 +90,16 @@ adb devices -l
 adb mdns services
 ```
 
-若出现形如 `adb-xxxx (2)._adb-tls-connect._tcp device ...` 的行，说明 Android 的 mDNS 服务重名，ADB 给 serial 加了 ` (2)` 后缀；0.2.4 起已能正确解析。仍为空时按顺序试：
+若出现形如 `adb-xxxx (2)._adb-tls-connect._tcp device ...` 的行，说明 Android 的 mDNS 服务重名，ADB 给 serial 加了 ` (2)` 后缀；0.2.4 起已能正确解析。
 
-1. 平板“无线调试”关掉再打开，等 3–5 秒后点 PadLend 的“刷新设备”。刷新会重新扫描 adb；adb 没有 mDNS 守护进程时，PadLend 会自己发 mDNS 查询找端口，再用保存的 MAC 和 ARP 表找新 IP；
+PadLend 1.3.0 起把设备记在 `devices.json`：一台平板一行，身份优先用硬件序列号，不用会变的 `IP:端口`。同一台平板换 IP、换端口或重启无线调试后，会先试记录里的历史端点（无线地址先做 0.6 秒 TCP 预检），再按 mDNS 广播里的硬件序列号、最后按保存的 MAC 和 ARP 找新地址。仍为空时按顺序试：
+
+1. 平板“无线调试”关掉再打开，等 3–5 秒后点 PadLend 的“刷新设备”；
 2. `adb kill-server && adb start-server`（PadLend 与命令行共用同一个 adb server）；
 3. `adb mdns check` 若提示 `mdns daemon unavailable` 不影响 PadLend（它会自己做 mDNS 查询），但 Windows 防火墙仍需允许 UDP 5353，否则收不到平板广播；
-4. 确认 PC 与平板在同一子网（访客 Wi-Fi / AP 隔离会屏蔽 mDNS）；可改用 `adb connect <平板IP>:<无线调试端口>` 直连；
-5. 无线调试每次重启端口会变；PadLend 启动时会自动查找上次那台设备（mDNS 端口 + MAC/ARP），也可以点“刷新设备”重新查找。
+4. 跨网、VPN 或 mDNS 被路由器屏蔽时，直接在“添加设备”里填平板地址：IP、主机名或 `[IPv6]:端口` 都可以，只要电脑能访问调试端口；mDNS 自动发现通常只在同一局域网有效；
+5. 无线调试每次重启端口会变。mDNS 不通时 PadLend 无法自己知道新端口，可点“添加设备”填新地址，或用 USB 连上后执行 `adb tcpip 5555`；不会因此多出一台设备；
+6. 不要手工编辑 `devices.json`；需要移除记忆记录时用设备页的“从列表移除”。
 
 ### E102 `UHID_UNAVAILABLE` — UHID 不可写
 

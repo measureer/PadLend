@@ -48,7 +48,7 @@ describe('核心功能与交互（mock 后端）', () => {
     fireEvent.click(screen.getByText('添加设备'));
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
     fireEvent.click(screen.getByText('连接', { selector: 'button' }));
-    expect(screen.getByText('请填写平板上的 IP 地址与端口')).toBeTruthy();
+    expect(screen.getByText('请填写平板上的 IP 地址、主机名或 IPv6 地址')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('设备地址'), { target: { value: '192.168.1.23:99999' } });
     fireEvent.change(screen.getByLabelText('配对码'), { target: { value: '12345' } });

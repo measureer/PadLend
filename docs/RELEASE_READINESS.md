@@ -60,6 +60,7 @@
 
 - 非 UTF-8、YAML 损坏、根节点非 mapping、未来版本、字段越界均走“备份 + 默认值 + issue”。
 - 保存使用临时文件 + `os.replace`，并执行 `flush` + `fsync`。
+- 1.3.0 起设备记录移到同目录的 `devices.json`（schema 1，同样是临时文件 + `fsync` + `os.replace`）；损坏或未来版本会备份成 `devices.json.bad-<ts>` 后重建。旧 `config.device.known/macs` 只在首次启动迁移一次，字段保留但不维护。回退到 1.2.1 会看不到 1.3.0 新记的设备，需要重新扫描/添加；不要手工合并两个文件。
 
 ### R0-5 许可与合规
 

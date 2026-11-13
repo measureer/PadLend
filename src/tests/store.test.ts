@@ -23,9 +23,9 @@ function bootstrap(): Bootstrap {
   };
 }
 
-const device = (serial: string, online: boolean): DeviceItem => ({
-  serial, state: online ? 'device' : 'offline', model: serial, transport: 'USB',
-  online, remembered: !online, located: '', locatedDetail: '',
+const device = (serial: string, online: boolean, id = serial): DeviceItem => ({
+  serial, id, state: online ? 'device' : 'offline', model: serial, transport: 'USB',
+  online, remembered: !online, located: '', locatedDetail: '', lastSeen: '',
 });
 
 const log = (index: number): LogEntry => ({ timestamp: '12:00:00.000', event: 'APP', message: `line ${index}` });
@@ -57,6 +57,14 @@ describe('应用状态切片', () => {
     expect(useAppStore.getState().selectedSerial).toBe('B');
     store.setDevices([device('A', false)]);
     expect(useAppStore.getState().selectedSerial).toBe('A');
+  });
+
+  it('设备换端点后按稳定 id 保留选择', () => {
+    const store = useAppStore.getState();
+    store.setDevices([device('192.168.1.9:5555', true, 'hw:1'), device('USB2', true, 'hw:2')]);
+    store.setSelectedSerial('192.168.1.9:5555');
+    store.setDevices([device('10.0.0.9:37123', true, 'hw:1'), device('USB2', true, 'hw:2')]);
+    expect(useAppStore.getState().selectedSerial).toBe('10.0.0.9:37123');
   });
 
   it('摆位预览标记 dirty，服务确认后清除', () => {

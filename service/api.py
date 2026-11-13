@@ -442,6 +442,9 @@ class PadLendService:
                 )
                 dto["located"] = located.get("status", "")
                 dto["locatedDetail"] = located.get("detail", "")
+                if record is not None:
+                    dto["id"] = record.id
+                    dto["lastSeen"] = record.last_seen
                 devices.append(dto)
             current = str(getattr(self.cfg.device, "serial", "") or "")
             for record in self.registry.records():
@@ -459,6 +462,7 @@ class PadLendService:
                 devices.append(
                     {
                         "serial": serial,
+                        "id": record.id,
                         "state": "offline",
                         "model": record.model or "上次连接的设备",
                         "transport": transport,
@@ -466,6 +470,7 @@ class PadLendService:
                         "remembered": True,
                         "located": located.get("status", "offline"),
                         "locatedDetail": located.get("detail", "上次连接，当前未接入"),
+                        "lastSeen": record.last_seen,
                     }
                 )
             self._devices = devices
