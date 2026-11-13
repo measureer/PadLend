@@ -55,6 +55,20 @@ def gate_cargo_test() -> dict:
     }
 
 
+def gate_router_replay() -> dict:
+    """G2：Raw Input 回放 → 状态迁移逐条一致（fixture 驱动）。"""
+    print("  [G2] router scenario replay")
+    code, output = run(
+        ["cargo", "test", "--quiet", "--lib", "fixture_scenarios_replay_identically"], CRATE
+    )
+    passed = "1 passed" in output and code == 0
+    return {
+        "gate": "router-replay",
+        "ok": passed,
+        "tail": "" if passed else output[-1200:],
+    }
+
+
 def gate_python_suite() -> dict:
     """Python 侧回归（确认移植没有误伤原来的实现）。"""
     print("  [G-python] pytest -q")
@@ -144,9 +158,9 @@ STAGES = {
     "M0": ["rust-tests", "python-suite", "rawinput-live"],
     "M1": ["rust-tests", "python-suite", "rpc-golden"],
     "M2": ["rust-tests", "python-suite", "rawinput-live", "rpc-golden"],
-    "M3": ["rust-tests", "python-suite", "rpc-golden"],
-    "M4": ["rust-tests", "python-suite", "rpc-golden"],
-    "M5": ["rust-tests", "python-suite", "rpc-golden"],
+    "M3": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
+    "M4": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
+    "M5": ["rust-tests", "python-suite", "router-replay", "rpc-golden"],
 }
 RPC_MIN = {"M5": 25}
 
@@ -174,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         "python-suite": gate_python_suite,
         "rpc-golden": lambda: gate_rpc_golden(rust_exe, RPC_MIN.get(args.stage, 0)),
         "rawinput-live": lambda: gate_rawinput_live(rust_exe),
+        "router-replay": gate_router_replay,
     }
     results = [handlers[name]() for name in STAGES[args.stage]]
 
