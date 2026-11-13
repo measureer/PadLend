@@ -1,0 +1,72 @@
+{
+  "name": "not_mapping",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "",
+      "prefer_usb": true,
+      "auto_connect": true,
+      "server_port": 1234,
+      "known": [],
+      "macs": {}
+    },
+    "placement": {
+      "monitor": "",
+      "edge": "right",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": "right"
+    },
+    "layouts": {
+      "devices": {}
+    },
+    "motion": {
+      "gain": 1.0,
+      "report_hz": 1000,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "VK_LWIN",
+        "VK_RWIN"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "Ctrl+Alt+Q"
+    },
+    "ui": {
+      "language": "zh_CN",
+      "theme": "dark",
+      "tray_notifications": true,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": false
+    }
+  },
+  "issues": [
+    "配置文件根节点不是映射，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+  ],
+  "validate": [],
+  "backups": [
+    "config.yaml.bad-<TS>"
+  ],
+  "yaml": "- a\n- b\n"
+}

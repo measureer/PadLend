@@ -1,0 +1,94 @@
+{
+  "name": "saved_mutated",
+  "kind": "file",
+  "yaml": "version: 1\ndevice:\n  serial: ABC123\n  prefer_usb: true\n  auto_connect: true\n  server_port: 1234\n  known:\n  - 192.168.1.9:5555\n  - ABC123\n  macs:\n    192.168.1.9:5555: 88:a4:79:1a:2b:3c\nplacement:\n  monitor: ''\n  edge: left\n  span_start: 0\n  span_end: 1600\n  offset: 0.5\n  align: proportional\n  corner_priority: right\nlayouts:\n  devices:\n    am4nbb5c23001691:\n      landscape:\n        monitor: DISPLAY2\n        edge: bottom\n        span_start: -2560\n        span_end: 0\n        offset: 0.25\n        align: one_to_one\n        corner_priority: left\n      portrait:\n        monitor: ''\n        edge: left\n        span_start: 0\n        span_end: 1600\n        offset: 0.75\n        align: proportional\n        corner_priority: right\nmotion:\n  gain: 1.75\n  report_hz: 1000\n  hid_clamp: 127\n  entry_margin_px: 2\n  exit_overflow_px: 80\n  debounce_ms: 250\n  arm_px: 10\n  arm_window_ms: 80\n  edge_band_px: 1\n  boundary_inset_px: 0\nkeyboard:\n  forward: true\n  suppress_pc: true\n  layout: us\n  passthrough_keys:\n  - VK_LWIN\n  - VK_RWIN\nhotkeys:\n  toggle: Ctrl+Alt+S\n  panic: Ctrl+Alt+Q\nui:\n  language: zh_CN\n  theme: light\n  tray_notifications: true\n  close_to_tray: false\nmisc:\n  clipboard_sync: true\n  keep_screen_on: true\n  restore_pointer_speed: -3\n  forward_audio: true\n",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "ABC123",
+      "prefer_usb": true,
+      "auto_connect": true,
+      "server_port": 1234,
+      "known": [
+        "192.168.1.9:5555",
+        "ABC123"
+      ],
+      "macs": {
+        "192.168.1.9:5555": "88:a4:79:1a:2b:3c"
+      }
+    },
+    "placement": {
+      "monitor": "",
+      "edge": "left",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": "right"
+    },
+    "layouts": {
+      "devices": {
+        "am4nbb5c23001691": {
+          "landscape": {
+            "monitor": "DISPLAY2",
+            "edge": "bottom",
+            "span_start": -2560,
+            "span_end": 0,
+            "offset": 0.25,
+            "align": "one_to_one",
+            "corner_priority": "left"
+          },
+          "portrait": {
+            "monitor": "",
+            "edge": "left",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.75,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        }
+      }
+    },
+    "motion": {
+      "gain": 1.75,
+      "report_hz": 1000,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "VK_LWIN",
+        "VK_RWIN"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "Ctrl+Alt+Q"
+    },
+    "ui": {
+      "language": "zh_CN",
+      "theme": "light",
+      "tray_notifications": true,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": true
+    }
+  },
+  "issues": [],
+  "validate": [],
+  "backups": []
+}

@@ -80,7 +80,23 @@ def target_triple() -> str:
     return f"{arch}-pc-windows-msvc"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="build_sidecar", description="打包 Python 业务 sidecar")
+    parser.add_argument(
+        "--mode",
+        choices=("onefile", "onedir"),
+        default="onefile",
+        help="onefile=单文件（发布默认）；onedir=目录形态（启动更快，测量对照用）",
+    )
+    parser.add_argument(
+        "--distpath",
+        default=str(OUT_DIR),
+        help="产物目录（默认 src-tauri/binaries，发布链路依赖它）",
+    )
+    args = parser.parse_args(argv)
+
     _force_utf8()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -91,12 +107,11 @@ def main() -> int:
         "PyInstaller",
         "--noconfirm",
         "--clean",
-        "--onefile",
         "--console",  # 保留 stdio 管道；Rust 侧用 CREATE_NO_WINDOW 隐藏窗口
         "--name",
         name,
         "--distpath",
-        str(OUT_DIR),
+        str(Path(args.distpath)),
         "--workpath",
         str(WORK_DIR),
         "--specpath",
@@ -125,17 +140,25 @@ def main() -> int:
                 f"{adb_dir}{';' if sys.platform == 'win32' else ':'}vendor/adb/platform-tools",
             ]
         )
+    if args.mode == "onefile":
+        cmd.insert(cmd.index("--console"), "--onefile")
     cmd.append(str(ROOT / "service" / "server.py"))
     print("构建 sidecar：", " ".join(cmd[:6]), "...")
     result = subprocess.run(cmd, cwd=ROOT, check=False)
     if result.returncode != 0:
         return result.returncode
-    built = OUT_DIR / f"{name}.exe" if sys.platform == "win32" else OUT_DIR / name
-    print(
-        f"完成：{built}（{built.stat().st_size // 1024 // 1024} MB）"
-        if built.is_file()
-        else "未找到产物"
-    )
+    dist = Path(args.distpath)
+    if args.mode == "onedir":
+        built = dist / name / (f"{name}.exe" if sys.platform == "win32" else name)
+        total = sum(item.stat().st_size for item in (dist / name).rglob("*") if item.is_file())
+        print(f"完成：{built}（目录合计 {total // 1024 // 1024} MB）" if built.is_file() else "未找到产物")
+    else:
+        built = dist / (f"{name}.exe" if sys.platform == "win32" else name)
+        print(
+            f"完成：{built}（{built.stat().st_size // 1024 // 1024} MB）"
+            if built.is_file()
+            else "未找到产物"
+        )
     return 0
 
 

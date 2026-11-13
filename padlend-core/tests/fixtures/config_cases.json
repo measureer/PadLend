@@ -1,0 +1,2656 @@
+[
+  {
+    "name": "missing_file",
+    "kind": "missing",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": []
+  },
+  {
+    "name": "empty_file",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": ""
+  },
+  {
+    "name": "null_document",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "---\n"
+  },
+  {
+    "name": "full_explicit",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "AM4NBB5C23001691",
+        "prefer_usb": true,
+        "auto_connect": false,
+        "server_port": 1235,
+        "known": [
+          "AM4NBB5C23001691",
+          "192.168.1.9:5555"
+        ],
+        "macs": {
+          "192.168.1.9:5555": "88:a4:79:1a:2b:3c"
+        }
+      },
+      "placement": {
+        "monitor": "\\\\\\\\.\\\\DISPLAY2",
+        "edge": "left",
+        "span_start": -2560,
+        "span_end": 0,
+        "offset": 0.25,
+        "align": "one_to_one",
+        "corner_priority": "bottom"
+      },
+      "layouts": {
+        "devices": {
+          "am4nbb5c23001691": {
+            "portrait": {
+              "monitor": "",
+              "edge": "top",
+              "span_start": 0,
+              "span_end": 1234,
+              "offset": 0.75,
+              "align": "center",
+              "corner_priority": "right"
+            },
+            "landscape": {
+              "monitor": "\\\\\\\\.\\\\DISPLAY1",
+              "edge": "right",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.5,
+              "align": "proportional",
+              "corner_priority": ""
+            }
+          },
+          "192.168.1.9:5555": {
+            "landscape": {
+              "monitor": "",
+              "edge": "bottom",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 1.0,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          }
+        }
+      },
+      "motion": {
+        "gain": 1.75,
+        "report_hz": 500,
+        "hid_clamp": 64,
+        "entry_margin_px": 4,
+        "exit_overflow_px": 100,
+        "debounce_ms": 200,
+        "arm_px": 20,
+        "arm_window_ms": 100,
+        "edge_band_px": 2,
+        "boundary_inset_px": 8
+      },
+      "keyboard": {
+        "forward": false,
+        "suppress_pc": false,
+        "layout": "de",
+        "passthrough_keys": []
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Shift+F9",
+        "panic": "Ctrl+Shift+F12"
+      },
+      "ui": {
+        "language": "en_US",
+        "theme": "light",
+        "tray_notifications": false,
+        "close_to_tray": true
+      },
+      "misc": {
+        "clipboard_sync": false,
+        "keep_screen_on": false,
+        "restore_pointer_speed": -1,
+        "forward_audio": true
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\n  serial: \"AM4NBB5C23001691\"\n  prefer_usb: true\n  auto_connect: false\n  server_port: 1235\n  known: [\"AM4NBB5C23001691\", \"192.168.1.9:5555\"]\n  macs:\n    \"192.168.1.9:5555\": \"88:a4:79:1a:2b:3c\"\nplacement:\n  monitor: \"\\\\\\\\\\\\\\\\.\\\\\\\\DISPLAY2\"\n  edge: left\n  span_start: -2560\n  span_end: 0\n  offset: 0.25\n  align: one_to_one\n  corner_priority: bottom\nlayouts:\n  devices:\n    am4nbb5c23001691:\n      portrait:\n        edge: top\n        align: center\n        span_start: 0\n        span_end: 1234\n        offset: 0.75\n      landscape:\n        monitor: \"\\\\\\\\\\\\\\\\.\\\\\\\\DISPLAY1\"\n        edge: right\n        span_start: 0\n        span_end: 1600\n        offset: 0.5\n        align: proportional\n        corner_priority: \"\"\n    \"192.168.1.9:5555\":\n      landscape:\n        edge: bottom\n        offset: 1.0\nmotion:\n  gain: 1.75\n  report_hz: 500\n  hid_clamp: 64\n  entry_margin_px: 4\n  exit_overflow_px: 100\n  debounce_ms: 200\n  arm_px: 20\n  arm_window_ms: 100\n  edge_band_px: 2\n  boundary_inset_px: 8\nkeyboard:\n  forward: false\n  suppress_pc: false\n  layout: de\n  passthrough_keys: []\nhotkeys:\n  toggle: \"Ctrl+Shift+F9\"\n  panic: \"Ctrl+Shift+F12\"\nui:\n  language: en_US\n  theme: \"Light\"\n  tray_notifications: false\n  close_to_tray: true\nmisc:\n  clipboard_sync: false\n  keep_screen_on: false\n  restore_pointer_speed: -1\n  forward_audio: true\n"
+  },
+  {
+    "name": "unknown_keys",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "ABC123",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {
+          "ABC123": "88:a4:79:1a:2b:3c"
+        }
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {
+          "abc123": {
+            "landscape": {
+              "monitor": "",
+              "edge": "top",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.5,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          }
+        }
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "未知配置项已忽略：foo, zzz",
+      "layouts 未知配置项已忽略：extra"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nzzz: 1\nfoo:\n  bar: 2\ndevice:\n  serial: ABC123\n  mac: 88:a4:79:1a:2b:3c\n  known: []\n  mystery: true\nmotion:\n  entry_guard_px: 160\nui:\n  show_pointer_ghost: true\n  theme: dark\nlayouts:\n  extra: 1\n  devices:\n    ABC123:\n      landscape:\n        edge: top\n"
+  },
+  {
+    "name": "repair_chain",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 1.0,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 3.0,
+        "report_hz": 125,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "device.server_port=80 越界，已恢复默认",
+      "placement.edge='diagonal' 非法，已回退 right",
+      "placement.align='stretch' 非法，已回退 proportional",
+      "placement.offset=3.0 越界，已夹紧到 [0,1]",
+      "placement.span_end 必须大于 span_start，已恢复默认",
+      "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
+      "motion.report_hz=3 不是固定档位，已改成 125",
+      "motion.gain=99.0 越界，已夹紧到 [0.25,3.0]",
+      "motion.arm_px 必须 ≥1，已恢复默认",
+      "keyboard.layout 为空，已回退 us",
+      "hotkeys.toggle 为空，已恢复默认"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\n  server_port: 80\nplacement:\n  edge: diagonal\n  align: stretch\n  offset: 3.0\n  span_start: 100\n  span_end: 10\nmotion:\n  gain: 99\n  report_hz: 3\n  hid_clamp: 999\n  arm_px: 0\nkeyboard:\n  layout: \"\"\n  passthrough_keys: not-a-list\nhotkeys:\n  toggle: \"\"\n"
+  },
+  {
+    "name": "bad_types",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "12345",
+        "prefer_usb": true,
+        "auto_connect": false,
+        "server_port": 1235,
+        "known": [
+          "7",
+          "XYZ",
+          "True",
+          "None"
+        ],
+        "macs": {
+          "1": "2",
+          "k": "v"
+        }
+      },
+      "placement": {
+        "monitor": "7",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": ""
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.5,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "1",
+          "True"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "None"
+      },
+      "ui": {
+        "language": "5",
+        "theme": "dark",
+        "tray_notifications": false,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": true
+      }
+    },
+    "issues": [
+      "ui.theme='NEON' 非法，已回退 dark",
+      "placement.edge='Left' 非法，已回退 right",
+      "placement.align='' 非法，已回退 proportional",
+      "placement.span_end 必须大于 span_start，已恢复默认",
+      "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
+      "motion.report_hz=998 不是固定档位，已改成 1000",
+      "motion.arm_px 必须 ≥1，已恢复默认",
+      "motion.exit_overflow_px 必须 ≥1，已恢复默认",
+      "motion.edge_band_px 必须 ≥1，已恢复默认",
+      "motion.arm_window_ms 必须 ≥1，已恢复默认",
+      "motion.debounce_ms 不能为负，已恢复默认",
+      "motion.boundary_inset_px 不能为负，已恢复默认",
+      "motion.entry_margin_px 不能为负，已恢复默认",
+      "keyboard.layout 为空，已回退 us",
+      "hotkeys.toggle 为空，已恢复默认"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\n  serial: 12345\n  prefer_usb: \"yes\"\n  auto_connect: 0\n  server_port: \"1235\"\n  known: [7, XYZ, true, null]\n  macs:\n    1: 2\n    \"  \": \"x\"\n    \" k \": \" v \"\nplacement:\n  monitor: 7\n  edge: Left\n  align: \"\"\n  offset: \"abc\"\n  span_start: 10\n  span_end: 10\n  corner_priority: \"\"\nmotion:\n  gain: \"1.5\"\n  report_hz: 998\n  hid_clamp: 999\n  arm_px: 0\n  entry_margin_px: -5\n  boundary_inset_px: -1\n  debounce_ms: -1\n  arm_window_ms: 0\n  exit_overflow_px: 0\n  edge_band_px: 0\nkeyboard:\n  layout: \"  \"\n  passthrough_keys: [1, true]\n  forward: \"1\"\nhotkeys:\n  toggle: \"\"\n  panic: null\nui:\n  theme: NEON\n  language: 5\n  close_to_tray: \"off\"\n  tray_notifications: null\nmisc:\n  forward_audio: 1\n  restore_pointer_speed: \"abc\"\n"
+  },
+  {
+    "name": "layouts_edge",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {
+          "serial1": {
+            "landscape": {
+              "monitor": "",
+              "edge": "right",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 1.0,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          },
+          "serial2": {
+            "landscape": {
+              "monitor": "",
+              "edge": "right",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.5,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          },
+          "abc": {
+            "landscape": {
+              "monitor": "",
+              "edge": "bottom",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.5,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          },
+          "5": {
+            "portrait": {
+              "monitor": "",
+              "edge": "left",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.5,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          }
+        }
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "layouts.devices. 非法，已忽略",
+      "layouts.devices.SERIAL1.portrait 必须是映射，已忽略",
+      "layouts.devices.SERIAL2.diagonal 方向非法（只支持 landscape/portrait），已忽略",
+      "layouts.devices.serial1.landscape.edge='diagonal' 非法，已回退 right",
+      "layouts.devices.serial1.landscape.align='stretch' 非法，已回退 proportional",
+      "layouts.devices.serial1.landscape.offset=3.0 越界，已夹紧到 [0,1]"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nlayouts:\n  devices:\n    \"\":\n      landscape:\n        edge: right\n    SERIAL1:\n      landscape:\n        edge: diagonal\n        offset: 3.0\n        align: stretch\n      portrait: oops\n    SERIAL2:\n      diagonal:\n        edge: right\n      landscape:\n        monitor: \"\"\n    ABC:\n      landscape:\n        edge: top\n    abc:\n      landscape:\n        edge: bottom\n    5:\n      portrait:\n        edge: left\n"
+  },
+  {
+    "name": "sections_wrong_type",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "layouts 必须是映射，已忽略"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice: [1, 2]\nplacement: []\nlayouts: 5\nmotion: \"abc\"\nkeyboard: 5\nhotkeys: null\nui: 0\nmisc: true\n"
+  },
+  {
+    "name": "layouts_devices_wrong_type",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "layouts.devices 必须是映射，已忽略"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nlayouts:\n  devices: []\n"
+  },
+  {
+    "name": "corrupt_parse",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置文件无法解析，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": ":: not yaml ::: ["
+  },
+  {
+    "name": "not_mapping",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置文件根节点不是映射，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "- a\n- b\n"
+  },
+  {
+    "name": "future_version",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置版本 99 高于当前程序，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "version: 99\n"
+  },
+  {
+    "name": "bad_version_string",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "无法识别的配置版本 '1.0'，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "version: \"1.0\"\n"
+  },
+  {
+    "name": "version_null",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "无法识别的配置版本 None，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "version:\n"
+  },
+  {
+    "name": "version_list",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "无法识别的配置版本 [1]，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "version: [1]\n"
+  },
+  {
+    "name": "version_float",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1.9\n"
+  },
+  {
+    "name": "version_bool",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: true\n"
+  },
+  {
+    "name": "non_utf8",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置文件不是 UTF-8 编码，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml_hex": "76657273696f6e3a20310afffe0a"
+  },
+  {
+    "name": "unreadable_dir",
+    "kind": "dir",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置文件无法读取，本次使用默认值（文件未改动）"
+    ],
+    "validate": [],
+    "backups": []
+  },
+  {
+    "name": "theme_case",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "light",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nui:\n  theme: LiGhT\n"
+  },
+  {
+    "name": "report_hz_tie",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 0.25,
+        "report_hz": 250,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "motion.report_hz=375 不是固定档位，已改成 250",
+      "motion.gain=0.1 越界，已夹紧到 [0.25,3.0]"
+    ],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nmotion:\n  report_hz: 375\n  gain: 0.1\n"
+  },
+  {
+    "name": "legacy_single_mac",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "192.168.1.9:5555",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {
+          "192.168.1.9:5555": "88:a4:79:1a:2b:3c"
+        }
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\n  serial: \"192.168.1.9:5555\"\n  known: []\n  mac: 88:a4:79:1a:2b:3c\n"
+  },
+  {
+    "name": "macs_invalid_type",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\n  macs: [not, a, mapping]\n"
+  },
+  {
+    "name": "empty_sections",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice: {}\nplacement: {}\nlayouts: {}\nmotion: {}\nkeyboard: {}\nhotkeys: {}\nui: {}\nmisc: {}\n"
+  },
+  {
+    "name": "root_empty_list",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "[]\n"
+  },
+  {
+    "name": "root_zero",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "0\n"
+  },
+  {
+    "name": "root_false",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "false\n"
+  },
+  {
+    "name": "root_empty_string",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "''\n"
+  },
+  {
+    "name": "root_string",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [
+      "配置文件根节点不是映射，已备份为 config.yaml.bad-<TS> 并重置为默认值"
+    ],
+    "validate": [],
+    "backups": [
+      "config.yaml.bad-<TS>"
+    ],
+    "yaml": "hello\n"
+  },
+  {
+    "name": "null_sections",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\ndevice:\nplacement:\nlayouts:\nmotion:\nkeyboard:\nhotkeys:\nui:\nmisc:\n"
+  },
+  {
+    "name": "bom_prefix",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml_hex": "efbbbf76657273696f6e3a20310a75693a0a20207468656d653a206461726b0a"
+  },
+  {
+    "name": "crlf_lines",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "CRLF1",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml_hex": "76657273696f6e3a20310d0a6465766963653a0d0a202073657269616c3a2043524c46310d0a"
+  },
+  {
+    "name": "duplicate_keys",
+    "kind": "file",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 2.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": [],
+    "yaml": "version: 1\nmotion:\n  gain: 1.0\n  gain: 2.0\n"
+  },
+  {
+    "name": "saved_default",
+    "kind": "file",
+    "yaml": "version: 1\ndevice:\n  serial: ''\n  prefer_usb: true\n  auto_connect: true\n  server_port: 1234\n  known: []\n  macs: {}\nplacement:\n  monitor: ''\n  edge: right\n  span_start: 0\n  span_end: 1600\n  offset: 0.5\n  align: proportional\n  corner_priority: right\nlayouts:\n  devices: {}\nmotion:\n  gain: 1.0\n  report_hz: 1000\n  hid_clamp: 127\n  entry_margin_px: 2\n  exit_overflow_px: 80\n  debounce_ms: 250\n  arm_px: 10\n  arm_window_ms: 80\n  edge_band_px: 1\n  boundary_inset_px: 0\nkeyboard:\n  forward: true\n  suppress_pc: true\n  layout: us\n  passthrough_keys:\n  - VK_LWIN\n  - VK_RWIN\nhotkeys:\n  toggle: Ctrl+Alt+S\n  panic: Ctrl+Alt+Q\nui:\n  language: zh_CN\n  theme: dark\n  tray_notifications: true\n  close_to_tray: false\nmisc:\n  clipboard_sync: true\n  keep_screen_on: true\n  restore_pointer_speed: -3\n  forward_audio: false\n",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [],
+        "macs": {}
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "right",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {}
+      },
+      "motion": {
+        "gain": 1.0,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "dark",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": false
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": []
+  },
+  {
+    "name": "saved_mutated",
+    "kind": "file",
+    "yaml": "version: 1\ndevice:\n  serial: ABC123\n  prefer_usb: true\n  auto_connect: true\n  server_port: 1234\n  known:\n  - 192.168.1.9:5555\n  - ABC123\n  macs:\n    192.168.1.9:5555: 88:a4:79:1a:2b:3c\nplacement:\n  monitor: ''\n  edge: left\n  span_start: 0\n  span_end: 1600\n  offset: 0.5\n  align: proportional\n  corner_priority: right\nlayouts:\n  devices:\n    am4nbb5c23001691:\n      landscape:\n        monitor: DISPLAY2\n        edge: bottom\n        span_start: -2560\n        span_end: 0\n        offset: 0.25\n        align: one_to_one\n        corner_priority: left\n      portrait:\n        monitor: ''\n        edge: left\n        span_start: 0\n        span_end: 1600\n        offset: 0.75\n        align: proportional\n        corner_priority: right\nmotion:\n  gain: 1.75\n  report_hz: 1000\n  hid_clamp: 127\n  entry_margin_px: 2\n  exit_overflow_px: 80\n  debounce_ms: 250\n  arm_px: 10\n  arm_window_ms: 80\n  edge_band_px: 1\n  boundary_inset_px: 0\nkeyboard:\n  forward: true\n  suppress_pc: true\n  layout: us\n  passthrough_keys:\n  - VK_LWIN\n  - VK_RWIN\nhotkeys:\n  toggle: Ctrl+Alt+S\n  panic: Ctrl+Alt+Q\nui:\n  language: zh_CN\n  theme: light\n  tray_notifications: true\n  close_to_tray: false\nmisc:\n  clipboard_sync: true\n  keep_screen_on: true\n  restore_pointer_speed: -3\n  forward_audio: true\n",
+    "config": {
+      "version": 1,
+      "device": {
+        "serial": "ABC123",
+        "prefer_usb": true,
+        "auto_connect": true,
+        "server_port": 1234,
+        "known": [
+          "192.168.1.9:5555",
+          "ABC123"
+        ],
+        "macs": {
+          "192.168.1.9:5555": "88:a4:79:1a:2b:3c"
+        }
+      },
+      "placement": {
+        "monitor": "",
+        "edge": "left",
+        "span_start": 0,
+        "span_end": 1600,
+        "offset": 0.5,
+        "align": "proportional",
+        "corner_priority": "right"
+      },
+      "layouts": {
+        "devices": {
+          "am4nbb5c23001691": {
+            "landscape": {
+              "monitor": "DISPLAY2",
+              "edge": "bottom",
+              "span_start": -2560,
+              "span_end": 0,
+              "offset": 0.25,
+              "align": "one_to_one",
+              "corner_priority": "left"
+            },
+            "portrait": {
+              "monitor": "",
+              "edge": "left",
+              "span_start": 0,
+              "span_end": 1600,
+              "offset": 0.75,
+              "align": "proportional",
+              "corner_priority": "right"
+            }
+          }
+        }
+      },
+      "motion": {
+        "gain": 1.75,
+        "report_hz": 1000,
+        "hid_clamp": 127,
+        "entry_margin_px": 2,
+        "exit_overflow_px": 80,
+        "debounce_ms": 250,
+        "arm_px": 10,
+        "arm_window_ms": 80,
+        "edge_band_px": 1,
+        "boundary_inset_px": 0
+      },
+      "keyboard": {
+        "forward": true,
+        "suppress_pc": true,
+        "layout": "us",
+        "passthrough_keys": [
+          "VK_LWIN",
+          "VK_RWIN"
+        ]
+      },
+      "hotkeys": {
+        "toggle": "Ctrl+Alt+S",
+        "panic": "Ctrl+Alt+Q"
+      },
+      "ui": {
+        "language": "zh_CN",
+        "theme": "light",
+        "tray_notifications": true,
+        "close_to_tray": false
+      },
+      "misc": {
+        "clipboard_sync": true,
+        "keep_screen_on": true,
+        "restore_pointer_speed": -3,
+        "forward_audio": true
+      }
+    },
+    "issues": [],
+    "validate": [],
+    "backups": []
+  }
+]

@@ -1,0 +1,120 @@
+{
+  "name": "layouts_edge",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "",
+      "prefer_usb": true,
+      "auto_connect": true,
+      "server_port": 1234,
+      "known": [],
+      "macs": {}
+    },
+    "placement": {
+      "monitor": "",
+      "edge": "right",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": "right"
+    },
+    "layouts": {
+      "devices": {
+        "serial1": {
+          "landscape": {
+            "monitor": "",
+            "edge": "right",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 1.0,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        },
+        "serial2": {
+          "landscape": {
+            "monitor": "",
+            "edge": "right",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.5,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        },
+        "abc": {
+          "landscape": {
+            "monitor": "",
+            "edge": "bottom",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.5,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        },
+        "5": {
+          "portrait": {
+            "monitor": "",
+            "edge": "left",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.5,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        }
+      }
+    },
+    "motion": {
+      "gain": 1.0,
+      "report_hz": 1000,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "VK_LWIN",
+        "VK_RWIN"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "Ctrl+Alt+Q"
+    },
+    "ui": {
+      "language": "zh_CN",
+      "theme": "dark",
+      "tray_notifications": true,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": false
+    }
+  },
+  "issues": [
+    "layouts.devices. 非法，已忽略",
+    "layouts.devices.SERIAL1.portrait 必须是映射，已忽略",
+    "layouts.devices.SERIAL2.diagonal 方向非法（只支持 landscape/portrait），已忽略",
+    "layouts.devices.serial1.landscape.edge='diagonal' 非法，已回退 right",
+    "layouts.devices.serial1.landscape.align='stretch' 非法，已回退 proportional",
+    "layouts.devices.serial1.landscape.offset=3.0 越界，已夹紧到 [0,1]"
+  ],
+  "validate": [],
+  "backups": [],
+  "yaml": "version: 1\nlayouts:\n  devices:\n    \"\":\n      landscape:\n        edge: right\n    SERIAL1:\n      landscape:\n        edge: diagonal\n        offset: 3.0\n        align: stretch\n      portrait: oops\n    SERIAL2:\n      diagonal:\n        edge: right\n      landscape:\n        monitor: \"\"\n    ABC:\n      landscape:\n        edge: top\n    abc:\n      landscape:\n        edge: bottom\n    5:\n      portrait:\n        edge: left\n"
+}

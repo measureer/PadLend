@@ -1,0 +1,85 @@
+{
+  "name": "unknown_keys",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "ABC123",
+      "prefer_usb": true,
+      "auto_connect": true,
+      "server_port": 1234,
+      "known": [],
+      "macs": {
+        "ABC123": "88:a4:79:1a:2b:3c"
+      }
+    },
+    "placement": {
+      "monitor": "",
+      "edge": "right",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": "right"
+    },
+    "layouts": {
+      "devices": {
+        "abc123": {
+          "landscape": {
+            "monitor": "",
+            "edge": "top",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.5,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        }
+      }
+    },
+    "motion": {
+      "gain": 1.0,
+      "report_hz": 1000,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "VK_LWIN",
+        "VK_RWIN"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "Ctrl+Alt+Q"
+    },
+    "ui": {
+      "language": "zh_CN",
+      "theme": "dark",
+      "tray_notifications": true,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": false
+    }
+  },
+  "issues": [
+    "未知配置项已忽略：foo, zzz",
+    "layouts 未知配置项已忽略：extra"
+  ],
+  "validate": [],
+  "backups": [],
+  "yaml": "version: 1\nzzz: 1\nfoo:\n  bar: 2\ndevice:\n  serial: ABC123\n  mac: 88:a4:79:1a:2b:3c\n  known: []\n  mystery: true\nmotion:\n  entry_guard_px: 160\nui:\n  show_pointer_ghost: true\n  theme: dark\nlayouts:\n  extra: 1\n  devices:\n    ABC123:\n      landscape:\n        edge: top\n"
+}

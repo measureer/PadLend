@@ -1,0 +1,71 @@
+{
+  "name": "report_hz_tie",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "",
+      "prefer_usb": true,
+      "auto_connect": true,
+      "server_port": 1234,
+      "known": [],
+      "macs": {}
+    },
+    "placement": {
+      "monitor": "",
+      "edge": "right",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": "right"
+    },
+    "layouts": {
+      "devices": {}
+    },
+    "motion": {
+      "gain": 0.25,
+      "report_hz": 250,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "VK_LWIN",
+        "VK_RWIN"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "Ctrl+Alt+Q"
+    },
+    "ui": {
+      "language": "zh_CN",
+      "theme": "dark",
+      "tray_notifications": true,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": false
+    }
+  },
+  "issues": [
+    "motion.report_hz=375 不是固定档位，已改成 250",
+    "motion.gain=0.1 越界，已夹紧到 [0.25,3.0]"
+  ],
+  "validate": [],
+  "backups": [],
+  "yaml": "version: 1\nmotion:\n  report_hz: 375\n  gain: 0.1\n"
+}

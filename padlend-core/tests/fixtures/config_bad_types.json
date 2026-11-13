@@ -1,0 +1,92 @@
+{
+  "name": "bad_types",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "12345",
+      "prefer_usb": true,
+      "auto_connect": false,
+      "server_port": 1235,
+      "known": [
+        "7",
+        "XYZ",
+        "True",
+        "None"
+      ],
+      "macs": {
+        "1": "2",
+        "k": "v"
+      }
+    },
+    "placement": {
+      "monitor": "7",
+      "edge": "right",
+      "span_start": 0,
+      "span_end": 1600,
+      "offset": 0.5,
+      "align": "proportional",
+      "corner_priority": ""
+    },
+    "layouts": {
+      "devices": {}
+    },
+    "motion": {
+      "gain": 1.5,
+      "report_hz": 1000,
+      "hid_clamp": 127,
+      "entry_margin_px": 2,
+      "exit_overflow_px": 80,
+      "debounce_ms": 250,
+      "arm_px": 10,
+      "arm_window_ms": 80,
+      "edge_band_px": 1,
+      "boundary_inset_px": 0
+    },
+    "keyboard": {
+      "forward": true,
+      "suppress_pc": true,
+      "layout": "us",
+      "passthrough_keys": [
+        "1",
+        "True"
+      ]
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Alt+S",
+      "panic": "None"
+    },
+    "ui": {
+      "language": "5",
+      "theme": "dark",
+      "tray_notifications": false,
+      "close_to_tray": false
+    },
+    "misc": {
+      "clipboard_sync": true,
+      "keep_screen_on": true,
+      "restore_pointer_speed": -3,
+      "forward_audio": true
+    }
+  },
+  "issues": [
+    "ui.theme='NEON' 非法，已回退 dark",
+    "placement.edge='Left' 非法，已回退 right",
+    "placement.align='' 非法，已回退 proportional",
+    "placement.span_end 必须大于 span_start，已恢复默认",
+    "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
+    "motion.report_hz=998 不是固定档位，已改成 1000",
+    "motion.arm_px 必须 ≥1，已恢复默认",
+    "motion.exit_overflow_px 必须 ≥1，已恢复默认",
+    "motion.edge_band_px 必须 ≥1，已恢复默认",
+    "motion.arm_window_ms 必须 ≥1，已恢复默认",
+    "motion.debounce_ms 不能为负，已恢复默认",
+    "motion.boundary_inset_px 不能为负，已恢复默认",
+    "motion.entry_margin_px 不能为负，已恢复默认",
+    "keyboard.layout 为空，已回退 us",
+    "hotkeys.toggle 为空，已恢复默认"
+  ],
+  "validate": [],
+  "backups": [],
+  "yaml": "version: 1\ndevice:\n  serial: 12345\n  prefer_usb: \"yes\"\n  auto_connect: 0\n  server_port: \"1235\"\n  known: [7, XYZ, true, null]\n  macs:\n    1: 2\n    \"  \": \"x\"\n    \" k \": \" v \"\nplacement:\n  monitor: 7\n  edge: Left\n  align: \"\"\n  offset: \"abc\"\n  span_start: 10\n  span_end: 10\n  corner_priority: \"\"\nmotion:\n  gain: \"1.5\"\n  report_hz: 998\n  hid_clamp: 999\n  arm_px: 0\n  entry_margin_px: -5\n  boundary_inset_px: -1\n  debounce_ms: -1\n  arm_window_ms: 0\n  exit_overflow_px: 0\n  edge_band_px: 0\nkeyboard:\n  layout: \"  \"\n  passthrough_keys: [1, true]\n  forward: \"1\"\nhotkeys:\n  toggle: \"\"\n  panic: null\nui:\n  theme: NEON\n  language: 5\n  close_to_tray: \"off\"\n  tray_notifications: null\nmisc:\n  forward_audio: 1\n  restore_pointer_speed: \"abc\"\n"
+}

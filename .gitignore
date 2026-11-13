@@ -19,5 +19,6 @@ _MEI*/
 node_modules/
 src-tauri/target/
 src-tauri/gen/
+padlend-core/target/
 src-tauri/binaries/
 frontend-dist/

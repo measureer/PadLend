@@ -1,0 +1,1237 @@
+{
+ "uhid_mouse": [
+  {
+   "buttons": 0,
+   "dx": 0,
+   "dy": 0,
+   "wheel": 0,
+   "hex": "00000000"
+  },
+  {
+   "buttons": 1,
+   "dx": 7,
+   "dy": 3,
+   "wheel": 0,
+   "hex": "01070300"
+  },
+  {
+   "buttons": 0,
+   "dx": -12,
+   "dy": -9,
+   "wheel": 0,
+   "hex": "00f4f700"
+  },
+  {
+   "buttons": 5,
+   "dx": 200,
+   "dy": -200,
+   "wheel": 3,
+   "hex": "057f8103"
+  },
+  {
+   "buttons": 31,
+   "dx": 127,
+   "dy": -127,
+   "wheel": 1,
+   "hex": "1f7f8101"
+  },
+  {
+   "buttons": 31,
+   "dx": -128,
+   "dy": 128,
+   "wheel": -1,
+   "hex": "1f817fff"
+  }
+ ],
+ "uhid_keyboard": [
+  {
+   "modifier": 0,
+   "usages": [],
+   "hex": "0000000000000000"
+  },
+  {
+   "modifier": 2,
+   "usages": [
+    4
+   ],
+   "hex": "0200040000000000"
+  },
+  {
+   "modifier": 0,
+   "usages": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+   ],
+   "hex": "0000040506070809"
+  },
+  {
+   "modifier": 1,
+   "usages": [
+    10,
+    10,
+    0
+   ],
+   "hex": "01000a0000000000"
+  },
+  {
+   "modifier": 0,
+   "usages": [
+    101
+   ],
+   "hex": "0000650000000000"
+  },
+  {
+   "modifier": 255,
+   "usages": [
+    255
+   ],
+   "hex": "ff00ff0000000000"
+  }
+ ],
+ "vk_to_usage": [
+  {
+   "vk": 0,
+   "usage": null
+  },
+  {
+   "vk": 1,
+   "usage": null
+  },
+  {
+   "vk": 2,
+   "usage": null
+  },
+  {
+   "vk": 3,
+   "usage": null
+  },
+  {
+   "vk": 4,
+   "usage": null
+  },
+  {
+   "vk": 5,
+   "usage": null
+  },
+  {
+   "vk": 6,
+   "usage": null
+  },
+  {
+   "vk": 7,
+   "usage": null
+  },
+  {
+   "vk": 8,
+   "usage": 42
+  },
+  {
+   "vk": 9,
+   "usage": 43
+  },
+  {
+   "vk": 10,
+   "usage": null
+  },
+  {
+   "vk": 11,
+   "usage": null
+  },
+  {
+   "vk": 12,
+   "usage": null
+  },
+  {
+   "vk": 13,
+   "usage": 40
+  },
+  {
+   "vk": 14,
+   "usage": null
+  },
+  {
+   "vk": 15,
+   "usage": null
+  },
+  {
+   "vk": 16,
+   "usage": null
+  },
+  {
+   "vk": 17,
+   "usage": null
+  },
+  {
+   "vk": 18,
+   "usage": null
+  },
+  {
+   "vk": 19,
+   "usage": null
+  },
+  {
+   "vk": 20,
+   "usage": 57
+  },
+  {
+   "vk": 21,
+   "usage": null
+  },
+  {
+   "vk": 22,
+   "usage": null
+  },
+  {
+   "vk": 23,
+   "usage": null
+  },
+  {
+   "vk": 24,
+   "usage": null
+  },
+  {
+   "vk": 25,
+   "usage": null
+  },
+  {
+   "vk": 26,
+   "usage": null
+  },
+  {
+   "vk": 27,
+   "usage": 41
+  },
+  {
+   "vk": 28,
+   "usage": null
+  },
+  {
+   "vk": 29,
+   "usage": null
+  },
+  {
+   "vk": 30,
+   "usage": null
+  },
+  {
+   "vk": 31,
+   "usage": null
+  },
+  {
+   "vk": 32,
+   "usage": 44
+  },
+  {
+   "vk": 33,
+   "usage": 75
+  },
+  {
+   "vk": 34,
+   "usage": 78
+  },
+  {
+   "vk": 35,
+   "usage": 77
+  },
+  {
+   "vk": 36,
+   "usage": 74
+  },
+  {
+   "vk": 37,
+   "usage": 80
+  },
+  {
+   "vk": 38,
+   "usage": 82
+  },
+  {
+   "vk": 39,
+   "usage": 79
+  },
+  {
+   "vk": 40,
+   "usage": 81
+  },
+  {
+   "vk": 41,
+   "usage": null
+  },
+  {
+   "vk": 42,
+   "usage": null
+  },
+  {
+   "vk": 43,
+   "usage": null
+  },
+  {
+   "vk": 44,
+   "usage": null
+  },
+  {
+   "vk": 45,
+   "usage": 73
+  },
+  {
+   "vk": 46,
+   "usage": 76
+  },
+  {
+   "vk": 47,
+   "usage": null
+  },
+  {
+   "vk": 48,
+   "usage": 39
+  },
+  {
+   "vk": 49,
+   "usage": 30
+  },
+  {
+   "vk": 50,
+   "usage": 31
+  },
+  {
+   "vk": 51,
+   "usage": 32
+  },
+  {
+   "vk": 52,
+   "usage": 33
+  },
+  {
+   "vk": 53,
+   "usage": 34
+  },
+  {
+   "vk": 54,
+   "usage": 35
+  },
+  {
+   "vk": 55,
+   "usage": 36
+  },
+  {
+   "vk": 56,
+   "usage": 37
+  },
+  {
+   "vk": 57,
+   "usage": 38
+  },
+  {
+   "vk": 58,
+   "usage": null
+  },
+  {
+   "vk": 59,
+   "usage": null
+  },
+  {
+   "vk": 60,
+   "usage": null
+  },
+  {
+   "vk": 61,
+   "usage": null
+  },
+  {
+   "vk": 62,
+   "usage": null
+  },
+  {
+   "vk": 63,
+   "usage": null
+  },
+  {
+   "vk": 64,
+   "usage": null
+  },
+  {
+   "vk": 65,
+   "usage": 4
+  },
+  {
+   "vk": 66,
+   "usage": 5
+  },
+  {
+   "vk": 67,
+   "usage": 6
+  },
+  {
+   "vk": 68,
+   "usage": 7
+  },
+  {
+   "vk": 69,
+   "usage": 8
+  },
+  {
+   "vk": 70,
+   "usage": 9
+  },
+  {
+   "vk": 71,
+   "usage": 10
+  },
+  {
+   "vk": 72,
+   "usage": 11
+  },
+  {
+   "vk": 73,
+   "usage": 12
+  },
+  {
+   "vk": 74,
+   "usage": 13
+  },
+  {
+   "vk": 75,
+   "usage": 14
+  },
+  {
+   "vk": 76,
+   "usage": 15
+  },
+  {
+   "vk": 77,
+   "usage": 16
+  },
+  {
+   "vk": 78,
+   "usage": 17
+  },
+  {
+   "vk": 79,
+   "usage": 18
+  },
+  {
+   "vk": 80,
+   "usage": 19
+  },
+  {
+   "vk": 81,
+   "usage": 20
+  },
+  {
+   "vk": 82,
+   "usage": 21
+  },
+  {
+   "vk": 83,
+   "usage": 22
+  },
+  {
+   "vk": 84,
+   "usage": 23
+  },
+  {
+   "vk": 85,
+   "usage": 24
+  },
+  {
+   "vk": 86,
+   "usage": 25
+  },
+  {
+   "vk": 87,
+   "usage": 26
+  },
+  {
+   "vk": 88,
+   "usage": 27
+  },
+  {
+   "vk": 89,
+   "usage": 28
+  },
+  {
+   "vk": 90,
+   "usage": 29
+  },
+  {
+   "vk": 91,
+   "usage": null
+  },
+  {
+   "vk": 92,
+   "usage": null
+  },
+  {
+   "vk": 93,
+   "usage": 101
+  },
+  {
+   "vk": 94,
+   "usage": null
+  },
+  {
+   "vk": 95,
+   "usage": null
+  },
+  {
+   "vk": 96,
+   "usage": null
+  },
+  {
+   "vk": 97,
+   "usage": null
+  },
+  {
+   "vk": 98,
+   "usage": null
+  },
+  {
+   "vk": 99,
+   "usage": null
+  },
+  {
+   "vk": 100,
+   "usage": null
+  },
+  {
+   "vk": 101,
+   "usage": null
+  },
+  {
+   "vk": 102,
+   "usage": null
+  },
+  {
+   "vk": 103,
+   "usage": null
+  },
+  {
+   "vk": 104,
+   "usage": null
+  },
+  {
+   "vk": 105,
+   "usage": null
+  },
+  {
+   "vk": 106,
+   "usage": null
+  },
+  {
+   "vk": 107,
+   "usage": null
+  },
+  {
+   "vk": 108,
+   "usage": null
+  },
+  {
+   "vk": 109,
+   "usage": null
+  },
+  {
+   "vk": 110,
+   "usage": null
+  },
+  {
+   "vk": 111,
+   "usage": null
+  },
+  {
+   "vk": 112,
+   "usage": 58
+  },
+  {
+   "vk": 113,
+   "usage": 59
+  },
+  {
+   "vk": 114,
+   "usage": 60
+  },
+  {
+   "vk": 115,
+   "usage": 61
+  },
+  {
+   "vk": 116,
+   "usage": 62
+  },
+  {
+   "vk": 117,
+   "usage": 63
+  },
+  {
+   "vk": 118,
+   "usage": 64
+  },
+  {
+   "vk": 119,
+   "usage": 65
+  },
+  {
+   "vk": 120,
+   "usage": 66
+  },
+  {
+   "vk": 121,
+   "usage": 67
+  },
+  {
+   "vk": 122,
+   "usage": 68
+  },
+  {
+   "vk": 123,
+   "usage": 69
+  },
+  {
+   "vk": 124,
+   "usage": null
+  },
+  {
+   "vk": 125,
+   "usage": null
+  },
+  {
+   "vk": 126,
+   "usage": null
+  },
+  {
+   "vk": 127,
+   "usage": null
+  },
+  {
+   "vk": 128,
+   "usage": null
+  },
+  {
+   "vk": 129,
+   "usage": null
+  },
+  {
+   "vk": 130,
+   "usage": null
+  },
+  {
+   "vk": 131,
+   "usage": null
+  },
+  {
+   "vk": 132,
+   "usage": null
+  },
+  {
+   "vk": 133,
+   "usage": null
+  },
+  {
+   "vk": 134,
+   "usage": null
+  },
+  {
+   "vk": 135,
+   "usage": null
+  },
+  {
+   "vk": 136,
+   "usage": null
+  },
+  {
+   "vk": 137,
+   "usage": null
+  },
+  {
+   "vk": 138,
+   "usage": null
+  },
+  {
+   "vk": 139,
+   "usage": null
+  },
+  {
+   "vk": 140,
+   "usage": null
+  },
+  {
+   "vk": 141,
+   "usage": null
+  },
+  {
+   "vk": 142,
+   "usage": null
+  },
+  {
+   "vk": 143,
+   "usage": null
+  },
+  {
+   "vk": 144,
+   "usage": null
+  },
+  {
+   "vk": 145,
+   "usage": null
+  },
+  {
+   "vk": 146,
+   "usage": null
+  },
+  {
+   "vk": 147,
+   "usage": null
+  },
+  {
+   "vk": 148,
+   "usage": null
+  },
+  {
+   "vk": 149,
+   "usage": null
+  },
+  {
+   "vk": 150,
+   "usage": null
+  },
+  {
+   "vk": 151,
+   "usage": null
+  },
+  {
+   "vk": 152,
+   "usage": null
+  },
+  {
+   "vk": 153,
+   "usage": null
+  },
+  {
+   "vk": 154,
+   "usage": null
+  },
+  {
+   "vk": 155,
+   "usage": null
+  },
+  {
+   "vk": 156,
+   "usage": null
+  },
+  {
+   "vk": 157,
+   "usage": null
+  },
+  {
+   "vk": 158,
+   "usage": null
+  },
+  {
+   "vk": 159,
+   "usage": null
+  },
+  {
+   "vk": 160,
+   "usage": null
+  },
+  {
+   "vk": 161,
+   "usage": null
+  },
+  {
+   "vk": 162,
+   "usage": null
+  },
+  {
+   "vk": 163,
+   "usage": null
+  },
+  {
+   "vk": 164,
+   "usage": null
+  },
+  {
+   "vk": 165,
+   "usage": null
+  },
+  {
+   "vk": 166,
+   "usage": null
+  },
+  {
+   "vk": 167,
+   "usage": null
+  },
+  {
+   "vk": 168,
+   "usage": null
+  },
+  {
+   "vk": 169,
+   "usage": null
+  },
+  {
+   "vk": 170,
+   "usage": null
+  },
+  {
+   "vk": 171,
+   "usage": null
+  },
+  {
+   "vk": 172,
+   "usage": null
+  },
+  {
+   "vk": 173,
+   "usage": null
+  },
+  {
+   "vk": 174,
+   "usage": null
+  },
+  {
+   "vk": 175,
+   "usage": null
+  },
+  {
+   "vk": 176,
+   "usage": null
+  },
+  {
+   "vk": 177,
+   "usage": null
+  },
+  {
+   "vk": 178,
+   "usage": null
+  },
+  {
+   "vk": 179,
+   "usage": null
+  },
+  {
+   "vk": 180,
+   "usage": null
+  },
+  {
+   "vk": 181,
+   "usage": null
+  },
+  {
+   "vk": 182,
+   "usage": null
+  },
+  {
+   "vk": 183,
+   "usage": null
+  },
+  {
+   "vk": 184,
+   "usage": null
+  },
+  {
+   "vk": 185,
+   "usage": null
+  },
+  {
+   "vk": 186,
+   "usage": 51
+  },
+  {
+   "vk": 187,
+   "usage": 46
+  },
+  {
+   "vk": 188,
+   "usage": null
+  },
+  {
+   "vk": 189,
+   "usage": 45
+  },
+  {
+   "vk": 190,
+   "usage": null
+  },
+  {
+   "vk": 191,
+   "usage": 56
+  },
+  {
+   "vk": 192,
+   "usage": 53
+  },
+  {
+   "vk": 193,
+   "usage": null
+  },
+  {
+   "vk": 194,
+   "usage": null
+  },
+  {
+   "vk": 195,
+   "usage": null
+  },
+  {
+   "vk": 196,
+   "usage": null
+  },
+  {
+   "vk": 197,
+   "usage": null
+  },
+  {
+   "vk": 198,
+   "usage": null
+  },
+  {
+   "vk": 199,
+   "usage": null
+  },
+  {
+   "vk": 200,
+   "usage": null
+  },
+  {
+   "vk": 201,
+   "usage": null
+  },
+  {
+   "vk": 202,
+   "usage": null
+  },
+  {
+   "vk": 203,
+   "usage": null
+  },
+  {
+   "vk": 204,
+   "usage": null
+  },
+  {
+   "vk": 205,
+   "usage": null
+  },
+  {
+   "vk": 206,
+   "usage": null
+  },
+  {
+   "vk": 207,
+   "usage": null
+  },
+  {
+   "vk": 208,
+   "usage": null
+  },
+  {
+   "vk": 209,
+   "usage": null
+  },
+  {
+   "vk": 210,
+   "usage": null
+  },
+  {
+   "vk": 211,
+   "usage": null
+  },
+  {
+   "vk": 212,
+   "usage": null
+  },
+  {
+   "vk": 213,
+   "usage": null
+  },
+  {
+   "vk": 214,
+   "usage": null
+  },
+  {
+   "vk": 215,
+   "usage": null
+  },
+  {
+   "vk": 216,
+   "usage": null
+  },
+  {
+   "vk": 217,
+   "usage": null
+  },
+  {
+   "vk": 218,
+   "usage": null
+  },
+  {
+   "vk": 219,
+   "usage": 47
+  },
+  {
+   "vk": 220,
+   "usage": 49
+  },
+  {
+   "vk": 221,
+   "usage": 48
+  },
+  {
+   "vk": 222,
+   "usage": 52
+  },
+  {
+   "vk": 223,
+   "usage": null
+  },
+  {
+   "vk": 224,
+   "usage": null
+  },
+  {
+   "vk": 225,
+   "usage": null
+  },
+  {
+   "vk": 226,
+   "usage": null
+  },
+  {
+   "vk": 227,
+   "usage": null
+  },
+  {
+   "vk": 228,
+   "usage": null
+  },
+  {
+   "vk": 229,
+   "usage": null
+  },
+  {
+   "vk": 230,
+   "usage": null
+  },
+  {
+   "vk": 231,
+   "usage": null
+  },
+  {
+   "vk": 232,
+   "usage": null
+  },
+  {
+   "vk": 233,
+   "usage": null
+  },
+  {
+   "vk": 234,
+   "usage": null
+  },
+  {
+   "vk": 235,
+   "usage": null
+  },
+  {
+   "vk": 236,
+   "usage": null
+  },
+  {
+   "vk": 237,
+   "usage": null
+  },
+  {
+   "vk": 238,
+   "usage": null
+  },
+  {
+   "vk": 239,
+   "usage": null
+  },
+  {
+   "vk": 240,
+   "usage": null
+  },
+  {
+   "vk": 241,
+   "usage": null
+  },
+  {
+   "vk": 242,
+   "usage": null
+  },
+  {
+   "vk": 243,
+   "usage": null
+  },
+  {
+   "vk": 244,
+   "usage": null
+  },
+  {
+   "vk": 245,
+   "usage": null
+  },
+  {
+   "vk": 246,
+   "usage": null
+  },
+  {
+   "vk": 247,
+   "usage": null
+  },
+  {
+   "vk": 248,
+   "usage": null
+  },
+  {
+   "vk": 249,
+   "usage": null
+  },
+  {
+   "vk": 250,
+   "usage": null
+  },
+  {
+   "vk": 251,
+   "usage": null
+  },
+  {
+   "vk": 252,
+   "usage": null
+  },
+  {
+   "vk": 253,
+   "usage": null
+  },
+  {
+   "vk": 254,
+   "usage": null
+  },
+  {
+   "vk": 255,
+   "usage": null
+  }
+ ],
+ "modifier_bit": [
+  {
+   "vk": 16,
+   "scan": 0,
+   "extended": false,
+   "bit": 2
+  },
+  {
+   "vk": 17,
+   "scan": 0,
+   "extended": false,
+   "bit": 1
+  },
+  {
+   "vk": 160,
+   "scan": 42,
+   "extended": false,
+   "bit": 2
+  },
+  {
+   "vk": 161,
+   "scan": 54,
+   "extended": false,
+   "bit": 32
+  },
+  {
+   "vk": 162,
+   "scan": 29,
+   "extended": true,
+   "bit": 1
+  },
+  {
+   "vk": 163,
+   "scan": 29,
+   "extended": false,
+   "bit": 16
+  },
+  {
+   "vk": 65,
+   "scan": 0,
+   "extended": false,
+   "bit": null
+  },
+  {
+   "vk": 18,
+   "scan": 0,
+   "extended": true,
+   "bit": 64
+  },
+  {
+   "vk": 91,
+   "scan": 91,
+   "extended": true,
+   "bit": 8
+  }
+ ],
+ "protocol": [
+  {
+   "fn": "inject_keycode",
+   "args": [
+    0,
+    29,
+    0,
+    0
+   ],
+   "hex": "00000000001d0000000000000000"
+  },
+  {
+   "fn": "inject_text",
+   "arg": "hello 中文",
+   "hex": "010000000c68656c6c6f20e4b8ade69687"
+  },
+  {
+   "fn": "set_clipboard",
+   "arg": "clipboard-payload",
+   "sequence": 7,
+   "hex": "0900000000000000070000000011636c6970626f6172642d7061796c6f6164"
+  },
+  {
+   "fn": "back_or_screen_on",
+   "arg": 1,
+   "hex": "0401"
+  },
+  {
+   "fn": "open_hard_keyboard_settings",
+   "hex": "0f"
+  },
+  {
+   "fn": "uhid_create",
+   "id": 1,
+   "vendor": 7531,
+   "product": 1,
+   "name_hex": "5061644c656e64204d6f757365",
+   "desc_hex": "05010902a1010901a100050919012905150025019505750181029501750381010501093009311581257f75089502810609381581257f750895018106c0c0",
+   "hex": "0c00011d6b00010d5061644c656e64204d6f757365003e05010902a1010901a100050919012905150025019505750181029501750381010501093009311581257f75089502810609381581257f750895018106c0c0"
+  },
+  {
+   "fn": "uhid_input",
+   "id": 1,
+   "data_hex": "010203",
+   "hex": "0d00010003010203"
+  },
+  {
+   "fn": "uhid_report",
+   "id": 1,
+   "data_hex": "00000000",
+   "hex": "0d0001000400000000"
+  },
+  {
+   "fn": "uhid_destroy",
+   "id": 1,
+   "hex": "0e0001"
+  }
+ ]
+}

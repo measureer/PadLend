@@ -1,0 +1,102 @@
+{
+  "name": "full_explicit",
+  "kind": "file",
+  "config": {
+    "version": 1,
+    "device": {
+      "serial": "AM4NBB5C23001691",
+      "prefer_usb": true,
+      "auto_connect": false,
+      "server_port": 1235,
+      "known": [
+        "AM4NBB5C23001691",
+        "192.168.1.9:5555"
+      ],
+      "macs": {
+        "192.168.1.9:5555": "88:a4:79:1a:2b:3c"
+      }
+    },
+    "placement": {
+      "monitor": "\\\\\\\\.\\\\DISPLAY2",
+      "edge": "left",
+      "span_start": -2560,
+      "span_end": 0,
+      "offset": 0.25,
+      "align": "one_to_one",
+      "corner_priority": "bottom"
+    },
+    "layouts": {
+      "devices": {
+        "am4nbb5c23001691": {
+          "portrait": {
+            "monitor": "",
+            "edge": "top",
+            "span_start": 0,
+            "span_end": 1234,
+            "offset": 0.75,
+            "align": "center",
+            "corner_priority": "right"
+          },
+          "landscape": {
+            "monitor": "\\\\\\\\.\\\\DISPLAY1",
+            "edge": "right",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 0.5,
+            "align": "proportional",
+            "corner_priority": ""
+          }
+        },
+        "192.168.1.9:5555": {
+          "landscape": {
+            "monitor": "",
+            "edge": "bottom",
+            "span_start": 0,
+            "span_end": 1600,
+            "offset": 1.0,
+            "align": "proportional",
+            "corner_priority": "right"
+          }
+        }
+      }
+    },
+    "motion": {
+      "gain": 1.75,
+      "report_hz": 500,
+      "hid_clamp": 64,
+      "entry_margin_px": 4,
+      "exit_overflow_px": 100,
+      "debounce_ms": 200,
+      "arm_px": 20,
+      "arm_window_ms": 100,
+      "edge_band_px": 2,
+      "boundary_inset_px": 8
+    },
+    "keyboard": {
+      "forward": false,
+      "suppress_pc": false,
+      "layout": "de",
+      "passthrough_keys": []
+    },
+    "hotkeys": {
+      "toggle": "Ctrl+Shift+F9",
+      "panic": "Ctrl+Shift+F12"
+    },
+    "ui": {
+      "language": "en_US",
+      "theme": "light",
+      "tray_notifications": false,
+      "close_to_tray": true
+    },
+    "misc": {
+      "clipboard_sync": false,
+      "keep_screen_on": false,
+      "restore_pointer_speed": -1,
+      "forward_audio": true
+    }
+  },
+  "issues": [],
+  "validate": [],
+  "backups": [],
+  "yaml": "version: 1\ndevice:\n  serial: \"AM4NBB5C23001691\"\n  prefer_usb: true\n  auto_connect: false\n  server_port: 1235\n  known: [\"AM4NBB5C23001691\", \"192.168.1.9:5555\"]\n  macs:\n    \"192.168.1.9:5555\": \"88:a4:79:1a:2b:3c\"\nplacement:\n  monitor: \"\\\\\\\\\\\\\\\\.\\\\\\\\DISPLAY2\"\n  edge: left\n  span_start: -2560\n  span_end: 0\n  offset: 0.25\n  align: one_to_one\n  corner_priority: bottom\nlayouts:\n  devices:\n    am4nbb5c23001691:\n      portrait:\n        edge: top\n        align: center\n        span_start: 0\n        span_end: 1234\n        offset: 0.75\n      landscape:\n        monitor: \"\\\\\\\\\\\\\\\\.\\\\\\\\DISPLAY1\"\n        edge: right\n        span_start: 0\n        span_end: 1600\n        offset: 0.5\n        align: proportional\n        corner_priority: \"\"\n    \"192.168.1.9:5555\":\n      landscape:\n        edge: bottom\n        offset: 1.0\nmotion:\n  gain: 1.75\n  report_hz: 500\n  hid_clamp: 64\n  entry_margin_px: 4\n  exit_overflow_px: 100\n  debounce_ms: 200\n  arm_px: 20\n  arm_window_ms: 100\n  edge_band_px: 2\n  boundary_inset_px: 8\nkeyboard:\n  forward: false\n  suppress_pc: false\n  layout: de\n  passthrough_keys: []\nhotkeys:\n  toggle: \"Ctrl+Shift+F9\"\n  panic: \"Ctrl+Shift+F12\"\nui:\n  language: en_US\n  theme: \"Light\"\n  tray_notifications: false\n  close_to_tray: true\nmisc:\n  clipboard_sync: false\n  keep_screen_on: false\n  restore_pointer_speed: -1\n  forward_audio: true\n"
+}
