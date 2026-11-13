@@ -65,9 +65,6 @@ export function DevicesPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">设备</h1>
-          <p className="page-subtitle">
-            连接平板后才会读取并显示它的真实分辨率、朝向与输入参数。列表只显示已通过 ADB 授权的设备；上次连过、但这次没扫到的设备也会保留一行。
-          </p>
         </div>
         <div className="page-actions">
           <span className="badge accent">{hint || '准备扫描…'}</span>

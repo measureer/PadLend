@@ -28,6 +28,7 @@ describe('应用外壳与核心交互（浏览器 mock 后端）', () => {
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '设备' })).toBeTruthy());
     expect(screen.getByText('连接此设备')).toBeTruthy();
     expect(screen.getByText('设备详情')).toBeTruthy();
+    expect(screen.queryByText(/连接平板后才会读取/)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: '保存设置' }).length).toBeGreaterThan(0));
