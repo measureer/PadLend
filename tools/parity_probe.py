@@ -20,8 +20,17 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-METHODS = ["system.paths", "layout.desktop", "layout.initial", "config.get", "app.bootstrap"]
-VOLATILE = {"metrics", "logs", "facts", "collectedAt", "uptime", "pid", "path"}
+METHODS = [
+    "system.paths",
+    "layout.desktop",
+    "layout.initial",
+    "config.get",
+    "engine.state",
+    "devices.scan",
+    "logs.recent",
+    "app.bootstrap",
+]
+VOLATILE = {"metrics", "logs", "facts", "collectedAt", "uptime", "pid", "path", "entries"}
 
 
 class Reader:

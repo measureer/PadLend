@@ -38,6 +38,9 @@ system.paths     一致
 layout.desktop   一致      ← 显示器枚举、外轮廓边段、boundingBox、placement
 layout.initial   一致
 config.get       一致
+engine.state     一致
+devices.scan     一致
+logs.recent      一致
 app.bootstrap    一致
 合计 0 处差异
 ```

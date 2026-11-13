@@ -447,39 +447,59 @@
 - **触发条件**：默认跳过真实窗口测试。
 - **根因**：创建真实 topmost 窗口会干扰桌面/CI 无桌面会话，只能用环境变量隔离。
 - **修法**：本地/专用机用 `PADLEND_UI_TESTS=1` 跑全套；CI 至少跑无窗口的 mock 版；新增遮罩逻辑必须同时有 mock 单测和 UI 测试。
-- **如何验证 / 回归**：`PADLEND_UI_TESTS=1 pytest tests/test_mask.py -q` 应全绿；CI 日志里能看到 skip 数量，不能静默 0；两类测试都要能在无设备时独立运行。
-- **相关文件**：`tests/test_mask.py:469-478`、`tests/test_mask.py:559-640`
-- **版本**：1.2.0
-- **再犯的代价**：遮罩是最高频的 P0，跳过它等于把最危险的路径交给用户当测试。
+## 9. Rust sidecar（B2 迁移）
 
-### 8.3 时序测试靠真等和 sleep，必然 flaky
+> 这些坑都发生在 `padlend-core` 的移植过程中，与语言/工具链强相关，Python 版不会遇到。
 
-- **现象**：遮罩超时测试偶发失败/挂起 5 秒；CI 变慢。
-- **触发条件**：真的等 `_MASK_THREAD_TIMEOUT_S`；或依赖 sleep 排序。
-- **根因**：超时值是常量，测试没注入更短的值；线程调度不可控。
-- **修法**：用 monkeypatch 把超时改到 0.05s 级；用 `Event` 同步而不是 sleep；断言「没有建第二个窗口」而不是「日志里没有某句话」。
-- **如何验证 / 回归**：连续跑 50 次不 flaky；`pytest -q tests/test_mask.py` 总时长应短于 2s（不含 UI 测试）；失败时能稳定复现。
-- **相关文件**：`tests/test_mask.py:605-640`、`win/mask.py:98`
-- **版本**：1.2.0
-- **再犯的代价**：flaky 测试会被 `-x` 跳过或重跑掩盖，真正的重入 bug 又回来了。
+### 9.1 `MutexGuard` 临时值把锁拖进整个代码块
 
-### 8.4 CI 依赖与 tag 校验
+- **现象**：形如 `for x in lock(&work).items.clone()` 或 `if let Some(v) = lock(&map).remove(&k)` 的写法，
+  循环体/分支体里再取同一把锁就**直接死锁**（不是偶发，是稳定挂住），两个独立模块各自踩了一次。
+- **根因**：Rust 的临时值生命周期延伸到整个 `for`/`if let` 语句结束，`MutexGuard` 因此在块内一直持锁。
+- **修法**：先落局部变量再进入块：`let snapshot = { let guard = lock(...); guard.items.clone() };`。
+- **再犯的代价**：GUI 在锁屏/接管时静默卡死，且没有崩溃日志，只能看线程转储。
 
-- **现象**：desktop job 在 python/frontend 失败时仍跑；tag 推了但 release 没发。
-- **触发条件**：workflow 依赖写错；tag 与版本不一致。
-- **根因**：`desktop` 需要 `[python, frontend]` 都成功；release 只在 tag 且版本匹配时发布。
-- **修法**：保持 `needs: [python, frontend]`；发布前本地跑 `ruff check . && pytest -q && npm test`；tag 必须等于 `padlend.__version__`。
-- **如何验证 / 回归**：故意让 python job 失败，desktop 应 skipped；推 `v1.2.0` 前确认 `__version__` 已是 1.2.0；release 日志里能看到 zip 和 sha256。
-- **相关文件**：`.github/workflows/ci.yml:58-99`、`.github/workflows/release.yml:4-6`、`.github/workflows/release.yml:36-44`、`.github/workflows/release.yml:68-81`
-- **版本**：1.1.0
-- **再犯的代价**：坏包被发出去，或 tag 打好了却没有产物；回滚要删 tag/重发，release 记录会脏。
+### 9.2 `dumpsys input | grep -c` 在“干净”时退出码是 1
+
+- **现象**：迁移 `verify_clean` 时按退出码判断，干净的设备被判成脏的，退出流程误报“仍有残留”。
+- **根因**：`grep -c` 计数为 0 时退出码是 1；`server.py` 是先解析数字、后看退出码。
+- **修法**：与 Python 一致，先解析输出里的计数，再参考退出码；并加一条“rc=1 + 输出 0 → 干净”的回归测试。
+- **再犯的代价**：每次退出都走一遍“杀进程 + 等待”，慢且会误杀用户其它 scrcpy 会话。
+
+### 9.3 桌面锁屏时 `SendInput` / `SetCursorPos` 返回 `ERROR_ACCESS_DENIED`
+
+- **现象**：自动化跑 Raw Input 计数对拍时，注入全部失败；`GetForegroundWindow()` 返回 0、`GetCursorPos` 返回 (0,0)。
+- **根因**：工作站锁屏后交互桌面归 Winlogon 所有，普通进程拿不到输入通道。
+- **修法**：门禁工具先探测（`SetCursorPos` 返回值），锁屏时把活体门禁标记为 `blocked` 而不是 `fail`。
+- **再犯的代价**：CI/无人值守时把“环境不可用”误判成“实现有 bug”，白查一晚上。
+
+### 9.4 PyInstaller `--onefile` 的启动开销来自解压，不是 Python
+
+- **现象**：sidecar 冷启动 366 ms，改 `--onedir` 后 146 ms。
+- **根因**：onefile 每次启动把解释器 + adb（8.27 MB）+ 平台工具解到 `%TEMP%\_MEIxxxx`。
+- **修法**：要么 onedir，要么换 Rust（实测 10.6 ms）；**不要**用“启动慢”当成“必须换语言”的论据。
+- **再犯的代价**：拿错误的基线做技术选型，事后发现收益只有一半。
+
+### 9.5 cargo 链接失败：exe 被运行中的 sidecar 占用
+
+- **现象**：`cargo build` 报 `failed to remove ... padlend-core.exe: 拒绝访问` 或 `LNK1104`。
+- **根因**：上一轮冒烟/测试留下的 sidecar 进程还在跑，Windows 锁住可执行文件。
+- **修法**：`Get-Process padlend-core | Stop-Process -Force` 后再构建；测试脚本用 `terminate` + `wait`。
+- **再犯的代价**：构建随机失败，误以为是代码问题。
+
+### 9.6 golden trace 只比 `ok` 布尔会假绿
+
+- **现象**：`layout.save`（Python 本来就回错误）在 Rust 侧返回 `not implemented: layout.save` 也算“通过”。
+- **根因**：比较器只比 `ok` 是否相同，两边都失败就判一致。
+- **修法**：错误文本以 `not implemented:` 开头一律判失败；两边都报错时要求错误文本逐字一致。
+- **再犯的代价**：验收报告写着 25/25，实际有一半方法没实现。
+
+### 9.7 结构一致不等于值一致
+
+- **现象**：25/25 结构门禁全绿后，逐值对比才发现 `system.paths.noticesPath` 指向 `target/debug/`。
+- **根因**：`app_dir()` 在 Rust 里恒为 exe 目录，Python 在源码运行时用 `PROJECT_ROOT`。
+- **修法**：`tools/parity_probe.py` 拉两个实现做值级 diff（临时目录归一化），作为独立门禁。
+- **再犯的代价**：界面上显示的资源路径在开发/安装两种形态下不一致，用户找不到诊断文件。
 
 ---
 
-## 相关文档
-
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md)：用户向排障（错误码、日志、配置恢复）
-- [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)：关键实施决策与真机偏差
-- [DESIGN.md](DESIGN.md)：架构、启动/退出序列、坐标与遮罩设计
-- [CHANGELOG.md](CHANGELOG.md)：每个修复的原始记录
-- [../README.md](../README.md)：项目入口
