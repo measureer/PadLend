@@ -82,10 +82,10 @@
 - **现象**：打开 PadLend 的「保持平板亮屏」后，连接期间平板确实不熄屏；但断开后平板「开发者选项 → 保持唤醒状态」仍处于开启，而且拔掉充电线就恢复熄屏。用户会以为 PadLend 在偷偷改系统设置。
 - **触发条件**：`misc.keep_screen_on=true`（默认）时连接平板。旧实现每次连接都执行 `svc power stayon true`，并改写 `settings global stay_on_while_plugged_in`。
 - **根因**：`svc power stayon` 的语义是「充电时保持唤醒」，不是「连接期间保持亮屏」；它改的是全局电源/开发者设置，覆盖范围远超 PadLend 会话。1.1.x/1.2.0 的 `_keep_screen_on` 走的正是这条路（旧行号 `tablet/session.py:603-626`）。
-- **修法**：1.2.1 改为只动当前设备的 `settings system screen_off_timeout`：读取原值 → 先原子落盘 `screen_timeout_state.json` → `settings put` 成 30 分钟（`1_800_000` ms，Android 设置页常见上限；原值更长则不动）；`_teardown` 写回原值并删状态文件；进程崩溃时下次启动 `restore_pending_screen_timeout()` 恢复。**绝不碰** `stay_on_while_plugged_in` / `svc power stayon`。读取失败或原值不是数字时直接放弃修改，不猜默认值。设置页文案明确说明会临时修改熄屏时间，用户可关闭。
-- **如何验证 / 回归**：连接后 `adb shell settings get system screen_off_timeout` 应为 `1800000`（或被 ROM 夹到自己的上限）；断开/退出后应回到连接前的值；`adb shell settings get global stay_on_while_plugged_in` 全程不变；强杀 sidecar 后重启 PadLend，状态文件应被消费、原值恢复。单测见 `tests/test_release_hardening.py` 的 `test_keep_screen_uses_timeout_not_developer_option`、`test_screen_timeout_recovers_after_crash`、`test_screen_timeout_kept_when_device_offline`。
+- **修法**：1.2.1 改为只动当前设备的 `settings system screen_off_timeout`：读取原值 → 先原子落盘 `screen_timeout_state.json` → `settings put` 成 5 小时（`18_000_000` ms；原值更长则不动，部分 ROM 可能夹到自己的上限）；`_teardown` 写回原值并删状态文件；进程崩溃时下次启动 `restore_pending_screen_timeout()` 恢复。**绝不碰** `stay_on_while_plugged_in` / `svc power stayon`。读取失败或原值不是数字时直接放弃修改，不猜默认值。设置页文案明确说明会临时修改熄屏时间，用户可关闭。
+- **如何验证 / 回归**：连接后 `adb shell settings get system screen_off_timeout` 应为 `18000000`（或被 ROM 夹到自己的上限）；断开/退出后应回到连接前的值；`adb shell settings get global stay_on_while_plugged_in` 全程不变；强杀 sidecar 后重启 PadLend，状态文件应被消费、原值恢复。单测见 `tests/test_release_hardening.py` 的 `test_keep_screen_uses_timeout_not_developer_option`、`test_screen_timeout_recovers_after_crash`、`test_screen_timeout_kept_when_device_offline`。
 - **相关文件**：`tablet/session.py:738-786`（连接期设置/还原）、`tablet/session.py:1256-1271`（启动恢复）、`main.py:150-164`（启动恢复）、`src/lib/configSchema.ts:130-133`（设置页文案）
-- **版本**：1.2.1（替换 1.1.x–1.2.0 的 `svc power stayon` 实现）；30 分钟上限自 1.3.0
+- **版本**：1.2.1（替换 1.1.x–1.2.0 的 `svc power stayon` 实现）；5 小时上限自 1.3.0
 - **再犯的代价**：用户平板上的开发者选项被永久改掉，拔线即熄屏；这类「副作用外溢」比功能失效更难被发现，也最容易招来「PadLend 改我系统设置」的投诉。
 
 ### 1.6 把 adb serial 当设备身份，换网就多出一台

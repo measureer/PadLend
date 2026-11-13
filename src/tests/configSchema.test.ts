@@ -22,7 +22,7 @@ describe('声明式设置 schema', () => {
     const keepScreen = fields.find((f) => f.id === 'keep_screen_on');
     expect(keepScreen?.hint).toContain('临时把');
     expect(keepScreen?.hint).toContain('熄屏时间');
-    expect(keepScreen?.hint).toContain('30 分钟');
+    expect(keepScreen?.hint).toContain('5 小时');
     expect(keepScreen?.hint).toContain('可以关闭');
   });
 

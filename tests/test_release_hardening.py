@@ -180,7 +180,7 @@ def test_keep_screen_uses_timeout_not_developer_option(tmp_path: Path, monkeypat
     session._cfg = None
     session._orig_screen_timeout = None
 
-    assert session_mod._SCREEN_TIMEOUT_KEEP_MS == 30 * 60 * 1000
+    assert session_mod._SCREEN_TIMEOUT_KEEP_MS == 5 * 60 * 60 * 1000
     session._keep_screen_on()
 
     assert session._dev_adb.calls == [
