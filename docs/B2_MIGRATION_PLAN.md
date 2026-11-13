@@ -67,9 +67,11 @@
 |---|---|
 | 阶段 0 | 完成（`B2_STAGE_0_REPORT.md`） |
 | M0 | 部分完成：G1 无头 18/18 绿；**活体计数对拍被锁屏阻塞** |
-| M1 | 完成（`B2_M1_REPORT.md`）：274 项跨语言字节对拍、G3 4/25 |
-| M2 | 完成（`B2_M2_REPORT.md`）：7 个 Win32 模块、295 测试 |
-| M3 | **移植完成**（`B2_M3_REPORT.md`）：router.rs 5447 行、36 测试、5/5 场景回放；SessionPort 实现待 M4 |
-| 提交 | `bb33e4a`（M1+M2）、`80cc63c`（M3 状态机 + 适配器 + DPI 接线） |
-| M4 | 进行中：`tablet/` 连接层（adb/locator/mdns/server/cursor/simulated/session/audio） |
-| 待人工 | 解锁桌面跑 `cargo test -- --ignored` 与 `run_gates --stage M0/M2` |
+| M1 | 完成（`B2_M1_REPORT.md`） |
+| M2 | 完成（`B2_M2_REPORT.md`）；13 个 `#[ignore]` 活体用例待解锁 |
+| M3 | 完成（`B2_M3_REPORT.md`）：状态机 5/5 场景回放 |
+| M4 | 完成（连接层 9,500 行 / 140 测试） |
+| M5 | **门禁全绿**（`B2_M5_REPORT.md`）：522 测试、25/25 RPC、A/B 数据；打包并入安装器待决策 |
+| 提交 | `bb33e4a` M1+M2 → `80cc63c` M3 → `ede1fa2` M4 → `aec645a` M5 服务层 + `bridge.rs` A/B 切换 |
+| 待人工 | 解锁桌面跑活体门禁与 `#[ignore]` 用例；真机连接/接管/交还 |
+| 待决策 | 是否把 `padlend-core.exe` 打进 NSIS（会改变安装包内容与发布流程） |

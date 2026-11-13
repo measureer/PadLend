@@ -216,7 +216,12 @@ fn resolve_service() -> (String, Vec<String>, Option<PathBuf>) {
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
+    // A/B 切换点：把 padlend-core.exe 放进可执行目录即切到 Rust 引擎，删掉即回退到
+    // Python sidecar（两者的 NDJSON 契约完全相同，见 padlend-core/src/rpc.rs）。
     let candidates = [
+        "padlend-core-x86_64-pc-windows-msvc.exe",
+        "padlend-core.exe",
+        "resources/padlend-core.exe",
         "padlend-service-x86_64-pc-windows-msvc.exe",
         "padlend-service.exe",
         "resources/padlend-service.exe",
