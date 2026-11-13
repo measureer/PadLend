@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import constants as C
-from config import Config, PlacementCfg, load_config
+from config import Config, PlacementCfg, load_config, normalize_layout_key
 from core.diagnostics import (
     DIAGNOSTIC_STEPS,
     CommandResult,
@@ -35,6 +35,7 @@ from core.diagnostics import (
 )
 from core.geometry import Align, Edge, EdgeSegment, Placement
 from main import Runtime, _mark_clean_exit, _mark_running, _set_dpi_awareness, _stale_cleanup
+from service.device_registry import DeviceRegistry, is_wireless_serial
 from service.serializers import (
     apply_config_patch,
     config_dict,
@@ -82,6 +83,7 @@ class PadLendService:
         self.simulate = bool(simulate)
         self.no_hooks = bool(no_hooks)
         self.path = Path(config_path) if config_path else C.config_path()
+        self.registry = DeviceRegistry(self.path.with_name("devices.json")).load()
         self.cfg: Config = Config()
         self.runtime: Runtime | None = None
         self.hotkeys: Any = None
@@ -94,7 +96,6 @@ class PadLendService:
         self._placement: Placement | None = None
         self._layout_key: tuple[str, str] | None = None
         self._located: dict[str, dict[str, Any]] = {}
-        self._known: list[str] = []
         self._devices: list[dict[str, Any]] = []
         self._logs: deque[dict[str, str]] = deque(maxlen=1000)
         self._report: DiagnosticsReport | None = None
@@ -128,6 +129,7 @@ class PadLendService:
         self.first_run = not self.path.exists()
         self.cfg = load_config(self.path)
         self.cfg.validate()
+        self._migrate_device_registry()
         if self.first_run:
             try:
                 self.cfg.save(self.path)
@@ -169,6 +171,33 @@ class PadLendService:
         threading.Thread(target=self._facts_loop, name="service-facts", daemon=True).start()
         self.emit_log("APP", f"{C.APP_NAME} {C.VERSION} 业务服务已就绪")
         self.started = True
+
+    def _migrate_device_registry(self) -> None:
+        """把 1.2.1 及更早的 config.known/macs 一次性迁入 devices.json。
+
+        只在新注册表不存在、或文件损坏需要重建时迁移；之后
+        devices.json 是唯一数据源，config.yaml 里的 known/macs 保留但不再读写。
+        """
+        for issue in self.registry.issues:
+            self.emit_log("DEVICE", issue)
+        if self.registry.existed and not self.registry.needs_rebuild:
+            return
+        try:
+            imported = self.registry.import_legacy(
+                current=str(getattr(self.cfg.device, "serial", "") or ""),
+                known=list(getattr(self.cfg.device, "known", []) or []),
+                macs=dict(getattr(self.cfg.device, "macs", {}) or {}),
+            )
+        except Exception as exc:  # noqa: BLE001 - 迁移失败不能阻断启动
+            log.warning("设备记录迁移失败: %r", exc)
+            self.emit_log("DEVICE", f"设备记录迁移失败：{exc}")
+            return
+        if (imported or self.registry.needs_rebuild) and self.registry.save():
+            if imported:
+                log.info("设备记录迁移完成：%d 条", imported)
+                self.emit_log("DEVICE", f"已迁移 {imported} 条旧设备记录")
+            else:
+                self.emit_log("DEVICE", "设备记录已从空表重建")
 
     def _start_hotkeys(self) -> None:
         if os.name != "nt" or self.runtime is None:
@@ -271,8 +300,10 @@ class PadLendService:
             dto = facts_dict(facts)
             self.emit("facts", dto)
             if dto is not None:
+                # 先登记身份，再套用布局：旧记录拿到硬件序列号后，布局键会从
+                # 临时端点迁到 hw: 身份，顺序反了会先套一次全局布局。
+                self._remember_device(dto["serial"], facts=facts)
                 self._apply_layout_for_facts(facts)
-                self._remember_device(dto["serial"])
                 self.emit_log("DEVICE", f"设备事实：{dto['serial']} {dto['width']}×{dto['height']}")
             elif self._layout_key is not None:
                 self._layout_key = None
@@ -369,44 +400,66 @@ class PadLendService:
         return {"config": config_dict(self.cfg), "issues": [], "path": str(self.path)}
 
     # ------------------------------------------------------------------ 设备
-    def _known_devices(self) -> list[str]:
-        known: list[str] = []
-        current = str(getattr(self.cfg.device, "serial", "") or "")
-        for serial in [current, *(getattr(self.cfg.device, "known", []) or [])]:
-            text = str(serial or "").strip()
-            if text and text not in known:
-                known.append(text)
-        return known[:8]
+    def _located_for_record(self, record: Any) -> dict[str, Any]:
+        """一台设备的任一端点有查找结果就复用，旧地址仍可显示状态。"""
+        for endpoint in record.endpoints:
+            for serial in [endpoint.serial, *endpoint.aliases]:
+                found = self._located.get(serial)
+                if found:
+                    return found
+        return {}
 
     def _publish_devices(self, entries: list[Any], error: str = "") -> list[dict[str, Any]]:
         devices: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for entry in entries:
-            dto = device_entry_dict(entry)
-            serial = dto["serial"]
-            if not serial or serial in seen:
-                continue
-            seen.add(serial)
-            dto["located"] = self._located.get(serial, {}).get("status", "")
-            dto["locatedDetail"] = self._located.get(serial, {}).get("detail", "")
-            devices.append(dto)
-        for serial in self._known_devices():
-            if serial in seen:
-                continue
-            located = self._located.get(serial, {})
-            devices.append(
-                {
-                    "serial": serial,
-                    "state": "offline",
-                    "model": "上次连接的设备",
-                    "transport": "无线" if ":" in serial else "USB",
-                    "online": False,
-                    "remembered": True,
-                    "located": located.get("status", "offline"),
-                    "locatedDetail": located.get("detail", "上次连接，当前未接入"),
-                }
-            )
-        self._devices = devices
+        with self._lock:
+            seen: set[str] = set()
+            seen_records: set[str] = set()
+            for entry in entries:
+                dto = device_entry_dict(entry)
+                serial = dto["serial"]
+                if not serial or serial in seen:
+                    continue
+                record = self.registry.find_by_serial(serial)
+                if record is not None:
+                    # 同一台设备可能同时有 USB 与无线两个在线端点，列表只留一行。
+                    if record.id in seen_records:
+                        continue
+                    seen_records.add(record.id)
+                seen.add(serial)
+                located = (
+                    self._located_for_record(record)
+                    if record is not None
+                    else self._located.get(serial, {})
+                )
+                dto["located"] = located.get("status", "")
+                dto["locatedDetail"] = located.get("detail", "")
+                devices.append(dto)
+            current = str(getattr(self.cfg.device, "serial", "") or "")
+            for record in self.registry.records():
+                if record.id in seen_records:
+                    continue
+                serial = record.primary_serial(current)
+                if not serial or serial in seen:
+                    continue
+                seen_records.add(record.id)
+                seen.add(serial)
+                located = self._located_for_record(record)
+                endpoint = record.endpoint(serial)
+                wireless = endpoint is not None and endpoint.transport == "wifi"
+                transport = "无线" if wireless else "USB"
+                devices.append(
+                    {
+                        "serial": serial,
+                        "state": "offline",
+                        "model": record.model or "上次连接的设备",
+                        "transport": transport,
+                        "online": False,
+                        "remembered": True,
+                        "located": located.get("status", "offline"),
+                        "locatedDetail": located.get("detail", "上次连接，当前未接入"),
+                    }
+                )
+            self._devices = devices
         self.emit("devices", {"devices": devices, "error": error})
         return devices
 
@@ -434,11 +487,25 @@ class PadLendService:
         adb = getattr(self.runtime, "adb", None)
         if adb is None or str(getattr(adb, "path", "")) == "simulated-adb":
             return {"located": dict(self._located)}
-        targets = [
-            (s, str((self.cfg.device.macs or {}).get(s, "") or ""))
-            for s in self._known_devices()
-            if ":" in s
-        ]
+        # 查找对象来自注册表：一台设备可能保留多个历史地址，逐个尝试；
+        # 不再依赖 config.device.macs（字段保留但已停用）。
+        targets: list[tuple[str, str]] = []
+        with self._lock:
+            seen: set[str] = set()
+            for record in self.registry.records():
+                mac = record.macs[0] if record.macs else ""
+                for endpoint in record.endpoints:
+                    serial = endpoint.serial
+                    if serial in seen:
+                        continue
+                    if endpoint.transport != "wifi" and not is_wireless_serial(serial):
+                        continue
+                    seen.add(serial)
+                    targets.append((serial, mac))
+                    if len(targets) >= 8:
+                        break
+                if len(targets) >= 8:
+                    break
         if not targets:
             return {"located": dict(self._located)}
         try:
@@ -452,14 +519,24 @@ class PadLendService:
                 found = locate(serial, mac, mdns=lambda: discovered, arp=arp_table)
             except Exception as exc:  # noqa: BLE001
                 found = Located(detail=f"查找失败：{exc}")
+            record = None
             if found.status == STATUS_MOVED and found.address:
-                self._adopt_address(serial, found)
-                self._located[found.address] = located_dict(found)
-                self.emit_log("DEVICE", f"平板换了地址：{serial} → {found.address}")
+                record = self._adopt_address(serial, found)
+                if record is not None:
+                    self._located.pop(serial, None)
+                    self._located[found.address] = located_dict(found)
+                    self.emit_log("DEVICE", f"平板换了地址：{serial} → {found.address}")
+                else:
+                    detail = located_dict(found)
+                    detail["detail"] = "新地址已被另一台设备占用，未自动迁移"
+                    self._located[serial] = detail
             else:
                 self._located[serial] = located_dict(found)
-            if found.status == STATUS_ONLINE and not self.cfg.device.macs.get(serial):
-                self._capture_mac(serial)
+            if found.status == STATUS_ONLINE:
+                if record is None:
+                    record = self.registry.find_by_serial(serial)
+                if record is not None and not record.macs:
+                    self._capture_mac(serial)
         self._publish_devices([], "")
         online = sum(1 for item in self._located.values() if item.get("status") == STATUS_ONLINE)
         self.emit_log("DEVICE", f"局域网查找：{online} 台在线")
@@ -485,6 +562,7 @@ class PadLendService:
         while time.monotonic() < deadline and not self._stop.is_set():
             facts = router.facts
             if facts is not None and _attr(facts, "serial", ""):
+                self._remember_device(serial, facts=facts)
                 self.emit_log("DEVICE", f"已连接 {serial}")
                 return {"ok": True, "message": ""}
             time.sleep(0.1)
@@ -519,41 +597,91 @@ class PadLendService:
         if not serial:
             return {"ok": False}
         with self._lock:
-            self.cfg.device.known = [s for s in (self.cfg.device.known or []) if str(s) != serial]
-            self.cfg.device.macs.pop(serial, None)
-            if str(getattr(self.cfg.device, "serial", "")) == serial:
-                known = self.cfg.device.known
-                self.cfg.device.serial = known[0] if known else ""
-            self._located.pop(serial, None)
+            record = self.registry.find_by_serial(serial)
+            current = str(getattr(self.cfg.device, "serial", "") or "")
+            removed_current = record is not None and record.endpoint(current) is not None
+            if record is None:
+                removed = self.registry.remove(serial)
+            else:
+                # 列表一行代表一台设备；删除整条记录，不能只摘掉当前端点后
+                # 让同一台设备的另一个 USB/无线地址继续留在列表里。
+                removed = False
+                for endpoint in list(record.endpoints):
+                    removed = self.registry.remove(endpoint.serial) or removed
+                    for alias in endpoint.aliases:
+                        self._located.pop(alias, None)
+                    self._located.pop(endpoint.serial, None)
+            if removed:
+                self.registry.save()
+                self._located.pop(serial, None)
+            if removed_current or current == serial:
+                remaining = self.registry.serials()
+                self.cfg.device.serial = remaining[0] if remaining else ""
+            # config.device.known/macs 是 1.2.1 的旧字段：保留但不再维护，
+            # 回退旧版本时仍能看到最后一次记录。
             self.cfg.save(self.path)
         self.emit("config", {"config": config_dict(self.cfg), "issues": []})
         self.emit_log("DEVICE", f"已从列表移除 {serial}")
         return {"ok": True, "config": config_dict(self.cfg)}
 
-    def _remember_device(self, serial: str, mac: str = "") -> None:
+    def _move_layout_identity(self, old: str, new: str) -> bool:
+        """临时端点升级为 hw: 身份时，把旧布局键搬到新键（保留横竖屏）。"""
+        old_key = normalize_layout_key(old)
+        new_key = normalize_layout_key(new)
+        if not old_key or not new_key or old_key == new_key:
+            return False
+        profiles = self.cfg.layouts.devices.pop(old_key, None)
+        if not profiles:
+            return False
+        existing = self.cfg.layouts.devices.setdefault(new_key, {})
+        for bucket, profile in profiles.items():
+            existing.setdefault(bucket, profile)
+        if self._layout_key is not None and self._layout_key[0] == old_key:
+            self._layout_key = (new_key, self._layout_key[1])
+        return True
+
+    def _remember_device(self, serial: str, mac: str = "", facts: Any = None) -> None:
         text = str(serial or "").strip()
         if not text:
             return
+        hardware = str(_attr(facts, "hardware_serial", "") or "") if facts is not None else ""
+        model = str(_attr(facts, "model", "") or "") if facts is not None else ""
+        changed = False
         with self._lock:
-            if text in self._known_devices() and not mac:
+            before = self.registry.find_by_serial(text)
+            candidates: list[str] = [text]
+            if before is not None:
+                if before.hardware_serial:
+                    candidates.append(before.hardware_serial)
+                candidates.extend(endpoint.serial for endpoint in before.endpoints)
+            record = self.registry.upsert(
+                text,
+                hardware_serial=hardware,
+                model=model,
+                mac=normalize_mac(mac),
+                source="connect" if facts is not None else "",
+            )
+            if record is None:
                 return
-            learned = normalize_mac(mac)
-            if learned:
-                self.cfg.device.macs[text] = learned
-            known = [text, *(s for s in self._known_devices() if s != text)]
-            self.cfg.device.known = known[:8]
-            self.cfg.device.serial = text
-            keep = set(self.cfg.device.known)
-            self.cfg.device.macs = {
-                k: v for k, v in (self.cfg.device.macs or {}).items() if k in keep and v
-            }
-            self.cfg.save(self.path)
-        self.emit("config", {"config": config_dict(self.cfg), "issues": []})
-        if ":" in text and not self.cfg.device.macs.get(text):
+            new_identity = record.hardware_serial or text
+            for old_identity in dict.fromkeys(candidates):
+                if old_identity.casefold() != new_identity.casefold():
+                    changed = self._move_layout_identity(old_identity, new_identity) or changed
+            if str(getattr(self.cfg.device, "serial", "") or "") != text:
+                self.cfg.device.serial = text
+                changed = True
+            self.registry.save()
+            # 旋转/重连只更新 devices.json；config.yaml 只在当前设备指针
+            # 或布局身份变化时落盘，避免每帧写配置。
+            if changed:
+                self.cfg.save(self.path)
+        if changed:
+            self.emit("config", {"config": config_dict(self.cfg), "issues": []})
+        if is_wireless_serial(text) and not record.macs:
             self._capture_mac(text)
 
     def _capture_mac(self, serial: str) -> None:
-        if ":" not in serial or self.simulate:
+        if not is_wireless_serial(serial) or self.simulate:
             return
 
         def _run() -> None:
@@ -570,20 +698,30 @@ class PadLendService:
 
         threading.Thread(target=_run, name="service-mac", daemon=True).start()
 
-    def _adopt_address(self, previous: str, found: Located) -> None:
+    def _adopt_address(self, previous: str, found: Located) -> Any:
         target = str(getattr(found, "address", "") or "").strip()
         if not target or target == previous:
-            return
+            return None
+        changed = False
         with self._lock:
-            old_mac = normalize_mac((self.cfg.device.macs or {}).get(previous, ""))
-            learned = normalize_mac(getattr(found, "mac", "")) or old_mac
-            self.cfg.device.macs.pop(previous, None)
-            self.cfg.device.known = [
+            record = self.registry.rename_endpoint(
+                previous,
                 target,
-                *(s for s in (self.cfg.device.known or []) if s not in (previous, target)),
-            ][:8]
-            self.cfg.device.serial = target
-            self._remember_device(target, mac=learned)
+                mac=str(getattr(found, "mac", "") or ""),
+                source="locate",
+            )
+            if record is None:
+                return None
+            self.registry.save()
+            current = str(getattr(self.cfg.device, "serial", "") or "")
+            # 只迁移当前设备的指针；查找历史设备不能把正在使用的另一台踢掉。
+            if not current or current == previous:
+                self.cfg.device.serial = target
+                self.cfg.save(self.path)
+                changed = True
+        if changed:
+            self.emit("config", {"config": config_dict(self.cfg), "issues": []})
+        return record
 
     # ------------------------------------------------------------------ 布局
     def _monitor_device(self, handle: int) -> str:
