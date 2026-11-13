@@ -120,10 +120,6 @@ export const SETTING_GROUPS: SettingGroup[] = [
         hint: '连接成功、断开或出故障时，在右下角托盘弹一个气泡提醒。',
       },
       {
-        id: 'show_pointer_ghost', section: 'ui', key: 'show_pointer_ghost', label: '显示指针幽灵', kind: 'toggle',
-        hint: '在 PC 屏幕边缘画一个半透明小圆点，提示即将穿越的位置。',
-      },
-      {
         id: 'close_to_tray', section: 'ui', key: 'close_to_tray', label: '关闭窗口时最小化到托盘', kind: 'toggle',
         hint: '点窗口 X 时只收进托盘继续运行；不勾选则直接退出。',
       },
@@ -133,7 +129,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'keep_screen_on', section: 'misc', key: 'keep_screen_on', label: '保持平板亮屏', kind: 'toggle',
-        hint: '连接期间不让平板自动熄屏；断开后把平板原来的熄屏设置还回去。',
+        hint: '连接期间临时调大平板的系统熄屏超时，断开后还原；不修改开发者选项里的「保持唤醒状态」。',
       },
     ],
   },

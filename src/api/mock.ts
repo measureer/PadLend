@@ -60,7 +60,6 @@ export function defaultConfig(): Config {
       language: 'zh_CN',
       theme: 'dark',
       tray_notifications: true,
-      show_pointer_ghost: true,
       close_to_tray: false,
     },
     misc: { clipboard_sync: true, keep_screen_on: true, restore_pointer_speed: -3 },
@@ -176,7 +175,7 @@ export class MockBackend {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
-    this.pushLog('APP', 'PadLend 1.2.0 业务服务已就绪（演示模式）');
+    this.pushLog('APP', 'PadLend 1.2.1 业务服务已就绪（演示模式）');
     this.pushLog('DEVICE', '扫描设备：1 台设备');
     this.pushLog('STATE', 'idle → idle（启动）');
   }
@@ -225,7 +224,7 @@ export class MockBackend {
 
   private snapshot(): Bootstrap {
     return {
-      version: '1.2.0',
+      version: '1.2.1',
       config: this.config,
       configIssues: [],
       configPath: '%APPDATA%\\PadLend\\config.yaml',
@@ -364,7 +363,7 @@ export class MockBackend {
         break;
       case 'diagnostics.run': {
         this.diagnosticsText = [
-          'PadLend 1.2.0 诊断报告',
+          'PadLend 1.2.1 诊断报告',
           '（设备序列号、IP/MAC、用户名与用户目录路径已自动打码）',
           '',
           '== 概要 ==',
@@ -385,14 +384,14 @@ export class MockBackend {
         result = { path: 'C:\\Users\\<user>\\Desktop\\padlend-diagnostics-demo.zip' };
         break;
       case 'diagnostics.static':
-        result = { text: 'PadLend 1.2.0 · Windows · jar 已就绪（未运行 adb 采集）' };
+        result = { text: 'PadLend 1.2.1 · Windows · jar 已就绪（未运行 adb 采集）' };
         break;
       case 'system.paths':
         result = {
           configPath: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\config.yaml',
           logDir: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\logs',
           noticesPath: 'C:\\Program Files\\PadLend\\THIRD_PARTY_NOTICES.md',
-          version: '1.2.0',
+          version: '1.2.1',
           license: 'Apache-2.0',
           appName: 'PadLend',
         };
@@ -400,27 +399,13 @@ export class MockBackend {
       case 'wizard.check': {
         const step = Number(params.step ?? 0);
         const texts = [
-          '已连接：R58M3C0ABCDE',
-          'USB 调试已开启。',
+          '已连接：R58M3C0ABCDE；USB 调试已开启。',
           'uhid 组：有\n/dev/uhid 可打开：是\n相对鼠标注入可用。',
-          'scrcpy-server-v5.0.1.jar（4096 KB）已就位。',
           '一切就绪，回到主窗口开始使用。',
         ];
-        result = { ok: true, text: texts[step] ?? texts[4] };
+        result = { ok: true, text: texts[step] ?? texts[2] };
         break;
       }
-      case 'wizard.push_jar':
-        result = { ok: true, text: '已推送到 /data/local/tmp/scrcpy-server.jar' };
-        break;
-      case 'wizard.finish':
-        this.config = {
-          ...this.config,
-          device: { ...this.config.device, auto_connect: Boolean(params.autoConnect) },
-          ui: { ...this.config.ui, close_to_tray: Boolean(params.closeToTray) },
-        };
-        this.pushLog('SETUP', '首次设置完成');
-        result = { config: this.config };
-        break;
       case 'logs.recent':
         result = { logs: this.logs.slice(-Number(params.limit ?? 200)) };
         break;

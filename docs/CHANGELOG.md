@@ -2,6 +2,31 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.2.1] — 2026-11-13
+
+### 修复
+
+- **「保持平板亮屏」不再改开发者选项**：旧实现连接时执行 `svc power stayon true` 并改写
+  `settings global stay_on_while_plugged_in`，断开后平板仍处于「充电时保持唤醒」，拔线就熄屏。
+  1.2.1 改为只临时调大当前设备的 `settings system screen_off_timeout`：原值先原子落盘，
+  断开/退出写回，进程崩溃则下次启动恢复；读取失败或原值不是数字时不修改系统设置。
+  全程不碰 `stay_on_while_plugged_in` / `svc power stayon`。
+- **删除没有实现的「显示指针幽灵」开关**：该功能只落地了配置字段、TS 类型、设置页 schema、
+  mock 和文档，运行时没有任何绘制链路，属于空开关。1.2.1 删除开关与全部相关代码；
+  旧配置里的 `ui.show_pointer_ghost` 在解析时静默丢弃，不触发「未知配置项」告警。
+
+### 变更
+
+- **首次向导由 5 步压成 3 步**：连接平板/USB 调试 → 检查 UHID → 完成。删除前端
+  `wizardPushJar`、`wizard.push_jar` 与后端 `wizard.finish` RPC，以及「安装 adb / 检查并
+  推送 scrcpy-server」步骤；adb 与 `scrcpy-server` 本就随安装包内置，向导文案已说明，
+  用户不需要另外准备。`wizardFinish` 前端动作保留，只负责保存自动连接/收进托盘选项。
+
+### 验证
+
+- `pytest`：425 passed，3 skipped（新增 4 个回归用例）；`ruff check .`、`tsc --noEmit` 通过；
+  `vitest run`：29 passed。
+
 ## [1.2.0] — 2026-11-13
 
 ### 修复

@@ -291,10 +291,6 @@ export async function wizardCheck(step: number): Promise<{ ok: boolean; text: st
   return backend.call<{ ok: boolean; text: string }>(RPC.wizardCheck, { step });
 }
 
-export async function wizardPushJar(): Promise<{ ok: boolean; text: string }> {
-  return backend.call<{ ok: boolean; text: string }>(RPC.wizardPushJar);
-}
-
 export async function wizardFinish(autoConnect: boolean, closeToTray: boolean): Promise<void> {
   const ok = await saveConfig(
     {

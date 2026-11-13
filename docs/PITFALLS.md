@@ -6,8 +6,8 @@
 **怎么读**
 
 - 每条固定为：现象 → 触发条件 → 根因 → 修法 → 如何验证/回归 → 相关文件:行 → 版本，最后一句「再犯的代价」。
-- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0 的条目是 1.2.0 的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
-- 行号基于 1.2.0 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
+- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1 的条目是这两个版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
+- 行号基于 1.2.1 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
 - 代码与文档的 `文件:行` 默认相对**仓库根**；只有 Markdown 链接用同目录相对路径。
 - 「遮罩」默认指 Python sidecar 创建的 `PadLendCursorMaskWindow`，不是 Tauri 窗口。这个心智模型错了，后面所有判断都会错。
 
@@ -22,6 +22,8 @@
 | 高 DPI / 多屏遮罩错位、落点偏 | [5.1](#51-dpi-感知晚于建窗遮罩只盖住一部分) [5.2](#52-物理坐标与逻辑坐标混用) [5.3](#53-接管中显示器拓扑变化) [5.4](#54-负坐标副屏) |
 | 连上平板但输入乱/没反应 | [1.1](#11-幽灵-scrcpy-server-杀不掉) [2.2](#22-心跳把按住冲成松开) [2.4](#24-进入接管没有先补发全松) |
 | 安装版缺 jar/adb、sidecar 找不到 | [7.2](#72-sidecar-解析失败回退到开发期-python) [7.3](#73-资源清单双轨安装版与-zip-版不一致) |
+| 开启「保持平板亮屏」后开发者选项被改 | [1.5](#15-保持平板亮屏改坏了开发者选项的保持唤醒状态) |
+| 设置页开关没反应、疑似空开关 | [6.5](#65-只有开关没有实现的显示指针幽灵) |
 | CI 红了但不知道是不是环境问题 | [8.1](#81-无设备环境测试必须-skip-而不是-fail) [8.2](#82-真实窗口测试藏在-padlend_ui_tests-后面) |
 
 ---
@@ -74,8 +76,18 @@
 
 ---
 
-## 2. UHID 与输入注入
+### 1.5 「保持平板亮屏」改坏了开发者选项的「保持唤醒状态」
 
+- **现象**：打开 PadLend 的「保持平板亮屏」后，连接期间平板确实不熄屏；但断开后平板「开发者选项 → 保持唤醒状态」仍处于开启，而且拔掉充电线就恢复熄屏。用户会以为 PadLend 在偷偷改系统设置。
+- **触发条件**：`misc.keep_screen_on=true`（默认）时连接平板。旧实现每次连接都执行 `svc power stayon true`，并改写 `settings global stay_on_while_plugged_in`。
+- **根因**：`svc power stayon` 的语义是「充电时保持唤醒」，不是「连接期间保持亮屏」；它改的是全局电源/开发者设置，覆盖范围远超 PadLend 会话。1.1.x/1.2.0 的 `_keep_screen_on` 走的正是这条路（旧行号 `tablet/session.py:603-626`）。
+- **修法**：1.2.1 改为只动当前设备的 `settings system screen_off_timeout`：读取原值 → 先原子落盘 `screen_timeout_state.json` → `settings put` 成 int32 最大值（部分 ROM 会夹到自己的上限）；`_teardown` 写回原值并删状态文件；进程崩溃时下次启动 `restore_pending_screen_timeout()` 恢复。**绝不碰** `stay_on_while_plugged_in` / `svc power stayon`。读取失败或原值不是数字时直接放弃修改，不猜默认值。
+- **如何验证 / 回归**：连接后 `adb shell settings get system screen_off_timeout` 应为 `2147483647`（或被 ROM 夹到上限）；断开/退出后应回到连接前的值；`adb shell settings get global stay_on_while_plugged_in` 全程不变；强杀 sidecar 后重启 PadLend，状态文件应被消费、原值恢复。单测见 `tests/test_release_hardening.py` 的 `test_keep_screen_uses_timeout_not_developer_option`、`test_screen_timeout_recovers_after_crash`、`test_screen_timeout_kept_when_device_offline`。
+- **相关文件**：`tablet/session.py:610-658`（连接期设置/还原）、`tablet/session.py:1096-1144`（落盘与崩溃恢复）、`main.py:150-164`（启动恢复）、`src/lib/configSchema.ts:130-133`（设置页文案）
+- **版本**：1.2.1（替换 1.1.x–1.2.0 的 `svc power stayon` 实现）
+- **再犯的代价**：用户平板上的开发者选项被永久改掉，拔线即熄屏；这类「副作用外溢」比功能失效更难被发现，也最容易招来「PadLend 改我系统设置」的投诉。
+
+## 2. UHID 与输入注入
 ### 2.1 Win 键穿透开始菜单 + 遮罩 = 假死
 
 - **现象**：接管期间按 Win，开始菜单弹出来但被透明置顶遮罩盖住；鼠标点不到、其他键又被吞掉，用户报「电脑死机/PadLend 崩溃」。松手后仍可能卡在这个状态。
@@ -323,10 +335,20 @@
 - **版本**：1.0.2
 - **再犯的代价**：双实例会争抢 Raw Input 钩子和 adb forward，表现为输入重复/错乱，极难排查。
 
+### 6.5 只有开关、没有实现的「显示指针幽灵」
+
+- **现象**：设置页有「显示指针幽灵」开关，切换后屏幕边缘没有任何变化；用户以为功能坏了，维护者以为只是画得太淡。
+- **触发条件**：打开设置 →「杂项」，切换该开关并保存。配置会写入 `ui.show_pointer_ghost`，mock 也返回成功，但运行时没有任何绘制代码。
+- **根因**：功能只落地了配置字段、类型、设置页 schema、mock 和文档（`config.py`、`src/api/types.ts`、`src/lib/configSchema.ts`、`src/api/mock.ts`、README/DESIGN），缺少渲染器、状态和事件链路。属于「先暴露 UI、后写实现」的典型空开关。
+- **修法**：1.2.1 直接删除该开关及其全部代码与文档承诺；`config.py` 解析旧配置时显式 `pop("show_pointer_ghost")`，旧 `config.yaml` 不会触发「未知配置项」告警。没有新增替代设置。
+- **如何验证 / 回归**：`rg "show_pointer_ghost"` 只应命中 `config.py` 的兼容丢弃和对应测试；设置页「杂项」不再出现该开关；带该键的旧配置能正常加载、保存后键消失且无 warning。
+- **相关文件**：`config.py:339-348`（旧键静默丢弃）、`tests/test_config.py:14-21`（旧配置兼容测试）、`src/lib/configSchema.ts`（开关已删）
+- **版本**：1.2.1
+- **再犯的代价**：空开关会让用户反复尝试并怀疑整个设置页；如果以后补实现，旧配置里的 `false`/`true` 还会被误读成用户意图，增加迁移成本。
+
 ---
 
 ## 7. 打包与发布
-
 ### 7.1 版本号三处手工同步，只校验了一处
 
 - **现象**：安装包/关于页/exe 属性版本不一致；release 通过了，但 `tauri.conf.json` 还是旧版。

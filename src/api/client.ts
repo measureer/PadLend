@@ -137,7 +137,5 @@ export const RPC = {
   diagnosticsStatic: 'diagnostics.static',
   systemPaths: 'system.paths',
   wizardCheck: 'wizard.check',
-  wizardPushJar: 'wizard.push_jar',
-  wizardFinish: 'wizard.finish',
   logsRecent: 'logs.recent',
 } as const;

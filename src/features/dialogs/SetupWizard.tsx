@@ -1,16 +1,22 @@
-/** 首次设置向导：5 步检测，全部在服务进程/线程池执行，界面保持可交互。 */
+/** 首次设置向导：3 步检测，全部在服务进程/线程池执行，界面保持可交互。 */
 
 import { useEffect, useState } from 'react';
 import { Icon } from '../../components/Icon';
 import { Button, Modal, Toggle } from '../../components/ui';
-import { wizardCheck, wizardFinish, wizardPushJar } from '../../lib/actions';
+import { wizardCheck, wizardFinish } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
 
 const STEPS = [
-  { title: '安装 adb', subtitle: 'PadLend 通过 adb 与平板通信。', action: '开始检测' },
-  { title: '开启 USB 调试', subtitle: '在平板的开发者选项里允许 USB 调试。', action: '开始检测' },
-  { title: '检查 UHID', subtitle: '虚拟鼠标/键盘依赖 /dev/uhid 可写。', action: '开始检测' },
-  { title: 'scrcpy server', subtitle: '确认随包提供的 server jar 已就位。', action: '开始检测' },
+  {
+    title: '连接平板',
+    subtitle: '用数据线连接平板，并在平板上允许 USB 调试。adb 已随 PadLend 内置，无需另装。',
+    action: '开始检测',
+  },
+  {
+    title: '检查 UHID',
+    subtitle: '虚拟鼠标/键盘依赖 /dev/uhid 可写；scrcpy server 已随包内置。',
+    action: '开始检测',
+  },
   { title: '完成', subtitle: '一切就绪，回到主窗口开始使用。', action: '' },
 ];
 
@@ -42,16 +48,8 @@ export function SetupWizard() {
   };
 
   useEffect(() => {
-    if (step < 4 && states[step] === 'idle') void runCheck(step);
+    if (step < STEPS.length - 1 && states[step] === 'idle') void runCheck(step);
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const pushJar = async () => {
-    setBusy(true);
-    const result = await wizardPushJar();
-    setResults((current) => current.map((value, i) => (i === 3 ? result.text : value)));
-    setStates((current) => current.map((value, i) => (i === 3 ? (result.ok ? 'ok' : 'warn') : value)));
-    setBusy(false);
-  };
 
   const finish = async () => {
     setBusy(true);
@@ -67,7 +65,7 @@ export function SetupWizard() {
     <Modal
       wide
       title="PadLend 首次设置"
-      subtitle="依次检查 adb、USB 调试、UHID 和 scrcpy-server，最后设置连接方式。"
+      subtitle="检查平板连接与 UHID；adb 和 scrcpy-server 已随安装包内置。"
       onClose={close}
       footer={
         <>
@@ -90,10 +88,10 @@ export function SetupWizard() {
         ))}
       </div>
       <div className="wizard-body" style={{ paddingTop: 'var(--sp-5)' }}>
-        <h3 className="card-title">{step + 1} / 5 · {STEPS[step].title}</h3>
+        <h3 className="card-title">{step + 1} / {STEPS.length} · {STEPS[step].title}</h3>
         <p className="card-desc">{STEPS[step].subtitle}</p>
 
-        {step < 4 && (
+        {step < STEPS.length - 1 && (
           <>
             <div className="checkline" style={{ marginTop: 'var(--sp-4)' }}>
               <span style={{ color: stateTone(states[step]) }}>
@@ -103,13 +101,12 @@ export function SetupWizard() {
               <Button compact icon="refresh" loading={busy || states[step] === 'running'} onClick={() => void runCheck(step)}>
                 {STEPS[step].action}
               </Button>
-              {step === 3 && <Button compact icon="download" loading={busy} onClick={() => void pushJar()}>推送到平板</Button>}
             </div>
             {results[step] && <div className="wizard-result">{results[step]}</div>}
           </>
         )}
 
-        {step === 4 && (
+        {step === STEPS.length - 1 && (
           <div style={{ marginTop: 'var(--sp-4)', display: 'grid', gap: 'var(--sp-3)' }}>
             <div className="field-row">
               <div><div className="field-label">启动时自动连接平板</div><div className="field-hint">打开应用后自动连上次那台平板。</div></div>

@@ -11,6 +11,15 @@ import constants as C
 from config import Config, DeviceCfg, LayoutsCfg, MotionCfg, PlacementCfg
 
 
+def test_legacy_ghost_pointer_key_is_ignored(tmp_path, caplog):
+    path = tmp_path / "config.yaml"
+    path.write_text("ui:\n  show_pointer_ghost: true\n  theme: dark\n", encoding="utf-8")
+    cfg = Config.load(path)
+    assert not hasattr(cfg.ui, "show_pointer_ghost")
+    assert cfg.ui.theme == "dark"
+    assert "unknown_fields" not in caplog.text
+
+
 def test_default_when_missing(tmp_path):
     cfg = Config.load(tmp_path / "nope.yaml")
     assert cfg.validate() == []

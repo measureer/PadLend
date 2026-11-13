@@ -147,7 +147,6 @@ export interface Config {
     language: string;
     theme: Theme;
     tray_notifications: boolean;
-    show_pointer_ghost: boolean;
     close_to_tray: boolean;
   };
   misc: {

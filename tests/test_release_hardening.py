@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import constants as C
 from config import load_config
@@ -156,6 +157,91 @@ def test_pointer_state_kept_when_device_offline(tmp_path: Path, monkeypatch) -> 
 
     assert session_mod.restore_pending_pointer_speed(OfflineAdb()) is None
     assert session_mod.load_pointer_state() == ("", 7), "设备不在线时要保留下次再试"
+
+
+def test_keep_screen_uses_timeout_not_developer_option(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(session_mod.C, "config_dir", lambda: tmp_path)
+
+    class FakeAdb:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, ...]] = []
+
+        def shell(self, *args: str) -> str:
+            self.calls.append(args)
+            return "60000\n"
+
+        def shell_ok(self, *args: str) -> bool:
+            self.calls.append(args)
+            return True
+
+    session = object.__new__(session_mod.TabletSession)
+    session._dev_adb = FakeAdb()
+    session._facts = SimpleNamespace(serial="R58M12345")
+    session._cfg = None
+    session._orig_screen_timeout = None
+
+    session._keep_screen_on()
+
+    assert session._dev_adb.calls == [
+        ("settings", "get", "system", "screen_off_timeout"),
+        (
+            "settings",
+            "put",
+            "system",
+            "screen_off_timeout",
+            str(session_mod._SCREEN_TIMEOUT_MAX_MS),
+        ),
+    ]
+    assert session_mod.load_screen_timeout_state() == ("R58M12345", 60000)
+
+    session._restore_keep_screen_on()
+    assert session._dev_adb.calls[-1] == (
+        "settings",
+        "put",
+        "system",
+        "screen_off_timeout",
+        "60000",
+    )
+    assert session_mod.load_screen_timeout_state() is None
+    flat = [" ".join(call) for call in session._dev_adb.calls]
+    assert not any("stay_on_while_plugged_in" in call or "svc power" in call for call in flat)
+
+
+def test_screen_timeout_recovers_after_crash(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(session_mod.C, "config_dir", lambda: tmp_path)
+    session_mod.save_screen_timeout_state("R58M12345", 30000)
+
+    class FakeAdb:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, ...]] = []
+
+        def with_serial(self, serial: str) -> FakeAdb:
+            self.serial = serial
+            return self
+
+        def shell_ok(self, *args: str) -> bool:
+            self.calls.append(args)
+            return True
+
+    fake = FakeAdb()
+    assert session_mod.restore_pending_screen_timeout(fake) == 30000
+    assert fake.calls == [("settings", "put", "system", "screen_off_timeout", "30000")]
+    assert session_mod.load_screen_timeout_state() is None
+
+
+def test_screen_timeout_kept_when_device_offline(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(session_mod.C, "config_dir", lambda: tmp_path)
+    session_mod.save_screen_timeout_state("", 45000)
+
+    class OfflineAdb:
+        def with_serial(self, serial: str) -> OfflineAdb:
+            return self
+
+        def shell_ok(self, *args: str) -> bool:
+            return False
+
+    assert session_mod.restore_pending_screen_timeout(OfflineAdb()) is None
+    assert session_mod.load_screen_timeout_state() == ("", 45000)
 
 
 def test_crash_log_contains_traceback(tmp_path: Path, monkeypatch) -> None:

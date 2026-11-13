@@ -100,7 +100,7 @@
 | `DesktopMap.monitors/exterior_segments/bounding_box` | `layout.desktop` | DTO 化，前端不再 getattr 猜结构 |
 | `Config.load/save/validate` | `config.get / config.save` | 统一补丁 + 服务端权威校验 + 失败整体回滚 |
 | `ui.diagnostics` 采集/导出 | `diagnostics.run / export / static` | 复用 `core.diagnostics`，脱敏与 zip 结构不变 |
-| `SetupWizard` 5 步检测 | `wizard.check / push_jar / finish` | 检测在服务进程执行 |
+| `SetupWizard` 3 步检测 | `wizard.check` | 检测在服务进程执行；adb/scrcpy-server 随包内置 |
 | `ui.bridge.RouterBridge` 4 个回调 | `state / metrics / facts / orientation / clipboard / log` 事件 | 事件驱动，取消 1s GUI 轮询 |
 | `MetricsPanel._pick` 别名猜测 | `metrics` 事件原样使用 `raw_hz/send_hz/backlog/drop_pct/...` | 修复旧版 3 个字段恒为「—」的键名不一致 |
 

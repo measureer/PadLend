@@ -134,14 +134,21 @@ def _stale_cleanup(cfg: Config, *, first_run: bool = False) -> None:
     _cleanup_orphan_mask()
     try:
         from tablet.adb import Adb
-        from tablet.session import force_cleanup, load_pointer_state, restore_pending_pointer_speed
+        from tablet.session import (
+            force_cleanup,
+            load_pointer_state,
+            load_screen_timeout_state,
+            restore_pending_pointer_speed,
+            restore_pending_screen_timeout,
+        )
     except Exception as exc:  # noqa: BLE001 - adb 都不可用时照常启动
         LOG.debug("adb 后端不可用，跳过残留清理: %r", exc)
         return
 
     adb = None
     pending = load_pointer_state()
-    if pending is not None or (marker.exists() and had_config):
+    pending_screen = load_screen_timeout_state()
+    if pending is not None or pending_screen is not None or (marker.exists() and had_config):
         try:
             adb = Adb(serial=cfg.device.serial or None)
         except PadLendError as exc:
@@ -151,6 +158,10 @@ def _stale_cleanup(cfg: Config, *, first_run: bool = False) -> None:
     if adb is not None and pending is not None:
         with contextlib.suppress(Exception):
             restore_pending_pointer_speed(adb)
+
+    if adb is not None and pending_screen is not None:
+        with contextlib.suppress(Exception):
+            restore_pending_screen_timeout(adb)
 
     if marker.exists() or not had_config:
         try:

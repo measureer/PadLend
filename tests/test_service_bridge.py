@@ -194,7 +194,7 @@ def test_diagnostics_report_and_export_are_redacted(
 
 def test_wizard_checks_and_engine_events(client: tuple[ServiceClient, Path]) -> None:
     svc, _ = client
-    for step in range(5):
+    for step in range(3):
         result = svc.ok("wizard.check", {"step": step})
         assert result["text"]
     state = svc.ok("engine.state")

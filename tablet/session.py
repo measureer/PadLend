@@ -29,7 +29,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import constants as C
 from core.errors import ErrorCode, PadLendError
@@ -52,6 +52,13 @@ LOG = logging.getLogger("tablet.session")
 _NULL_SETTING = "null"
 # 出厂 pointer_speed（3.1）；恢复时若原值不可读则回退到它。
 _FACTORY_POINTER_SPEED = -3
+
+# 保持亮屏（1.2.1）：连接期间临时调大系统熄屏超时，退出/断开时还原。
+# 绝不改「开发者选项 → 保持唤醒状态」（stay_on_while_plugged_in）：
+# 那个选项只在充电时生效，且会把用户的开发者设置改坏。
+# Android 的 screen_off_timeout 上限因厂商而异；这里写 int32 最大值，
+# 部分 ROM 会夹到自己的上限，但仍比默认值长。
+_SCREEN_TIMEOUT_MAX_MS = 2_147_483_647
 
 # 朝向监听（1.0.3）：常驻一条 adb shell，每秒输出一行 Viewport。
 # 单独跑 dumpsys input 一次要 300ms 以上，不能塞进 supervisor 的 2s 轮询。
@@ -268,7 +275,7 @@ class TabletSession:
         self._last_mouse_buttons: int | None = None
 
         self._orig_pointer_speed: int | None = None
-        self._orig_stay_on: str | None = None
+        self._orig_screen_timeout: int | None = None
 
         # 1.0.3 朝向监听：回调由 Router 注册；线程只在 start 成功后存在。
         self._facts_callback: Callable[[DeviceFacts], None] | None = None
@@ -601,29 +608,54 @@ class TabletSession:
             LOG.warning("pointer_speed 还原失败（原值 %d），保留状态待下次启动", target)
 
     def _keep_screen_on(self) -> None:
-        """``svc power stayon true``（6.1.2），并记录原值以便退出还原。"""
+        """连接期间临时调大 ``screen_off_timeout``，并记录原值以便退出还原。
+
+        不使用开发者选项的 ``stay_on_while_plugged_in`` / ``svc power stayon``：
+        前者只在充电时有效，且会改坏用户的开发者设置；后者是全局电源状态。
+        这里只动当前设备的系统熄屏超时，断开时写回原值。
+        """
         assert self._dev_adb is not None
         enabled = self._cfg.misc.keep_screen_on if self._cfg is not None else True
         if not enabled:
             return
-        self._orig_stay_on = self._dev_adb.shell(
-            "settings", "get", "global", "stay_on_while_plugged_in"
-        ).strip()
-        if not self._dev_adb.shell_ok("svc", "power", "stayon", "true"):
-            LOG.warning("svc power stayon true 失败（不致命）")
+        try:
+            raw = self._dev_adb.shell(
+                "settings", "get", "system", "screen_off_timeout"
+            ).strip()
+        except PadLendError as exc:
+            LOG.warning("读取 screen_off_timeout 失败（不致命）：%s", exc.detail)
+            return
+        if not raw.isdigit():
+            LOG.warning("screen_off_timeout 原值不可读（%r），保持系统设置不动", raw)
+            return
+        original = int(raw)
+        if original >= _SCREEN_TIMEOUT_MAX_MS:
+            return
+        serial = self._facts.serial if self._facts is not None else ""
+        # 先落盘再修改：进程在 put 之后、恢复之前崩溃时，下次启动仍能还原。
+        save_screen_timeout_state(serial, original)
+        if not self._dev_adb.shell_ok(
+            "settings", "put", "system", "screen_off_timeout", str(_SCREEN_TIMEOUT_MAX_MS)
+        ):
+            clear_screen_timeout_state()
+            LOG.warning("screen_off_timeout 调大失败（不致命）")
+            return
+        self._orig_screen_timeout = original
+        LOG.info("screen_off_timeout: %d → %d（退出时还原）", original, _SCREEN_TIMEOUT_MAX_MS)
 
     def _restore_keep_screen_on(self) -> None:
-        """还原 keep screen on；文档未列此步，但对称清理避免改坏用户设置。"""
-        if self._dev_adb is None or self._orig_stay_on is None:
+        """还原 system.screen_off_timeout；失败时保留状态文件等下次启动。"""
+        if self._dev_adb is None or self._orig_screen_timeout is None:
             return
-        previous = self._orig_stay_on
-        if previous.isdigit():
-            self._dev_adb.shell_ok(
-                "settings", "put", "global", "stay_on_while_plugged_in", previous
-            )
+        original = self._orig_screen_timeout
+        if self._dev_adb.shell_ok(
+            "settings", "put", "system", "screen_off_timeout", str(original)
+        ):
+            clear_screen_timeout_state()
+            self._orig_screen_timeout = None
+            LOG.info("screen_off_timeout 已还原为 %d", original)
         else:
-            self._dev_adb.shell_ok("svc", "power", "stayon", "false")
-        self._orig_stay_on = None
+            LOG.warning("screen_off_timeout 还原失败（原值 %d），保留状态待下次启动", original)
 
     # -- 内部：socket / uhid ----------------------------------------------
     def _connect_socket(self) -> None:
@@ -1001,40 +1033,39 @@ class TabletSession:
 
 
 # ---------------------------------------------------------------------------
-# pointer_speed 崩溃兜底：原值落盘，下次启动恢复
+# 全局设置崩溃兜底：原值落盘，下次启动恢复
 # ---------------------------------------------------------------------------
 _POINTER_STATE_NAME = "pointer_speed_state.json"
+_SCREEN_STATE_NAME = "screen_timeout_state.json"
 
 
-def _pointer_state_path() -> Path:
-    return C.config_dir() / _POINTER_STATE_NAME
+def _state_path(name: str) -> Path:
+    return C.config_dir() / name
 
 
-def save_pointer_state(serial: str, value: int | None) -> None:
-    """记录归零前的原值（原子写；失败只告警，绝不阻断会话）。"""
-    if value is None:
-        return
+def _write_state(name: str, payload: dict[str, Any]) -> None:
+    """原子写状态文件；失败只告警，绝不阻断会话。"""
     try:
         cfg_dir = C.config_dir()
         cfg_dir.mkdir(parents=True, exist_ok=True)
-        path = _pointer_state_path()
+        path = _state_path(name)
         tmp = path.with_suffix(".tmp")
-        payload = json.dumps(
-            {"serial": serial or "", "value": int(value), "saved_at": time.time()},
+        body = json.dumps(
+            {**payload, "saved_at": time.time()},
             ensure_ascii=False,
         )
         with tmp.open("w", encoding="utf-8") as fh:
-            fh.write(payload)
+            fh.write(body)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
     except Exception as exc:  # noqa: BLE001 - 状态文件失败不能影响主流程
-        LOG.warning("保存 pointer_speed 状态失败: %r", exc)
+        LOG.warning("保存 %s 状态失败: %r", name, exc)
 
 
-def load_pointer_state() -> tuple[str, int] | None:
+def _load_state(name: str) -> tuple[str, int] | None:
     try:
-        raw = json.loads(_pointer_state_path().read_text(encoding="utf-8"))
+        raw = json.loads(_state_path(name).read_text(encoding="utf-8"))
         value = int(raw["value"])
         serial = str(raw.get("serial") or "")
     except (OSError, ValueError, TypeError, KeyError):
@@ -1042,9 +1073,37 @@ def load_pointer_state() -> tuple[str, int] | None:
     return serial, value
 
 
-def clear_pointer_state() -> None:
+def _clear_state(name: str) -> None:
     with contextlib.suppress(OSError):
-        _pointer_state_path().unlink(missing_ok=True)
+        _state_path(name).unlink(missing_ok=True)
+
+
+def save_pointer_state(serial: str, value: int | None) -> None:
+    """记录归零前的原值。"""
+    if value is None:
+        return
+    _write_state(_POINTER_STATE_NAME, {"serial": serial or "", "value": int(value)})
+
+
+def load_pointer_state() -> tuple[str, int] | None:
+    return _load_state(_POINTER_STATE_NAME)
+
+
+def clear_pointer_state() -> None:
+    _clear_state(_POINTER_STATE_NAME)
+
+
+def save_screen_timeout_state(serial: str, value: int) -> None:
+    """记录连接前的系统熄屏超时（毫秒）。"""
+    _write_state(_SCREEN_STATE_NAME, {"serial": serial or "", "value": int(value)})
+
+
+def load_screen_timeout_state() -> tuple[str, int] | None:
+    return _load_state(_SCREEN_STATE_NAME)
+
+
+def clear_screen_timeout_state() -> None:
+    _clear_state(_SCREEN_STATE_NAME)
 
 
 def restore_pending_pointer_speed(adb: Adb | None) -> int | None:
@@ -1063,6 +1122,25 @@ def restore_pending_pointer_speed(adb: Adb | None) -> int | None:
         return None
     clear_pointer_state()
     LOG.info("启动恢复 pointer_speed=%d serial=%s", value, serial or "(默认)")
+    return value
+
+
+def restore_pending_screen_timeout(adb: Adb | None) -> int | None:
+    """启动时恢复上次崩溃残留的 screen_off_timeout；成功返回恢复值。
+
+    与 exit.clean 无关：只要状态文件还在就尝试恢复（设备可能没插，
+    此时保留文件，下次再试）。
+    """
+    state = load_screen_timeout_state()
+    if state is None or adb is None:
+        return None
+    serial, value = state
+    dev = adb.with_serial(serial) if serial else adb
+    if not dev.shell_ok("settings", "put", "system", "screen_off_timeout", str(value)):
+        LOG.warning("启动恢复 screen_off_timeout=%d 失败（设备未连接？），保留状态", value)
+        return None
+    clear_screen_timeout_state()
+    LOG.info("启动恢复 screen_off_timeout=%d serial=%s", value, serial or "(默认)")
     return value
 
 

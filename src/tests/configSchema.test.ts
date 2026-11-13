@@ -12,9 +12,9 @@ const gainField = SETTING_GROUPS[0].fields[0];
 const reportField = SETTING_GROUPS[0].fields[1];
 
 describe('声明式设置 schema', () => {
-  it('覆盖 12 个可编辑字段，且每个字段都有提示文案', () => {
+  it('覆盖 13 个可编辑字段，且每个字段都有提示文案', () => {
     const fields = SETTING_GROUPS.flatMap((group) => group.fields);
-    expect(fields).toHaveLength(14);
+    expect(fields).toHaveLength(13);
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');

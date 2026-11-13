@@ -377,7 +377,7 @@ def start(self) -> DeviceFacts:
     self._forward()                # adb forward tcp:1234 localabstract:scrcpy
     self._connect_socket()         # 读 1 字节 dummy，MUST == b"\x00"（实测修正：原 4 字节有误）
     self._create_uhid()            # UHID_CREATE 鼠标(id=1) + 键盘(id=2)
-    self._keep_screen_on()         # svc power stayon true
+    self._keep_screen_on()         # 临时调大 screen_off_timeout（原值落盘，断开还原）
     return facts
 ```
 
@@ -902,7 +902,6 @@ ui:
   language: zh_CN          # 预留字段：1.0.0 仅中文界面，本值不生效（保留以兼容旧配置）
   theme: dark
   tray_notifications: true
-  show_pointer_ghost: true
 
 misc:
   clipboard_sync: true
@@ -961,7 +960,6 @@ misc:
 | 显示全部 | 缩放到同时看见所有显示器和平板；滚轮缩放，`Ctrl+0` 也可恢复 |
 | 滚轮 / 空格拖 / `Ctrl+0` | 缩放 / 平移 / 复位 |
 | 悬停显示器 | ToolTip：设备名、分辨率、DPI、缩放、主屏标记 |
-| 指针幽灵 | 半透明圆点显示 PC 光标与估计的平板指针（`show_pointer_ghost`） |
 
 ### 6.10.3 视觉令牌（`ui/theme/tokens.py` → 生成 QSS）
 
@@ -1031,7 +1029,7 @@ Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区；�
 
 ### 6.10.8 其他界面
 
-- **首次向导**：检查 adb → USB 调试 → UHID 可写 → server jar → 完成
+- **首次向导**：连接平板/USB 调试 → UHID 可写 → 完成（adb 与 scrcpy-server 随包内置）
 - **诊断页**：`adb devices`、`dumpsys input` 关键段、`XScale`/`pointer_speed`、UHID 注册情况、一键导出诊断包
 - **关于**：版本 / 许可摘要 / 第三方许可文件 / 打开日志目录 / 检查更新（发行地址配置后启用）；致谢 scrcpy、InputShare
 
@@ -1073,7 +1071,7 @@ padlend/
 ├─ ui/
 │  ├─ main_window.py
 │  ├─ canvas.py                 # QGraphicsView
-│  ├─ canvas_items.py           # 显示器/平板/边段/指针幽灵
+│  ├─ canvas_items.py           # 显示器/平板/边段
 │  ├─ settings_panel.py
 │  ├─ log_view.py
 │  ├─ tray.py
@@ -1706,7 +1704,6 @@ adb shell dumpsys input | grep -A2 "scrcpy"     # 可见 Classes: CURSOR
 | S3-2 | 主窗骨架（顶栏/导航/页面/状态栏） | 可启动、可缩放 |
 | S3-3 | 画布：显示器/平板/边段渲染 | 与真实布局比例一致 |
 | S3-4 | 拖拽吸附 + 热区高亮 + 角落裁决 | 保存布局后生效并落盘 |
-| S3-5 | 指针幽灵（PC 光标 + 估计指针） | 实时更新 |
 | S3-6 | 设置页：滑块/下拉/开关/热键编辑 | 保存后生效 |
 | S3-7 | 托盘 + 状态色 + 菜单 | 接管中变红 |
 | S3-8 | 日志/指标面板 | 500ms 刷新 |

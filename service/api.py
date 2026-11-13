@@ -328,8 +328,6 @@ class PadLendService:
             "diagnostics.static": self.diagnostics_static,
             "system.paths": self.system_paths,
             "wizard.check": self.wizard_check,
-            "wizard.push_jar": self.wizard_push_jar,
-            "wizard.finish": self.wizard_finish,
             "logs.recent": self.logs_recent,
         }
         handler = handlers.get(method)
@@ -897,31 +895,23 @@ class PadLendService:
         }
 
     def wizard_check(self, params: dict[str, Any]) -> dict[str, Any]:
+        """首次向导的 3 步检测；adb 与 scrcpy-server 已随包内置，不再要求安装。"""
         step = int(params.get("step") or 0)
         if step == 0:
             code, stdout, stderr = self._run_adb(("devices", "-l"))
             serials = [line.split()[0] for line in stdout.splitlines() if "\tdevice" in line]
-            return {
-                "ok": code == 0 and bool(serials),
-                "text": f"已连接：{', '.join(serials)}"
-                if serials
-                else (stderr or "未检测到设备，请检查数据线与 USB 调试。"),
-            }
+            if "unauthorized" in stdout:
+                return {
+                    "ok": False,
+                    "text": "设备显示 unauthorized：请在平板上点「允许 USB 调试」。",
+                }
+            if code != 0 or not serials:
+                return {
+                    "ok": False,
+                    "text": stderr or "未检测到设备，请检查数据线与 USB 调试。",
+                }
+            return {"ok": True, "text": f"已连接：{', '.join(serials)}；USB 调试已开启。"}
         if step == 1:
-            code, stdout, _ = self._run_adb(("shell", "settings", "get", "global", "adb_enabled"))
-            _, devices, _ = self._run_adb(("devices", "-l"))
-            unauthorized = "unauthorized" in devices
-            text = (
-                "设备显示 unauthorized：请在平板上点「允许 USB 调试」。"
-                if unauthorized
-                else (
-                    "USB 调试已开启。"
-                    if code == 0 and stdout.strip() == "1"
-                    else "请确认开发者选项里的 USB 调试已开启。"
-                )
-            )
-            return {"ok": not unauthorized, "text": text}
-        if step == 2:
             _, group, _ = self._run_adb(("shell", "id"))
             _, opened, _ = self._run_adb(("shell", "exec 3<>/dev/uhid && echo OPEN_OK"))
             has_group = "uhid" in group
@@ -934,36 +924,7 @@ class PadLendService:
                 ]
             )
             return {"ok": can_open, "text": text}
-        if step == 3:
-            jar = Path(C.SCRCPY_SERVER_JAR)
-            present = jar.is_file()
-            size = jar.stat().st_size // 1024 if present else 0
-            return {
-                "ok": present,
-                "text": f"{jar.name}（{size} KB）已就位。" if present else f"缺少 {jar.name}",
-            }
         return {"ok": True, "text": "一切就绪，回到主窗口开始使用。"}
-
-    def wizard_push_jar(self, _params: dict[str, Any]) -> dict[str, Any]:
-        adb = getattr(self.runtime, "adb", None)
-        if self.simulate or adb is None:
-            return {"ok": True, "text": f"已推送到 {C.SCRCPY_REMOTE_JAR}（演示模式）"}
-        try:
-            adb.push(Path(C.SCRCPY_SERVER_JAR), "/data/local/tmp/scrcpy-server.jar")
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "text": f"推送失败：{exc}"}
-        return {"ok": True, "text": "已推送到 /data/local/tmp/scrcpy-server.jar"}
-
-    def wizard_finish(self, params: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            if "autoConnect" in params:
-                self.cfg.device.auto_connect = bool(params["autoConnect"])
-            if "closeToTray" in params:
-                self.cfg.ui.close_to_tray = bool(params["closeToTray"])
-            self.cfg.save(self.path)
-        self.emit("config", {"config": config_dict(self.cfg), "issues": []})
-        self.emit_log("SETUP", "首次设置完成")
-        return {"config": config_dict(self.cfg)}
 
     def logs_recent(self, params: dict[str, Any]) -> dict[str, Any]:
         limit = max(1, min(1000, int(params.get("limit") or 200)))

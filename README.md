@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前版本 **1.2.0**，Apache-2.0。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
+当前源码版本 **1.2.1**（最新发布仍为 1.2.0），Apache-2.0。1.2.1 把「保持平板亮屏」从开发者选项的 `svc power stayon` 改为连接期间临时调大系统的 `screen_off_timeout`（断开还原），删除没有运行时实现的「显示指针幽灵」开关，并把首次向导从 5 步压成 3 步；adb 与 scrcpy-server 仍随包内置。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ![桌面布局页](docs/screenshots/tauri-layout.png)
 
@@ -59,7 +59,7 @@ Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 
 ## 快速开始
 
-1. 运行 PadLend。第一次启动会打开向导，依次检查 adb、USB 调试、UHID 和 scrcpy-server，最后可以设置是否自动连接、关闭窗口时是否收进托盘。
+1. 运行 PadLend。第一次启动会打开向导，检查平板连接/USB 调试和 UHID，最后可以设置是否自动连接、关闭窗口时是否收进托盘。adb 和 scrcpy-server 已随安装包内置，不需要另外安装。
 2. 在平板上打开「开发者选项 → USB 调试」，用数据线连接电脑。没有设备时，在「设备」页点「添加设备」，填无线调试的 IP 和端口；首次配对还要填 6 位配对码。设备页的「刷新设备」会重新扫描 adb；如果 adb 自带的 mDNS 不可用，PadLend 会自己发 mDNS 查询找无线调试端口，再按每台设备保存的 MAC 用 ARP 表确认新 IP。
 3. 选中平板，点「连接此设备」。
 4. 切到「布局」页，把平板拖到某个屏幕边缘的红色虚线区域，点「保存布局」。拖动和松手只是预览，不点保存不会改变实际摆位；「显示全部」会把所有显示器和平板缩放到视野内。角落位置按 `Shift` 切换优先边。布局按「设备 + 横屏/竖屏」分别保存，旋转平板后会自动切到该方向保存过的布局。
@@ -134,7 +134,6 @@ ui:
   language: zh_CN         # 预留字段，目前仅中文界面
   theme: dark             # dark / light
   tray_notifications: true
-  show_pointer_ghost: true
   close_to_tray: false    # 关闭主窗时收进托盘继续运行
 misc:
   clipboard_sync: true
@@ -142,7 +141,7 @@ misc:
   restore_pointer_speed: -3
 ```
 
-设置页能改手感、键盘、快捷键和杂项；改动先留在草稿里，点「保存设置」才写入并校验。平板摆位在「桌面布局」页调整：拖动只预览，点「保存布局」才会写入配置并立即用于边缘穿越。
+设置页能改手感、键盘、快捷键和杂项；改动先留在草稿里，点「保存设置」才写入并校验。`keep_screen_on` 在连接期间临时调大平板的系统熄屏超时，断开后还原；不会改开发者选项里的「保持唤醒状态」。平板摆位在「桌面布局」页调整：拖动只预览，点「保存布局」才会写入配置并立即用于边缘穿越。
 
 YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `config.yaml.bad-<时间戳>`，恢复默认值，并在设置页底部显示原因。
 

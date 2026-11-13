@@ -136,7 +136,6 @@ class UiCfg:
     language: str = "zh_CN"
     theme: str = "dark"
     tray_notifications: bool = True
-    show_pointer_ghost: bool = True
     # 关闭主窗时：True = 收进托盘继续跑；False = 完全退出（0.3.12）
     close_to_tray: bool = False
 
@@ -337,14 +336,19 @@ class Config:
             raw.get("hotkeys"),
             {"toggle": str, "panic": str},
         )
+        ui_raw = raw.get("ui")
+        if isinstance(ui_raw, dict):
+            # 1.2.1 删除了「显示指针幽灵」空开关；旧配置里的键静默丢弃，
+            # 不能让它触发 _section 的未知字段告警。
+            ui_raw = dict(ui_raw)
+            ui_raw.pop("show_pointer_ghost", None)
         cfg.ui = _section(
             UiCfg,
-            raw.get("ui"),
+            ui_raw,
             {
                 "language": str,
                 "theme": str,
                 "tray_notifications": bool,
-                "show_pointer_ghost": bool,
                 "close_to_tray": bool,
             },
         )
