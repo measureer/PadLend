@@ -19,6 +19,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -274,33 +275,36 @@ class Runtime:
             if self._stopped:
                 return
             self._stopped = True
+        first_error: Exception | None = None
+
+        def run(action: Callable[[], None]) -> None:
+            # 每一步独立兜底：遮罩、ClipCursor、钩子、adb 子进程都必须走到，
+            # 不能被前一步的异常截断；全部跑完后再把第一个异常抛给调用方。
+            nonlocal first_error
+            try:
+                action()
+            except Exception as exc:  # noqa: BLE001 - 记录后继续释放后续资源
+                if first_error is None:
+                    first_error = exc
+                LOG.debug("teardown step failed", exc_info=True)
+
+        run(self.keyboard_hook.uninstall)
+        run(self.router.stop)
+        if self.cursor_watch is not None:
+            run(self.cursor_watch.stop)
+            self.cursor_watch = None
+        run(self.rawinput.stop)
+        run(self.session.stop)
+        run(self.mask.release)
+        if self.raw_debug is not None:
+            run(self.raw_debug.stop)
         try:
-            try:
-                self.keyboard_hook.uninstall()
-            finally:
-                try:
-                    self.router.stop()
-                finally:
-                    if self.cursor_watch is not None:
-                        try:
-                            self.cursor_watch.stop()
-                        finally:
-                            self.cursor_watch = None
-                    self.rawinput.stop()
-        finally:
-            try:
-                self.session.stop()
-            finally:
-                try:
-                    self.mask.release()
-                finally:
-                    if self.raw_debug is not None:
-                        self.raw_debug.stop()
-                    try:
-                        if self.adb is not None:
-                            self.adb.kill_server()
-                    except Exception as exc:  # noqa: BLE001 - 清理失败不阻断退出
-                        LOG.debug("adb kill-server failed: %r", exc)
+            if self.adb is not None:
+                self.adb.kill_server()
+        except Exception as exc:  # noqa: BLE001 - 清理失败不阻断退出
+            LOG.debug("adb kill-server failed: %r", exc)
+        if first_error is not None:
+            raise first_error
 
 
 # ---------------------------------------------------------------------------

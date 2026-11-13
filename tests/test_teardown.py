@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import constants as C
 import main
@@ -16,6 +21,8 @@ import service.api as service_api
 import service.server as server
 from config import Config
 from service.api import PadLendService
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class _Counter:
@@ -137,3 +144,142 @@ def test_stale_cleanup_first_run_does_not_report_crash(
 
     assert "检测到上次未正常退出" not in caplog.text
     assert marker.exists()
+
+
+_TEARDOWN_ORDER = (
+    "hook",
+    "router",
+    "cursor_watch",
+    "rawinput",
+    "session",
+    "mask",
+    "raw_debug",
+    "adb",
+)
+
+
+def _runtime_with_one_failing_step(fail_step: str) -> tuple[main.Runtime, list[str]]:
+    runtime = main.Runtime.__new__(main.Runtime)
+    runtime._stop_lock = threading.Lock()
+    runtime._stopped = False
+    seen: list[str] = []
+
+    def action(name: str):
+        def run() -> None:
+            seen.append(name)
+            if name == fail_step:
+                raise RuntimeError(f"{name} failed")
+
+        return run
+
+    runtime.keyboard_hook = SimpleNamespace(uninstall=action("hook"))
+    runtime.router = SimpleNamespace(stop=action("router"))
+    runtime.cursor_watch = SimpleNamespace(stop=action("cursor_watch"))
+    runtime.rawinput = SimpleNamespace(stop=action("rawinput"))
+    runtime.session = SimpleNamespace(stop=action("session"))
+    runtime.mask = SimpleNamespace(release=action("mask"))
+    runtime.raw_debug = SimpleNamespace(stop=action("raw_debug"))
+    runtime.adb = SimpleNamespace(kill_server=action("adb"))
+    return runtime, seen
+
+
+@pytest.mark.parametrize("fail_step", _TEARDOWN_ORDER)
+def test_runtime_stop_releases_every_resource_when_one_step_fails(fail_step: str) -> None:
+    """任一清理步骤抛异常都不能让后面的资源泄漏。
+
+    adb.kill_server 的异常本来就被吞掉；其余步骤的异常会继续向上抛，
+    但必须先把 hook / 遮罩 / session / adb 等全部释放完。
+    """
+    runtime, seen = _runtime_with_one_failing_step(fail_step)
+
+    if fail_step == "adb":
+        runtime.stop()
+    else:
+        with pytest.raises(RuntimeError, match=fail_step):
+            runtime.stop()
+
+    assert seen == list(_TEARDOWN_ORDER)
+
+    # 已经进入过 teardown（哪怕中途有异常）后，再调用不得重复释放资源。
+    runtime.stop()
+    assert seen == list(_TEARDOWN_ORDER)
+
+
+def test_sidecar_exits_when_parent_process_dies(tmp_path: Path) -> None:
+    """真实父子进程：父进程被杀后 sidecar 必须 teardown 并以 0 退出。
+
+    现有看门狗测试把 _parent_alive 和 os._exit 都替换掉了；这里启动真实
+    sleeper 父进程和真实 sidecar，只保留程序自己的父子存活检测与退出路径。
+    """
+    parent = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "PADLEND_HOME": str(tmp_path),
+            "PADLEND_PARENT_PID": str(parent.pid),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
+    stderr = (tmp_path / "sidecar-stderr.log").open("w", encoding="utf-8")
+    proc: subprocess.Popen[str] | None = None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "service", "--simulate", "--no-hooks"],
+            cwd=ROOT,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        stdout = proc.stdout
+        lines: queue.Queue[str] = queue.Queue()
+
+        def pump() -> None:
+            try:
+                for line in stdout:
+                    lines.put(line)
+            finally:
+                lines.put("")
+
+        threading.Thread(target=pump, name="sidecar-stdout", daemon=True).start()
+        deadline = time.monotonic() + 20
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                line = lines.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if not line:
+                break
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("event") == "ready":
+                ready = True
+                break
+        assert ready, "sidecar 未在超时内发出 ready 事件"
+
+        parent.terminate()
+        parent.wait(timeout=10)
+        proc.wait(timeout=15)
+
+        assert proc.returncode == 0
+        assert (tmp_path / "exit.clean").exists()
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        stderr.close()
