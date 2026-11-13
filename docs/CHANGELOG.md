@@ -29,8 +29,9 @@
 
 ### 验证
 
-- `pytest`：467 passed，3 skipped（新增设备注册表、候选连接、IPv6/主机名、mDNS 硬件号用例）；
-  `ruff check .`、`tsc --noEmit` 通过；`vitest run`：38 passed。
+- `pytest`：477 passed，3 skipped（新增设备注册表、候选连接、IPv6/主机名、mDNS 硬件号，
+  以及 teardown 单步失败注入、真实父进程退出、facts 轮询落盘用例）；
+  `ruff check .`、`tsc --noEmit` 通过；`vitest run`：43 passed（新增 actions 错误分支用例）。
 
 ## [1.2.1] — 2026-11-13
 
