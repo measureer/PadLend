@@ -6,8 +6,8 @@
 **怎么读**
 
 - 每条固定为：现象 → 触发条件 → 根因 → 修法 → 如何验证/回归 → 相关文件:行 → 版本，最后一句「再犯的代价」。
-- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1/1.3.0 的条目是这些版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
-- 行号基于 1.3.0 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
+- 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1/1.3.0/1.4.0 的条目是这些版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
+- 行号基于 1.4.0 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
 - 代码与文档的 `文件:行` 默认相对**仓库根**；只有 Markdown 链接用同目录相对路径。
 - 「遮罩」默认指 Python sidecar 创建的 `PadLendCursorMaskWindow`，不是 Tauri 窗口。这个心智模型错了，后面所有判断都会错。
 
@@ -166,8 +166,18 @@
 - **版本**：0.2.7
 - **再犯的代价**：一个慢 socket 拖垮整条输入链路；用户感知是「电脑卡了」，几乎不会归因到平板连接。
 
----
+### 2.6 音频通道握手顺序写反，控制通道收不到事件
 
+- **现象**：开启「转发平板声音」后连接失败，或连接成功但鼠标键盘完全没反应、日志里控制 socket 读到的是 PCM 字节。
+- **触发条件**：`audio=true` 时仍按旧的单通道逻辑先连控制、或只连一个 socket。
+- **根因**：scrcpy 5.0.1 的 `DesktopConnection` 在 `audio=true` 时按 **audio → control** 的顺序 accept，两条通道各写 1 字节 dummy；先连的那条被当成音频，控制流被当成裸 PCM，控制通道直接坏掉。
+- **修法**：`TabletSession._connect_socket()` 固定先 `_handshake_socket("音频")`、再 `_handshake_socket("控制")`；只有 `audio=false` 才走单通道旧路径。音频 socket 交给 `AudioRelay` 前设 0.5s 轮询超时；控制 socket 保持发送超时。音频通道建立失败时丢弃服务端并按 `audio=false` 重连一次，不允许可选功能拖死键鼠。
+- **如何验证 / 回归**：`tests/test_audio_relay.py::test_connect_socket_uses_audio_then_control_order`、`test_connect_socket_without_audio_keeps_single_channel`、`test_restart_without_audio_discards_server_and_clears_flag`；真机开音频后鼠标/键盘事件仍应正常，关闭音频后走单通道。
+- **相关文件**：`tablet/session.py:846-931`（握手与顺序）、`tablet/audio.py:49-121`、`constants.py:113-129`、`src-tauri/src/audio.rs:104-166`
+- **版本**：1.4.0
+- **再犯的代价**：表现像「PadLend 连上了但键鼠全坏」，很容易误判成 UHID 或平板问题；音频和控制一起抓包时才会发现控制流里是 PCM。
+
+---
 ## 3. Windows 遮罩与光标
 
 ### 3.1 交还后遮罩残留，透明层盖住屏幕

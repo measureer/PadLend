@@ -28,7 +28,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    pub fn start(app: AppHandle) -> Result<Arc<Self>, String> {
+    pub fn start(app: AppHandle, audio_port: u16) -> Result<Arc<Self>, String> {
         let (program, args, cwd) = resolve_service();
         let mut command = Command::new(&program);
         command
@@ -40,7 +40,9 @@ impl Bridge {
             .env("PYTHONIOENCODING", "utf-8")
             // 父进程看门狗：外壳崩溃后 sidecar 必须自行 teardown 退出，
             // 否则它持有的全屏遮罩会留在桌面上（1.2.0 缺陷 A 的失效安全）。
-            .env("PADLEND_PARENT_PID", std::process::id().to_string());
+            .env("PADLEND_PARENT_PID", std::process::id().to_string())
+            // 0 表示音频 sink 没起来；Python 会把它当成“只读掉音频、不播放”。
+            .env("PADLEND_AUDIO_PORT", audio_port.to_string());
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }

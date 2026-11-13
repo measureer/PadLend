@@ -4,6 +4,19 @@
 > 1.1.0 起界面不再使用 PySide6；第 0 节及以下历史记录中的 Qt 相关内容仅作回归对照。
 > 记录原则：每条都写命令、期望、实际、结论；无硬件时明确标"待复验"，不得默认为通过。
 
+## 1.4.0 增量验收（2026-11-14）
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| Python 回归 | `python -m pytest -o addopts="" -q` | **488 passed, 3 skipped**（1.3.0 基线 478；新增音频转发/双通道握手/仅控制回退/配置默认值 10 例） |
+| 代码风格 | `python -m ruff check .` | All checks passed |
+| 类型检查 | `pnpm exec tsc --noEmit` | 通过 |
+| 前端单测 | `pnpm exec vitest run` | 9 files / 43 tests passed |
+| 原生外壳编译 | 本机 `cargo check` / `cargo build`（VS 2022 Build Tools 17.14.45，MSVC 14.44 + Windows SDK 10.0.26100） | **通过**（2026-11-14；临时占位 sidecar 仅用于编译，验证后已删除）；GitHub Actions 仍会复跑 `npx tauri build --no-bundle` |
+| 音频试听 | Android 11+ 真机 + 有声卡 Windows | **未验证**：本机会话没有音频端点，只验证了协议、降级路径和 Python 侧转发；不能宣称「已试听」 |
+
+> 结论：自动化门禁与 MSVC 原生编译均通过；真机音频试听仍未验证，不能据本地编译代替。
+
 ## 1.2.0 发布验收（2026-11-13）
 
 自动化门禁在本机 Windows 11 + bundled Python 3.12.14 / Node 24.21.0 上执行：

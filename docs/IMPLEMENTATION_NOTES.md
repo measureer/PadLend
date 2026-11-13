@@ -54,6 +54,11 @@
    输出事实表，无设备时给出可操作提示（退出码 2）。
 6. **窗口/钩子代码只在 Windows 上运行**：本项目只支持 Windows，不需要跨平台兼容，
    但**模块 import 不得产生副作用**（不得在 import 时创建窗口/装钩子）。
+7. **音频转发（1.4.0）走 Tauri 侧播放**：Python 只做 scrcpy 裸 PCM 的搬运，
+   `src-tauri/src/audio.rs` 用 cpal 打开默认输出设备；`misc.forward_audio` 默认关闭。
+   原因是 Python 侧没有可靠的零依赖 Windows 音频输出，且播放缓冲/重采样放在 Rust
+   可直接复用 Tauri 已有的单进程生命周期。音频是可选链路：sink 失败继续读掉音频，
+   音频通道启动失败自动回退 `audio=false`，都不能影响控制通道。
 
 ## 3. 代码规范（7.3）
 

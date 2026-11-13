@@ -395,6 +395,7 @@ class PadLendService:
         if not isinstance(patch, dict):
             raise ValueError("配置补丁必须是对象")
         with self._lock:
+            audio_before = bool(getattr(self.cfg.misc, "forward_audio", False))
             # 补丁是「先改后校验」，失败必须整体回滚，否则一次非法输入会污染
             # 运行中的 Config（Router 持有同一个对象引用）。
             backup = copy.deepcopy(self.cfg)
@@ -405,7 +406,12 @@ class PadLendService:
                 raise ValueError("；".join(problems))
             self.cfg.save(self.path)
             self.emit("config", {"config": config_dict(self.cfg), "issues": []})
+            audio_changed = audio_before != bool(
+                getattr(self.cfg.misc, "forward_audio", False)
+            )
         self.emit_log("CONFIG", f"配置已保存：{self.path}")
+        if audio_changed:
+            self.emit_log("AUDIO", "音频转发设置已保存，重新连接平板后生效")
         return {"config": config_dict(self.cfg), "issues": [], "path": str(self.path)}
 
     # ------------------------------------------------------------------ 设备

@@ -157,6 +157,7 @@ export interface Config {
     clipboard_sync: boolean;
     keep_screen_on: boolean;
     restore_pointer_speed: number;
+    forward_audio: boolean;
   };
 }
 

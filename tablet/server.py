@@ -107,12 +107,14 @@ class ScrcpyServer:
         jar: Path | None = None,
         remote_jar: str = C.SCRCPY_REMOTE_JAR,
         version: str = C.SCRCPY_VERSION,
+        audio: bool = False,
     ) -> None:
         self._adb = adb
         self.port = port
         self.jar = Path(jar) if jar is not None else C.SCRCPY_SERVER_JAR
         self.remote_jar = remote_jar
         self.version = version
+        self.audio = audio
         self._proc: subprocess.Popen[bytes] | None = None
         self._pushed = False
         self._last_error = ""
@@ -173,7 +175,7 @@ class ScrcpyServer:
         版本号取自实例（9.5：参数里的版本 MUST 与 jar 一致），
         其余参数由 ``constants.scrcpy_server_args`` 统一维护。
         """
-        args = C.scrcpy_server_args(C.DEFAULT_SERVER_PORT)
+        args = C.scrcpy_server_args(C.DEFAULT_SERVER_PORT, audio=self.audio)
         # 第 5 项是版本号字符串（CLASSPATH / app_process / / / class / version）
         args[4] = self.version
         return " ".join(args)

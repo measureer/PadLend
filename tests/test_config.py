@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 import constants as C
-from config import Config, DeviceCfg, LayoutsCfg, MotionCfg, PlacementCfg
+from config import Config, DeviceCfg, LayoutsCfg, MiscCfg, MotionCfg, PlacementCfg
 
 
 def test_legacy_ghost_pointer_key_is_ignored(tmp_path, caplog):
@@ -329,3 +329,16 @@ def test_layouts_default_empty():
     assert layouts.devices == {}
     assert layouts.get("", "landscape") is None
     assert layouts.get("", "diagonal") is None
+
+
+def test_forward_audio_defaults_off_and_roundtrips(tmp_path):
+    """音频转发是可选能力，默认关闭；旧配置缺键也不能报未知项。"""
+    assert MiscCfg().forward_audio is False
+    path = tmp_path / "config.yaml"
+    Config().save(path)
+    assert Config.load(path).misc.forward_audio is False
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["misc"]["forward_audio"] = True
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    assert Config.load(path).misc.forward_audio is True

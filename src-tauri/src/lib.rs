@@ -5,6 +5,7 @@
 //! * Python（`service/`）：Router 状态机、ADB、UHID、几何、配置、诊断；
 //! * React/TS（`src/`）：纯展示与交互，不直接触碰任何业务对象。
 
+mod audio;
 mod bridge;
 mod commands;
 mod tray;
@@ -29,8 +30,21 @@ pub fn run() {
         }))
         .setup(|app| {
             let handle = app.handle().clone();
+            // 音频 sink 先起来，把随机端口通过环境变量交给 sidecar；绑定失败
+            // 只降级为无声，不应阻止 PadLend 启动。
+            let audio_port = match audio::AudioServer::start() {
+                Ok(server) => {
+                    let port = server.port();
+                    app.manage(server);
+                    port
+                }
+                Err(e) => {
+                    eprintln!("audio unavailable: {e}");
+                    0
+                }
+            };
             // setup 闭包返回 Box<dyn Error>；String 不是 Error，显式转成 io::Error。
-            let bridge = bridge::Bridge::start(handle.clone())
+            let bridge = bridge::Bridge::start(handle.clone(), audio_port)
                 .map_err(std::io::Error::other)?;
             app.manage(bridge);
             app.manage(Arc::new(AtomicBool::new(false)));

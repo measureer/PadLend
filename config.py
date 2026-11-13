@@ -145,6 +145,8 @@ class MiscCfg:
     clipboard_sync: bool = True
     keep_screen_on: bool = True
     restore_pointer_speed: int = -3
+    # 1.4.0：可选把平板声音转发到 PC；需要重启 transport 才生效。
+    forward_audio: bool = False
 
 
 @dataclass
@@ -355,7 +357,12 @@ class Config:
         cfg.misc = _section(
             MiscCfg,
             raw.get("misc"),
-            {"clipboard_sync": bool, "keep_screen_on": bool, "restore_pointer_speed": int},
+            {
+                "clipboard_sync": bool,
+                "keep_screen_on": bool,
+                "restore_pointer_speed": int,
+                "forward_audio": bool,
+            },
         )
 
     def _repair(self) -> None:

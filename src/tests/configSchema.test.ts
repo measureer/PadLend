@@ -12,9 +12,9 @@ const gainField = SETTING_GROUPS[0].fields[0];
 const reportField = SETTING_GROUPS[0].fields[1];
 
 describe('声明式设置 schema', () => {
-  it('覆盖 13 个可编辑字段，且每个字段都有提示文案', () => {
+  it('覆盖 14 个可编辑字段，且每个字段都有提示文案', () => {
     const fields = SETTING_GROUPS.flatMap((group) => group.fields);
-    expect(fields).toHaveLength(13);
+    expect(fields).toHaveLength(14);
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
@@ -24,6 +24,11 @@ describe('声明式设置 schema', () => {
     expect(keepScreen?.hint).toContain('熄屏时间');
     expect(keepScreen?.hint).toContain('5 小时');
     expect(keepScreen?.hint).toContain('可以关闭');
+
+    const audio = fields.find((f) => f.id === 'forward_audio');
+    expect(audio?.label).toBe('转发平板声音');
+    expect(audio?.hint).toContain('Android 11');
+    expect(audio?.hint).toContain('重新连接');
   });
 
   it('速度滑条以 1/100 倍率显示并写回', () => {

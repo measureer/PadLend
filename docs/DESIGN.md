@@ -383,7 +383,7 @@ def start(self) -> DeviceFacts:
     self._push_server()            # 校验远端 md5，不一致才推
     self._spawn_server()           # 见下方参数
     self._forward()                # adb forward tcp:1234 localabstract:scrcpy
-    self._connect_socket()         # 读 1 字节 dummy，MUST == b"\x00"（实测修正：原 4 字节有误）
+    self._connect_socket()         # audio=true 时先音频、后控制；每条通道读 1 字节 dummy 0x00
     self._create_uhid()            # UHID_CREATE 鼠标(id=1) + 键盘(id=2)
     self._keep_screen_on()         # 临时调大 screen_off_timeout（原值落盘，断开还原）
     return facts
@@ -394,14 +394,15 @@ def start(self) -> DeviceFacts:
 ```bash
 adb shell "CLASSPATH=/data/local/tmp/scrcpy-server-manual.jar app_process / \
   com.genymobile.scrcpy.Server 5.0.1 \
-  tunnel_forward=true video=false audio=false control=true \
+  tunnel_forward=true video=false audio=<forward_audio> control=true \
   cleanup=true raw_stream=true send_dummy_byte=true max_size=4096"
 ```
 
 | 参数 | 作用 |
 |---|---|
-| `video=false` / `audio=false` | 不要视频音频流 |
-| `control=true` | 只要控制通道 |
+| `video=false` | 不传视频流（headless 设计） |
+| `audio=false` / `audio=true` | 默认不传音频；开启 `misc.forward_audio` 后传裸 PCM（1.4.0） |
+| `control=true` | 只要控制通道；`audio=true` 时服务端先 accept 音频、再 accept 控制 |
 | `tunnel_forward=true` | 配合 `adb forward` 的 socket 方式 |
 | `send_dummy_byte=true` | 连接后先读 1 字节 `0x00` 做握手（实测修正：原 4 字节有误） |
 | `cleanup=true` | 退出时清理（**注意 F7：强杀时不生效**；启动时 CleanUp 会删除 CLASSPATH 首项的 jar，重连需重新 push） |
@@ -435,8 +436,34 @@ adb shell dumpsys input | grep -c "scrcpy"     # 期望 0
 | 重连 | 退避 1/2/4/8/16s，共 5 次；成功则重建 UHID 设备 |
 | 状态 | 重连期间 `FAULT`，输入回流到系统（不吞键） |
 
----
+### 6.1.5 可选音频转发（1.4.0）
 
+`misc.forward_audio` 默认关闭；开启后本次 transport 用 `audio=true` 启动服务端，
+声音在平板侧被 `audio_source=output` 接管（`REMOTE_SUBMIX`），平板自身不外放。
+
+```text
+scrcpy-server audio socket ──裸 PCM 48k/2ch/S16LE──► Python AudioRelay
+                                                        │ 127.0.0.1 TCP + 16B PLAU 头
+                                                        ▼
+                                              Tauri audio.rs（cpal）
+                                                        │ 100ms 预缓冲/线性重采样
+                                                        ▼
+                                              Windows 默认输出设备
+```
+
+- **握手顺序**：`audio=true` 时服务端 accept 顺序是 audio → control；两条通道各读 1 字节
+  dummy。顺序写反会把控制流当 PCM，控制通道直接坏掉，所以 `_connect_socket()` 固定
+  「先音频、后控制」，并只在 `audio=false` 时走单通道旧路径。
+- **失败隔离**：Rust sink 连不上或中途断开时，`AudioRelay` 继续把 scrcpy 音频读掉，
+  避免服务端因音频 socket 反压而卡住控制；音频通道建立失败则丢弃服务端，按
+  `audio=false` 重连一次。音频永远不能阻止键鼠连接。
+- **格式是裸 PCM**：`raw_stream=true` 下没有帧头、没有时间戳；固定 48 kHz / 双声道 /
+  16-bit 小端。Rust 侧按设备实际采样率用 `pos += 48000/device_rate` 线性重采样。
+- **开关不热切换**：改配置只落盘并提示重新连接；已启动的服务端不会多出一个 socket。
+- **限制**：Android 11+ 才支持音频捕获；所有系统声音（通知、通话）都会转发，DRM
+  保护内容可能无声。当前 Windows 环境无音频端点，播放链路只能在真机验收。
+
+---
 ## 6.2 输入捕获层（`win/`）
 
 ### 6.2.1 鼠标：Raw Input

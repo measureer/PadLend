@@ -110,8 +110,12 @@ DEFAULT_SERVER_PORT = 1234
 SERVER_PORT_RANGE = tuple(range(1234, 1245))  # E104 换端口 1234-1244
 
 
-def scrcpy_server_args(port: int) -> list[str]:
-    """服务端启动参数（6.1.2 实测可用，勿改参数名）。"""
+def scrcpy_server_args(port: int, *, audio: bool = False) -> list[str]:
+    """服务端启动参数（6.1.2 实测可用，勿改参数名）。
+
+    ``audio=True`` 时服务端按 audio -> control 的顺序 accept 两个 socket；
+    ``raw_stream=true`` 保证音频 socket 上是裸 PCM（无 codec 头）。
+    """
     return [
         f"CLASSPATH={SCRCPY_REMOTE_JAR}",
         "app_process",
@@ -120,7 +124,7 @@ def scrcpy_server_args(port: int) -> list[str]:
         SCRCPY_VERSION,
         "tunnel_forward=true",
         "video=false",
-        "audio=false",
+        f"audio={'true' if audio else 'false'}",
         "control=true",
         "cleanup=true",
         "raw_stream=true",

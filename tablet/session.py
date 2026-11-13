@@ -37,6 +37,7 @@ from core.logsetup import log_event
 
 from . import protocol
 from .adb import Adb, DeviceEntry
+from .audio import AUDIO_SOCKET_POLL_S, AudioRelay
 from .locator import split_address, tcp_open
 from .server import KILL_PATTERN, ScrcpyServer
 from .uhid import keyboard_report, mouse_report
@@ -51,6 +52,21 @@ LOG = logging.getLogger("tablet.session")
 
 # ``settings get`` 读不到时 Android 返回这个字符串。
 _NULL_SETTING = "null"
+
+
+def _audio_sink_port() -> int | None:
+    """Tauri 外壳启动 sidecar 时注入的本地音频端口；源码直跑时没有。"""
+    raw = os.environ.get("PADLEND_AUDIO_PORT", "").strip()
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        LOG.warning("PADLEND_AUDIO_PORT 不是整数: %r", raw)
+        return None
+    return port if 0 < port < 65_536 else None
+
+
 # 出厂 pointer_speed（3.1）；恢复时若原值不可读则回退到它。
 _FACTORY_POINTER_SPEED = -3
 
@@ -296,6 +312,12 @@ class TabletSession:
         self._orig_pointer_speed: int | None = None
         self._orig_screen_timeout: int | None = None
 
+        # 音频通道（1.4.0）：开启后 scrcpy 先 accept audio 再 accept control。
+        self._audio_active = False
+        self._audio_sink_port = _audio_sink_port()
+        self._audio_sock: socket.socket | None = None
+        self._audio_relay: AudioRelay | None = None
+
         # 1.0.3 朝向监听：回调由 Router 注册；线程只在 start 成功后存在。
         self._facts_callback: Callable[[DeviceFacts], None] | None = None
         self._orientation_stop: threading.Event | None = None
@@ -386,8 +408,13 @@ class TabletSession:
 
     def _start_locked(self) -> DeviceFacts:
         entry, facts = self._connect_candidate()
+        # 音频开关在本次 transport 生命周期内固定：中途改配置不会让已经按
+        # audio=false 启动的 server 突然多出一个 socket。
+        self._audio_active = self._audio_wanted()
         # 服务端封装必须绑定到具体设备（多设备时不能落到默认设备）
-        self._server = ScrcpyServer(self._dev_adb, port=self._port, jar=self._jar)
+        self._server = ScrcpyServer(
+            self._dev_adb, port=self._port, jar=self._jar, audio=self._audio_active
+        )
         LOG.info("使用设备 %s（%s）", entry.serial, entry.model or "unknown")
 
         # _normalize_pointer_speed() 要按设备序列号落盘兜底状态；以前在
@@ -398,7 +425,16 @@ class TabletSession:
         self.server.kill()  # 清旧实例，保证幂等
         self.server.spawn()
         self._port = self.server.forward()
-        self._connect_socket()
+        try:
+            self._connect_socket()
+        except PadLendError as exc:
+            if not self._audio_active:
+                raise
+            # Android 11 以下或 scrcpy 音频初始化失败时，不能因为可选功能
+            # 把整个平板连接拖死；丢弃服务端，按 audio=false 重来一次。
+            LOG.warning("音频通道不可用，回退为仅控制通道: %s", exc.detail)
+            self._restart_without_audio()
+            self._connect_socket()
         self._create_uhid()
         self._start_receiver()
         self._keep_screen_on()
@@ -412,6 +448,22 @@ class TabletSession:
             pointer_speed=facts.pointer_speed,
         )
         return facts
+
+    def _restart_without_audio(self) -> None:
+        """丢弃音频服务端，按 audio=false 重新启动（服务端每实例只接受一次通道）。"""
+        self._close_socket()
+        old = self._server
+        if old is not None:
+            with contextlib.suppress(PadLendError):
+                old.kill()
+            with contextlib.suppress(PadLendError):
+                old.forward_remove()
+        self._audio_active = False
+        self._server = ScrcpyServer(
+            self._dev_adb, port=self._port, jar=self._jar, audio=False
+        )
+        self._server.spawn()
+        self._port = self._server.forward()
 
     def stop(self) -> None:
         """6.1.3 退出序列；幂等，未 start 时也安全。
@@ -786,13 +838,17 @@ class TabletSession:
             LOG.warning("screen_off_timeout 还原失败（原值 %d），保留状态待下次启动", original)
 
     # -- 内部：socket / uhid ----------------------------------------------
-    def _connect_socket(self) -> None:
-        """连接 forward 端口并校验 1 字节 dummy（9.1）。
+    def _audio_wanted(self) -> bool:
+        """配置里的音频开关；测试用 FakeConfig 没 misc 时按关闭处理。"""
+        misc = getattr(self._cfg, "misc", None)
+        return bool(getattr(misc, "forward_audio", False))
 
-        实测 scrcpy 5.0.1：``tunnel_forward=true`` 且 ``video=false audio=false
-        control=true`` 时只接受一个 control socket，并写一个 0 字节
-        （DesktopConnection 注释：send one byte so the client may read() to
-        detect a connection error）。DESIGN 9.1 的 4 字节为早期误记。
+    def _handshake_socket(self, label: str) -> socket.socket:
+        """连接 forward 端口并校验 1 字节 dummy，返回可用 socket。
+
+        实测 scrcpy 5.0.1：tunnel_forward 下每个通道 accept 后都会先写一个
+        0 字节。audio=true 时必须先连 audio、读掉 dummy，再连 control；
+        顺序反过来会把 control 当成 audio（DESIGN 9.1 的 4 字节为早期误记）。
 
         app_process 从 spawn 到真正监听 ``localabstract:scrcpy`` 有可见延迟；
         在这之前 adb forward 会接受 TCP 连接然后立即关闭，读 dummy 得到 EOF。
@@ -815,7 +871,8 @@ class TabletSession:
                 if dummy != C.HANDSHAKE_DUMMY:
                     raise PadLendError(
                         ErrorCode.HANDSHAKE_FAILED,
-                        f"dummy 字节不符: {dummy.hex()}（期望 {C.HANDSHAKE_DUMMY.hex()}）",
+                        f"{label}通道 dummy 字节不符: {dummy.hex()}"
+                        f"（期望 {C.HANDSHAKE_DUMMY.hex()}）",
                     )
                 sock.settimeout(C.SOCKET_SEND_TIMEOUT)
             except PadLendError:
@@ -828,19 +885,65 @@ class TabletSession:
                 if time.monotonic() >= deadline:
                     raise PadLendError(
                         ErrorCode.HANDSHAKE_FAILED,
-                        f"连接 127.0.0.1:{self._port} 失败（已重试 "
+                        f"连接 {label}通道 127.0.0.1:{self._port} 失败（已重试 "
                         f"{C.HANDSHAKE_RETRY_TIMEOUT_S:.0f}s）: {exc}",
                         cause=exc,
                     ) from exc
-                LOG.debug("服务端尚未就绪，重试握手: %s", exc)
+                LOG.debug("服务端尚未就绪，重试%s握手: %s", label, exc)
                 time.sleep(C.HANDSHAKE_RETRY_INTERVAL_S)
                 continue
-            self._sock = sock
-            self._sock_broken = False
-            LOG.info("控制通道已建立（tcp:%d）", self._port)
-            return
+            LOG.info("%s通道已建立（tcp:%d）", label, self._port)
+            return sock
+
+    def _connect_socket(self) -> None:
+        """按 audio -> control 顺序建立通道（9.1）。"""
+        audio_sock: socket.socket | None = None
+        if self._audio_active:
+            audio_sock = self._handshake_socket("音频")
+        try:
+            ctrl = self._handshake_socket("控制")
+        except BaseException:
+            if audio_sock is not None:
+                with contextlib.suppress(OSError):
+                    audio_sock.close()
+            raise
+
+        self._sock = ctrl
+        self._sock_broken = False
+        if audio_sock is not None:
+            try:
+                # relay 用短超时轮询 stop 标志；不能阻塞在 recv 上导致退出卡住。
+                audio_sock.settimeout(AUDIO_SOCKET_POLL_S)
+                relay = AudioRelay(audio_sock, self._audio_sink_port)
+                relay.start()
+            except OSError as exc:
+                with contextlib.suppress(OSError):
+                    audio_sock.close()
+                raise PadLendError(
+                    ErrorCode.HANDSHAKE_FAILED,
+                    f"音频通道初始化失败: {exc}",
+                    cause=exc,
+                ) from exc
+            self._audio_sock = audio_sock
+            self._audio_relay = relay
+            if relay.degraded:
+                LOG.warning("音频播放器不可用，本次连接只保留控制通道")
+        LOG.info("控制通道已建立（tcp:%d）", self._port)
 
     def _close_socket(self) -> None:
+        # 先关音频：relay 可能正阻塞/轮询在 recv 上。
+        audio_sock = getattr(self, "_audio_sock", None)
+        self._audio_sock = None
+        if audio_sock is not None:
+            with contextlib.suppress(OSError):
+                audio_sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                audio_sock.close()
+        relay = getattr(self, "_audio_relay", None)
+        self._audio_relay = None
+        if relay is not None:
+            relay.stop()
+
         stop = self._receiver_stop
         thread = self._receiver_thread
         self._receiver_stop = None
@@ -1150,6 +1253,7 @@ class TabletSession:
 
         self._uhid_created = False
         self._sock_broken = False
+        self._audio_active = False
         self._consecutive_failures = 0
         LOG.info("连接层已清理")
 

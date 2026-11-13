@@ -2,6 +2,38 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.4.0] — 2026-11-14
+
+### 新增
+
+- **可选的平板声音转发**：设置页新增 `misc.forward_audio`（默认关闭）。开启并重新连接后，
+  平板按 scrcpy 的 `audio_source=output` 接管声音输出，Python 从音频 socket 读裸 PCM
+  （48 kHz / 双声道 / 16-bit LE），经 `127.0.0.1` TCP 送到 Tauri 外壳；Rust 用 cpal
+  在本机默认输出设备播放。平板自身不再外放，键鼠控制通道独立，不受音频缓冲反压影响。
+- **音频播放器在 Tauri 侧**：新增 `src-tauri/src/audio.rs`，绑定随机本地端口，校验
+  16 字节 `PLAU` 头，带 100 ms 起播预缓冲、1 s 上限和线性重采样；sink 断开只结束本次
+  播放，不向主流程传播。新增 `tablet/audio.py` 负责读 scrcpy 音频并转发，sink 不可用时
+  继续把音频读掉，避免控制通道被堵。
+
+### 变更
+
+- scrcpy 启动参数支持 `audio=true`，并保持 `video=false/control=true/raw_stream=true`；
+  `audio=true` 时服务端先接受音频通道、再接受控制通道，握手顺序写错就会把
+  控制流当 PCM。音频通道启动失败（如 Android 11 以下）会自动丢弃服务端并按
+  `audio=false` 重连一次，不让可选功能拖死键鼠。
+- 音频开关在连接建立时固定；修改设置只落盘并提示「重新连接平板后生效」，不会热切换
+  已启动的服务端。
+
+### 验证
+
+- `pytest`：488 passed，3 skipped（新增音频转发、双通道握手顺序、sink 降级、
+  `audio` 参数与仅控制回退用例）；`ruff check .`、`tsc --noEmit` 通过；
+  `vitest run`：43 passed。
+- 本机已用 VS 2022 Build Tools（MSVC 14.44 + Windows SDK 10.0.26100）完成
+  `cargo check` 与 `cargo build`；GitHub Actions 仍会再跑一次。
+- 未在真实平板上试听：当前环境没有可用的 Windows 音频端点；真机验收还需
+  Android 11+ 平板与有声卡的 Windows。
+
 ## [1.3.0] — 2026-11-13
 
 ### 新增

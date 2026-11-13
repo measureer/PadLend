@@ -131,6 +131,10 @@ export const SETTING_GROUPS: SettingGroup[] = [
         id: 'keep_screen_on', section: 'misc', key: 'keep_screen_on', label: '保持平板亮屏', kind: 'toggle',
         hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。不会修改开发者选项里的「保持唤醒状态」。',
       },
+      {
+        id: 'forward_audio', section: 'misc', key: 'forward_audio', label: '转发平板声音', kind: 'toggle',
+        hint: '把平板正在播放的声音实时转到电脑，平板自身静音。需要 Android 11 或更高版本；首次开启可能要在平板上确认。修改后重新连接平板才生效。',
+      },
     ],
   },
 ];
