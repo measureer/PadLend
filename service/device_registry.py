@@ -406,6 +406,23 @@ class DeviceRegistry:
                     return record
         return None
 
+    def mark_failure(self, serial: str, detail: str, *, now: datetime | None = None) -> bool:
+        """记录一次端点连接失败；成功连接仍由 upsert() 清零。
+
+        只更新端点，不改 last_ok/last_seen（它们表示最后一次成功）。
+        失败信息用于设备页解释“为什么这个地址没连上”，并给候选排序提供依据。
+        """
+        text_serial = normalize_serial(serial)
+        record = self.find_by_serial(text_serial)
+        if record is None:
+            return False
+        endpoint = record.endpoint(text_serial)
+        if endpoint is None:
+            return False
+        endpoint.fail_count = min(endpoint.fail_count + 1, 9999)
+        endpoint.last_error = str(detail or "")[:300]
+        return True
+
     def find_by_hardware(self, hardware_serial: str) -> DeviceRecord | None:
         text = normalize_serial(hardware_serial).casefold()
         if not text:

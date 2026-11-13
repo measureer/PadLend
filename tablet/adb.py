@@ -109,11 +109,27 @@ def normalize_address(address: str | None) -> str:
     text = text.rstrip("/")
     if not text or " " in text:
         return ""
+    default_port = str(C.WIRELESS_DEFAULT_PORT)
+    if text.startswith("["):
+        close = text.find("]")
+        if close <= 1:
+            return ""
+        host = text[1:close]
+        rest = text[close + 1 :]
+        if not rest:
+            return f"[{host}]:{default_port}"
+        if not rest.startswith(":"):
+            return ""
+        port = rest[1:]
+        return f"[{host}]:{port}" if port.isdigit() else ""
+    # 裸 IPv6 没有方括号时无法和端口区分，按默认端口加方括号。
+    if text.count(":") >= 2:
+        return f"[{text}]:{default_port}"
     host, sep, port = text.partition(":")
     if not host:
         return ""
     if not sep:
-        return f"{text}:{C.WIRELESS_DEFAULT_PORT}"
+        return f"{text}:{default_port}"
     return text if port.isdigit() else ""
 
 

@@ -209,7 +209,14 @@ def _mark_clean_exit() -> None:
 class Runtime:
     """一组协作对象；业务服务与无头模式共用。"""
 
-    def __init__(self, cfg: Config, *, simulate: bool = False) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        *,
+        simulate: bool = False,
+        candidates: Any = None,
+        verify_facts: Any = None,
+    ) -> None:
         from core.router import Router
         from win.desktop import DesktopMap
         from win.keyboard_hook import KeyboardHook
@@ -228,7 +235,12 @@ class Runtime:
             from tablet.session import TabletSession
 
             self.adb = Adb(serial=cfg.device.serial or None)
-            self.session = TabletSession(cfg, adb=self.adb)
+            self.session = TabletSession(
+                cfg,
+                adb=self.adb,
+                candidates=candidates,
+                verify_facts=verify_facts,
+            )
         self.desktop = DesktopMap()
         self.mask: CursorMask = CursorMask()
         self.router: Router = Router(cfg, self.session, self.desktop, self.mask)

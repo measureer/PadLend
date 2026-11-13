@@ -158,6 +158,64 @@ def test_discovered_services_falls_back_to_direct_mdns(
     assert locator.discovered_services(lambda: []) == [("192.168.1.8", 44803)]
 
 
+
+def test_split_address_handles_ipv6_and_hostnames() -> None:
+    assert locator.split_address("[fd7a::1]:5555") == ("fd7a::1", 5555)
+    assert locator.split_address("[fd7a::1]") == ("fd7a::1", 5555)
+    assert locator.split_address("fd7a::1") == ("fd7a::1", 5555)
+    assert locator.split_address("tablet.local") == ("tablet.local", 5555)
+    assert locator.format_address("fd7a::1", 5555) == "[fd7a::1]:5555"
+    assert locator.format_address("192.168.1.8", 5555) == "192.168.1.8:5555"
+    assert locator.format_address("", 5555) == ""
+
+
+def test_discovered_mdns_keeps_hardware_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tablet import mdns as mdns_module
+
+    monkeypatch.setattr(
+        mdns_module,
+        "discover",
+        lambda *, timeout=1.2: [
+            mdns_module.MdnsService(
+                ip="10.0.0.5", port=5555, serial="HW1", model="Pad"
+            ),
+            mdns_module.MdnsService(
+                ip="10.0.0.5", port=5555, serial="HW1", model="Pad"
+            ),
+        ],
+    )
+
+    found = locator.discovered_mdns(lambda: [])
+
+    assert [(item.ip, item.port, item.serial) for item in found] == [
+        ("10.0.0.5", 5555, "HW1")
+    ]
+
+
+def test_locate_finds_a_new_ip_by_hardware_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tablet import mdns as mdns_module
+
+    def fake_tcp(ip: str, port: int, *, timeout: float = 1.5) -> bool:
+        return (ip, port) == ("10.0.0.5", 5555)
+
+    monkeypatch.setattr(locator, "tcp_open", fake_tcp)
+    found = locator.locate(
+        "192.168.1.8:37495",
+        hardware_serial="HW1",
+        mdns=lambda: [
+            mdns_module.MdnsService(ip="10.0.0.5", port=5555, serial="HW1")
+        ],
+    )
+
+    assert found.status == locator.STATUS_MOVED
+    assert found.address == "10.0.0.5:5555"
+    assert "硬件序列号" in found.detail
+
+
 def test_arp_table_reads_windows_output(monkeypatch: pytest.MonkeyPatch) -> None:
     output = (
         "接口: 192.168.1.5 --- 0x9\n"

@@ -35,7 +35,11 @@ from core.diagnostics import (
 )
 from core.geometry import Align, Edge, EdgeSegment, Placement
 from main import Runtime, _mark_clean_exit, _mark_running, _set_dpi_awareness, _stale_cleanup
-from service.device_registry import DeviceRegistry, is_wireless_serial
+from service.device_registry import (
+    DeviceRegistry,
+    canonical_hardware_serial,
+    is_wireless_serial,
+)
 from service.serializers import (
     apply_config_patch,
     config_dict,
@@ -52,7 +56,7 @@ from tablet.locator import (
     STATUS_ONLINE,
     Located,
     arp_table,
-    discovered_services,
+    discovered_mdns,
     locate,
     normalize_mac,
 )
@@ -141,7 +145,12 @@ class PadLendService:
             _stale_cleanup(self.cfg, first_run=self.first_run)
         _mark_running()
 
-        self.runtime = Runtime(self.cfg, simulate=self.simulate)
+        self.runtime = Runtime(
+            self.cfg,
+            simulate=self.simulate,
+            candidates=self._device_candidates,
+            verify_facts=self._verify_device_facts,
+        )
         router = self.runtime.router
         router.on_state_changed = self._on_state_changed
         router.on_metrics = self._on_metrics
@@ -463,6 +472,56 @@ class PadLendService:
         self.emit("devices", {"devices": devices, "error": error})
         return devices
 
+    def _device_candidates(self) -> list[str]:
+        """当前设备记录内的候选地址；空列表交给 TabletSession 的首连等待。"""
+        current = str(getattr(self.cfg.device, "serial", "") or "")
+        if not current:
+            return []
+        with self._lock:
+            record = self.registry.find_by_serial(current)
+        if record is None:
+            return [current]
+        primary = record.primary_serial(current)
+        ordered = [primary] if primary else []
+        rest = sorted(
+            (endpoint for endpoint in record.endpoints if endpoint.serial != primary),
+            key=lambda item: (item.last_ok or "", item.last_seen or ""),
+            reverse=True,
+        )
+        for endpoint in rest:
+            if endpoint.serial and endpoint.serial not in ordered:
+                ordered.append(endpoint.serial)
+        return ordered[:8]
+
+    def _verify_device_facts(self, serial: str, facts: Any) -> bool:
+        """连接后核对硬件序列号；不一致时拉黑端点，绝不把另一台当当前设备。"""
+        with self._lock:
+            record = self.registry.find_by_serial(serial)
+        if record is None:
+            self._remember_device(serial, facts=facts)
+            return True
+        expected = str(record.hardware_serial or "").strip()
+        actual = canonical_hardware_serial(
+            _attr(facts, "hardware_serial", ""),
+            _attr(facts, "serial", ""),
+        )
+        if expected and actual and expected.casefold() != actual.casefold():
+            detail = (
+                f"硬件序列号不符：注册表为 {expected}，实际为 {actual}；"
+                "该地址可能已被另一台设备占用"
+            )
+            with self._lock:
+                self.registry.mark_failure(serial, detail)
+                self.registry.save()
+            self.emit_log("DEVICE", f"{serial} 身份校验失败：{detail}")
+            return False
+        if expected and not actual:
+            # 少数 ROM 禁止读取 ro.serialno；端点本身已属于该记录，不能
+            # 仅因读不到硬件号就把用户锁在外面。
+            self.emit_log("DEVICE", f"{serial} 无法读取硬件序列号，按记录端点接受连接")
+        self._remember_device(serial, facts=facts)
+        return True
+
     def devices_scan(self, _params: dict[str, Any]) -> dict[str, Any]:
         adb = getattr(self.runtime, "adb", None) if self.runtime is not None else None
         entries: list[Any] = []
@@ -489,11 +548,12 @@ class PadLendService:
             return {"located": dict(self._located)}
         # 查找对象来自注册表：一台设备可能保留多个历史地址，逐个尝试；
         # 不再依赖 config.device.macs（字段保留但已停用）。
-        targets: list[tuple[str, str]] = []
+        targets: list[tuple[str, str, str]] = []
         with self._lock:
             seen: set[str] = set()
             for record in self.registry.records():
                 mac = record.macs[0] if record.macs else ""
+                hardware = str(record.hardware_serial or "")
                 for endpoint in record.endpoints:
                     serial = endpoint.serial
                     if serial in seen:
@@ -501,7 +561,7 @@ class PadLendService:
                     if endpoint.transport != "wifi" and not is_wireless_serial(serial):
                         continue
                     seen.add(serial)
-                    targets.append((serial, mac))
+                    targets.append((serial, mac, hardware))
                     if len(targets) >= 8:
                         break
                 if len(targets) >= 8:
@@ -510,13 +570,19 @@ class PadLendService:
             return {"located": dict(self._located)}
         try:
             services = getattr(adb, "mdns_services", None)
-            discovered = discovered_services(services if callable(services) else None)
+            discovered = discovered_mdns(services if callable(services) else None)
         except Exception as exc:  # noqa: BLE001
             log.info("mDNS discovery failed: %r", exc)
             discovered = []
-        for serial, mac in targets:
+        for serial, mac, hardware in targets:
             try:
-                found = locate(serial, mac, mdns=lambda: discovered, arp=arp_table)
+                found = locate(
+                    serial,
+                    mac,
+                    hardware_serial=hardware,
+                    mdns=lambda: discovered,
+                    arp=arp_table,
+                )
             except Exception as exc:  # noqa: BLE001
                 found = Located(detail=f"查找失败：{exc}")
             record = None

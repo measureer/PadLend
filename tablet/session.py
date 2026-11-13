@@ -37,6 +37,7 @@ from core.logsetup import log_event
 
 from . import protocol
 from .adb import Adb, DeviceEntry
+from .locator import split_address, tcp_open
 from .server import KILL_PATTERN, ScrcpyServer
 from .uhid import keyboard_report, mouse_report
 
@@ -64,12 +65,26 @@ _SCREEN_TIMEOUT_MAX_MS = 2_147_483_647
 # 单独跑 dumpsys input 一次要 300ms 以上，不能塞进 supervisor 的 2s 轮询。
 _ORIENTATION_POLL_S = 1.0
 _ORIENTATION_RESTART_S = 2.0
+# 设备注册表候选端点：先做一次短 TCP 预检，再让 adb connect。
+# adb connect 自身要等 20s（常数 ADB_CONNECT_TIMEOUT），失败地址不能把
+# 首连拖成 40s 的“假死”；TCP 不通时直接换下一个历史地址。
+_CANDIDATE_PROBE_TIMEOUT_S = 0.6
+_CANDIDATE_CONNECT_TIMEOUT_S = 4.0
 _ORIENTATION_SCRIPT = (
     "while true; do "
     "dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='; "
     "sleep 1; "
     "done"
 )
+
+
+def _looks_wireless(serial: str) -> bool:
+    """判断 serial 是否是无线 adb 地址（与 ``DeviceEntry.is_wireless`` 同义）。"""
+    return (
+        ":" in serial
+        or "_adb-tls-connect" in serial
+        or ".tcp" in serial
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +265,13 @@ class TabletSession:
         adb: Adb | None = None,
         port: int | None = None,
         jar: Path | None = None,
+        candidates: Callable[[], Sequence[str]] | None = None,
+        verify_facts: Callable[[str, DeviceFacts], bool] | None = None,
     ) -> None:
         self._cfg = cfg
         self._adb = adb if adb is not None else Adb()
+        self._candidates = candidates
+        self._verify_facts = verify_facts
         self._dev_adb: Adb | None = None
         self._port = port if port is not None else (
             cfg.device.server_port if cfg is not None else C.DEFAULT_SERVER_PORT
@@ -366,13 +385,14 @@ class TabletSession:
             return facts
 
     def _start_locked(self) -> DeviceFacts:
-        entry = self._select_device()
-        self._dev_adb = self._adb.with_serial(entry.serial)
+        entry, facts = self._connect_candidate()
         # 服务端封装必须绑定到具体设备（多设备时不能落到默认设备）
         self._server = ScrcpyServer(self._dev_adb, port=self._port, jar=self._jar)
         LOG.info("使用设备 %s（%s）", entry.serial, entry.model or "unknown")
 
-        facts = read_facts(self._dev_adb)
+        # _normalize_pointer_speed() 要按设备序列号落盘兜底状态；以前在
+        # start() 末尾才赋值 self._facts，这里先放好，避免保存空 serial。
+        self._facts = facts
         self._normalize_pointer_speed()
         self.server.push_if_needed()
         self.server.kill()  # 清旧实例，保证幂等
@@ -569,6 +589,114 @@ class TabletSession:
                 C.INITIAL_RETRY_WINDOW_S,
                 cancel=self._closing.is_set,
             )
+
+    # -- 内部：注册表候选端点（1.2.2） ------------------------------------
+    def _candidate_serials(self) -> list[str | None]:
+        """当前设备记录里的候选地址；没有 provider 时保持旧的首连等待。"""
+        current = self._cfg.device.serial if self._cfg is not None else ""
+        if self._candidates is None:
+            return [current or None]
+        try:
+            raw = list(self._candidates())
+        except Exception:  # 注册表/回调故障不能阻止手动连接
+            LOG.exception("读取设备候选地址失败，回退当前地址")
+            raw = []
+        result: list[str | None] = []
+        seen: set[str] = set()
+        for value in raw:
+            text = str(value or "").strip()
+            if not text or text.casefold() in seen:
+                continue
+            seen.add(text.casefold())
+            result.append(text)
+        # 空注册表/首次启动仍走 _select_device 的 40s 首连窗口。
+        return result[:8] if result else [current or None]
+
+    def _select_candidate(self, serial: str | None) -> DeviceEntry:
+        """只认注册表给出的地址；不再接受“唯一在线设备”兜底。"""
+        if serial is None or self._candidates is None:
+            return self._select_device()
+        self._adb.version()
+        entry = next((item for item in self._adb.devices()
+                      if item.serial == serial), None)
+        if entry is not None and entry.online:
+            return entry
+        if not _looks_wireless(serial):
+            detail = f"USB 设备 {serial} 未出现在 adb devices"
+            if entry is not None:
+                detail = f"USB 设备 {serial} 当前状态是 {entry.state}"
+            raise PadLendError(ErrorCode.DEVICE_OFFLINE, detail)
+
+        host, port = split_address(serial)
+        if host and port and not tcp_open(
+            host, port, timeout=_CANDIDATE_PROBE_TIMEOUT_S
+        ):
+            raise PadLendError(
+                ErrorCode.DEVICE_OFFLINE,
+                f"{serial} 的 TCP 端口不可达（已跳过，避免等待 adb connect 超时）",
+            )
+        try:
+            self._adb.connect(serial, timeout=_CANDIDATE_CONNECT_TIMEOUT_S)
+        except PadLendError as exc:
+            raise PadLendError(
+                ErrorCode.DEVICE_OFFLINE,
+                f"候选地址 {serial} 连接失败：{exc.detail}",
+                cause=exc,
+            ) from exc
+        entry = next((item for item in self._adb.devices()
+                      if item.serial == serial), None)
+        if entry is not None and entry.online:
+            return entry
+        state = entry.state if entry is not None else "未出现在 adb devices"
+        raise PadLendError(
+            ErrorCode.DEVICE_OFFLINE,
+            f"候选地址 {serial} 连接后状态为 {state}（若为 unauthorized，请在平板上允许 USB 调试）",
+        )
+
+    def _connect_candidate(self) -> tuple[DeviceEntry, DeviceFacts]:
+        """按候选顺序连接并校验身份；只返回读得到 facts 的设备。"""
+        serials = self._candidate_serials()
+        errors: list[PadLendError] = []
+        for serial in serials:
+            try:
+                entry = self._select_candidate(serial)
+                self._dev_adb = self._adb.with_serial(entry.serial)
+                facts = read_facts(self._dev_adb)
+                verified = True
+                if self._verify_facts is not None:
+                    try:
+                        verified = bool(self._verify_facts(entry.serial, facts))
+                    except Exception as exc:  # 校验器故障按“未通过”处理
+                        LOG.exception("设备身份校验器异常")
+                        verified = False
+                        errors.append(PadLendError(
+                            ErrorCode.DEVICE_OFFLINE,
+                            f"{entry.serial} 身份校验异常：{exc}",
+                            cause=exc,
+                        ))
+                if not verified:
+                    if not errors:
+                        errors.append(PadLendError(
+                            ErrorCode.DEVICE_OFFLINE,
+                            f"{entry.serial} 的连接结果不是注册表里的同一台设备",
+                        ))
+                    self._dev_adb = None
+                    continue
+                return entry, facts
+            except PadLendError as exc:
+                if exc.code is not ErrorCode.DEVICE_OFFLINE:
+                    raise
+                errors.append(exc)
+                self._dev_adb = None
+                if len(serials) > 1:
+                    LOG.info("候选 %s 不可用：%s", serial or "默认设备", exc.detail)
+        if errors:
+            last = errors[-1]
+            detail = last.detail or last.code.value
+            if len(errors) > 1:
+                detail = f"{detail}（已尝试 {len(errors)} 个地址）"
+            raise PadLendError(last.code, detail, cause=last.cause) from last
+        raise PadLendError(ErrorCode.DEVICE_OFFLINE, "没有可用的设备地址")
 
     def _normalize_pointer_speed(self) -> None:
         """记录原值 → 归零（6.1.2）。失败按 E101 处理（设备拒绝写设置）。"""

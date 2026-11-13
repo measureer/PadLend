@@ -111,6 +111,10 @@ from tablet.adb import normalize_address  # noqa: E402
         ("192.168.1.8:abc", ""),
         (":5555", ""),
         ("tablet.local", "tablet.local:5555"),
+        ("[fd7a::1]:5555", "[fd7a::1]:5555"),
+        ("[fd7a::1]", "[fd7a::1]:5555"),
+        ("fd7a::1", "[fd7a::1]:5555"),
+        ("[fd7a::1]:bad", ""),
     ],
 )
 def test_normalize_address(raw: str, expected: str) -> None:

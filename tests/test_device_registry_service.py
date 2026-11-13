@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from config import Config, PlacementCfg
 from service.api import PadLendService
 from service.device_registry import DeviceRegistry
@@ -176,6 +178,103 @@ def test_remove_deletes_all_endpoints_of_one_device(tmp_path: Path) -> None:
     assert svc.cfg.device.serial == ""
     assert svc._located == {}
     assert svc.cfg.device.known == ["USB123", "192.168.1.9:5555"]
+
+
+def test_candidates_follow_current_endpoint_then_last_ok(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    usb = "USB123"
+    wifi = "192.168.1.9:5555"
+    svc.registry.upsert(usb, hardware_serial="HW1")
+    svc.registry.upsert(wifi, hardware_serial="HW1")
+    record = svc.registry.find_by_hardware("HW1")
+    assert record is not None
+    record.endpoint(usb).last_ok = "2026-01-01T00:00:00+00:00"
+    record.endpoint(wifi).last_ok = "2026-01-02T00:00:00+00:00"
+    svc.cfg.device.serial = usb
+
+    assert svc._device_candidates()[:2] == [usb, wifi]
+
+    svc.cfg.device.serial = "UNKNOWN"
+    assert svc._device_candidates() == ["UNKNOWN"]
+    svc.cfg.device.serial = ""
+    assert svc._device_candidates() == []
+
+
+def test_verify_facts_rejects_a_reused_endpoint(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    serial = "192.168.1.9:5555"
+    svc.registry.upsert(serial, hardware_serial="HW1")
+    svc.cfg.device.serial = serial
+
+    ok = svc._verify_device_facts(
+        serial,
+        SimpleNamespace(hardware_serial="HW2", serial=serial, model="Other"),
+    )
+
+    assert ok is False
+    record = svc.registry.find_by_serial(serial)
+    assert record is not None and record.hardware_serial == "HW1"
+    assert record.endpoint(serial).fail_count == 1
+    assert "硬件序列号不符" in record.endpoint(serial).last_error
+    assert svc.cfg.device.serial == serial
+
+
+def test_verify_facts_accepts_matching_hardware_and_clears_failure(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    serial = "192.168.1.9:5555"
+    svc.registry.upsert(serial, hardware_serial="HW1")
+    svc.registry.mark_failure(serial, "旧错误")
+    svc.cfg.device.serial = serial
+
+    ok = svc._verify_device_facts(
+        serial,
+        SimpleNamespace(hardware_serial="HW1", serial=serial, model="Pad"),
+    )
+
+    assert ok is True
+    record = svc.registry.find_by_serial(serial)
+    assert record is not None
+    assert record.endpoint(serial).fail_count == 0
+    assert record.endpoint(serial).last_error == ""
+
+
+def test_locate_passes_hardware_serial_to_mdns_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from service import api as api_module
+    from tablet.mdns import MdnsService
+
+    svc = _service(tmp_path)
+    old = "192.168.1.9:5555"
+    new = "10.0.0.5:5555"
+    svc.registry.upsert(old, hardware_serial="HW1")
+    svc.cfg.device.serial = old
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        api_module,
+        "discovered_mdns",
+        lambda services, timeout=1.2: [
+            MdnsService(ip="10.0.0.5", port=5555, serial="HW1")
+        ],
+    )
+
+    def fake_locate(serial: str, mac: str = "", **kwargs):  # noqa: ANN003
+        seen.update({"serial": serial, "mac": mac, **kwargs})
+        return Located(status=STATUS_MOVED, address=new, ip="10.0.0.5", port=5555)
+
+    monkeypatch.setattr(api_module, "locate", fake_locate)
+    svc.runtime = SimpleNamespace(
+        adb=SimpleNamespace(path="/usr/bin/adb", mdns_services=lambda: [])
+    )
+
+    svc.devices_locate({})
+
+    assert seen["serial"] == old
+    assert seen["hardware_serial"] == "HW1"
+    record = svc.registry.find_by_serial(new)
+    assert record is not None
+    assert svc.cfg.device.serial == new
 
 
 def test_remember_moves_layout_from_secondary_endpoint(tmp_path: Path) -> None:

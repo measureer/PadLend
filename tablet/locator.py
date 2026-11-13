@@ -25,6 +25,8 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from tablet.mdns import MdnsService
+
 log = logging.getLogger("tablet.locator")
 
 STATUS_ONLINE = "online"
@@ -64,23 +66,49 @@ class Located:
 
 
 def split_address(address: str) -> tuple[str, int]:
-    """``"192.168.1.8:37495"`` → ``("192.168.1.8", 37495)``；无端口返回 5555。"""
+    """拆出 ``(host, port)``，支持 IPv4、主机名、``[IPv6]:port`` 与裸 IPv6。
+
+    无线调试在 VPN/异地组网下可能是主机名或 IPv6，不能只按第一个冒号切。
+    没有端口时按 adb 的老默认 5555 处理；非法端口也回退 5555。
+    """
     text = str(address or "").strip()
     if not text:
         return "", 0
-    host, sep, port = text.partition(":")
-    host = host.strip()
+
+    host = text
+    port_text = ""
+    if text.startswith("["):
+        close = text.find("]")
+        if close < 0:
+            return "", 0
+        host = text[1:close].strip()
+        rest = text[close + 1 :].strip()
+        if rest.startswith(":"):
+            port_text = rest[1:].strip()
+    elif text.count(":") == 1:
+        host, port_text = text.split(":", 1)
+        host = host.strip()
+    elif text.count(":") >= 2:
+        # 裸 IPv6：没有方括号时无法区分末尾数字是地址一部分还是端口，
+        # 统一按默认端口处理；用户要指定端口请用 [addr]:port。
+        host = text
     if not host:
         return "", 0
-    if not sep:
-        return host, 5555
-    number = port.strip()
-    if not number.isdigit():
-        return host, 5555
-    value = int(number)
-    if not 0 < value < 65536:
-        return host, 5555
-    return host, value
+    if port_text and port_text.isdigit():
+        value = int(port_text)
+        if 0 < value < 65536:
+            return host, value
+    return host, 5555
+
+
+def format_address(host: str, port: int) -> str:
+    """``(host, port)`` → adb serial；IPv6 必须带方括号才能和端口共存。"""
+    clean = str(host or "").strip()
+    if not clean or not 0 < int(port) < 65536:
+        return ""
+    if ":" in clean and not clean.startswith("["):
+        return f"[{clean}]:{int(port)}"
+    return f"{clean}:{int(port)}"
 
 
 def normalize_mac(value: str | None) -> str:
@@ -122,25 +150,25 @@ def parse_mdns(
     return found
 
 
-def discovered_services(
+def discovered_mdns(
     adb_mdns: Callable[[], Sequence[str]] | None = None,
     *,
     timeout: float = 1.2,
-) -> list[tuple[str, int]]:
-    """发现局域网里的 adb 无线调试地址，供 ``locate(mdns=...)`` 使用。
+) -> list[MdnsService]:
+    """发现无线调试服务，保留 TXT 里的 ``serial``/``model``。
 
-    ``adb mdns services`` 有输出就直接用；没有（Windows 上很常见）时
-    直接发 mDNS 查询。所有失败都收敛成空列表，查找流程继续走离线分支。
+    ``adb mdns services`` 的原始行没有 TXT 字段，但能给出当前端口；直接
+    mDNS 查询（Windows 上更常见）则能拿到硬件序列号。两路都失败时返回空。
     """
     if adb_mdns is not None:
         try:
             lines = adb_mdns()
-            found = parse_mdns(lines, service=_ADB_CONNECT_SERVICE)
+            pairs = parse_mdns(lines, service=_ADB_CONNECT_SERVICE)
         except Exception as exc:  # noqa: BLE001 - mDNS 查询失败不阻断后续
             log.debug("adb mdns services failed: %r", exc)
-            found = []
-        if found:
-            return found
+            pairs = []
+        if pairs:
+            return [MdnsService(ip=ip, port=port) for ip, port in pairs]
 
     try:
         from tablet.mdns import discover
@@ -149,12 +177,27 @@ def discovered_services(
     except Exception as exc:  # noqa: BLE001 - 网络/解析失败都当没有
         log.debug("direct mdns discovery failed: %r", exc)
         return []
-    found = []
+    found: list[MdnsService] = []
+    seen: set[tuple[str, int]] = set()
     for item in services:
         pair = (item.ip, item.port)
-        if pair not in found:
-            found.append(pair)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        found.append(item)
     return found
+
+
+def discovered_services(
+    adb_mdns: Callable[[], Sequence[str]] | None = None,
+    *,
+    timeout: float = 1.2,
+) -> list[tuple[str, int]]:
+    """兼容旧调用方：只返回 ``(ip, port)``。
+
+    新代码应使用 :func:`discovered_mdns`，按硬件序列号匹配设备。
+    """
+    return [(item.ip, item.port) for item in discovered_mdns(adb_mdns, timeout=timeout)]
 
 
 def mdns_port_for(ip: str, services: Sequence[tuple[str, int]]) -> int:
@@ -202,12 +245,18 @@ def locate(
     address: str,
     mac: str = "",
     *,
+    hardware_serial: str = "",
     services: Callable[[], Sequence[str]] | None = None,
-    mdns: Callable[[], Sequence[tuple[str, int]]] | None = None,
+    mdns: Callable[[], Sequence[tuple[str, int] | MdnsService]] | None = None,
     arp: Callable[[], dict[str, str]] | None = None,
     timeout: float = 1.5,
 ) -> Located:
-    """按「原地址 → mDNS → MAC/ARP → 离线」的顺序找上次那台平板。"""
+    """按「原地址 → mDNS → MAC/ARP → 离线」的顺序找上次那台平板。
+
+    ``hardware_serial`` 来自设备注册表。mDNS TXT 里的 serial 是硬件序列号，
+    在路由器换 IP 后仍不变，因此它的优先级高于「同 IP 换端口」；MAC/ARP
+    只在没有 mDNS 信息时兜底。
+    """
     host, port = split_address(address)
     if not host:
         return Located(status=STATUS_OFFLINE, mac=normalize_mac(mac), detail="还没有连接过设备")
@@ -215,38 +264,67 @@ def locate(
     if tcp_open(host, port, timeout=timeout):
         return Located(
             status=STATUS_ONLINE,
-            address=f"{host}:{port}",
+            address=format_address(host, port),
             ip=host,
             port=port,
             mac=normalize_mac(mac),
-            detail=f"上次的地址 {host}:{port} 仍然在线",
+            detail=f"上次的地址 {format_address(host, port)} 仍然在线",
         )
 
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int, str]] = []
+
+    def add(ip: str, port_number: int, serial: str = "") -> None:
+        if not ip or not 0 < port_number < 65536:
+            return
+        if any(item[0] == ip and item[1] == port_number for item in found):
+            return
+        found.append((ip, port_number, str(serial or "")))
+
     if services is not None:
         try:
-            found = parse_mdns(services())
+            for item_ip, item_port in parse_mdns(services()):
+                add(item_ip, item_port)
         except Exception as exc:  # noqa: BLE001 - mDNS 查询失败不阻断后续
             log.debug("mdns services failed: %r", exc)
 
     if mdns is not None:
         try:
             for item in mdns():
+                if isinstance(item, MdnsService):
+                    add(item.ip, int(item.port), item.serial)
+                    continue
                 try:
-                    item_host, item_port = str(item[0]), int(item[1])
+                    add(str(item[0]), int(item[1]))
                 except (IndexError, TypeError, ValueError):
                     continue
-                pair = (item_host, item_port)
-                if 0 < item_port < 65536 and pair not in found:
-                    found.append(pair)
         except Exception as exc:  # noqa: BLE001 - 调用方查询失败不阻断后续
             log.debug("direct mdns lookup failed: %r", exc)
 
-    new_port = mdns_port_for(host, found)
+    wanted_hw = str(hardware_serial or "").strip().casefold()
+    serial_match = None
+    if wanted_hw:
+        for item in found:
+            if item[2].strip().casefold() == wanted_hw:
+                serial_match = item
+                break
+    if serial_match is not None:
+        match_ip, match_port, _ = serial_match
+        if tcp_open(match_ip, match_port, timeout=timeout):
+            return Located(
+                status=STATUS_MOVED,
+                address=format_address(match_ip, match_port),
+                ip=match_ip,
+                port=match_port,
+                mac=normalize_mac(mac),
+                detail=f"按硬件序列号在 mDNS 找到 {format_address(match_ip, match_port)}",
+            )
+
+    pairs = [(item[0], item[1]) for item in found]
+    new_port = mdns_port_for(host, pairs)
     if new_port and tcp_open(host, new_port, timeout=timeout):
         return Located(
             status=STATUS_MOVED,
-            address=f"{host}:{new_port}",
+            address=format_address(host, new_port),
             ip=host,
             port=new_port,
             mac=normalize_mac(mac),
@@ -263,11 +341,11 @@ def locate(
                 log.debug("arp lookup failed: %r", exc)
         moved_ip = find_ip_by_mac(wanted_mac, table)
         if moved_ip and moved_ip != host:
-            moved_port = mdns_port_for(moved_ip, found)
+            moved_port = mdns_port_for(moved_ip, pairs)
             if moved_port and tcp_open(moved_ip, moved_port, timeout=timeout):
                 return Located(
                     status=STATUS_MOVED,
-                    address=f"{moved_ip}:{moved_port}",
+                    address=format_address(moved_ip, moved_port),
                     ip=moved_ip,
                     port=moved_port,
                     mac=wanted_mac,
@@ -276,7 +354,7 @@ def locate(
             if tcp_open(moved_ip, 5555, timeout=timeout):
                 return Located(
                     status=STATUS_MOVED,
-                    address=f"{moved_ip}:5555",
+                    address=format_address(moved_ip, 5555),
                     ip=moved_ip,
                     port=5555,
                     mac=wanted_mac,
