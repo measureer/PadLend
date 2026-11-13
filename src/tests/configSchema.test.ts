@@ -18,6 +18,12 @@ describe('声明式设置 schema', () => {
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
+
+    const keepScreen = fields.find((f) => f.id === 'keep_screen_on');
+    expect(keepScreen?.hint).toContain('临时把');
+    expect(keepScreen?.hint).toContain('熄屏时间');
+    expect(keepScreen?.hint).toContain('30 分钟');
+    expect(keepScreen?.hint).toContain('可以关闭');
   });
 
   it('速度滑条以 1/100 倍率显示并写回', () => {

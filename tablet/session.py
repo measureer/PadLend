@@ -57,9 +57,9 @@ _FACTORY_POINTER_SPEED = -3
 # 保持亮屏（1.2.1）：连接期间临时调大系统熄屏超时，退出/断开时还原。
 # 绝不改「开发者选项 → 保持唤醒状态」（stay_on_while_plugged_in）：
 # 那个选项只在充电时生效，且会把用户的开发者设置改坏。
-# Android 的 screen_off_timeout 上限因厂商而异；这里写 int32 最大值，
-# 部分 ROM 会夹到自己的上限，但仍比默认值长。
-_SCREEN_TIMEOUT_MAX_MS = 2_147_483_647
+# Android 设置页常见的上限是 30 分钟。调大后输入事件仍会重置计时，
+# 正常使用不需要更长；太长会在异常退出、未能及时还原时把平板留在长期不熄屏状态。
+_SCREEN_TIMEOUT_KEEP_MS = 30 * 60 * 1000
 
 # 朝向监听（1.0.3）：常驻一条 adb shell，每秒输出一行 Viewport。
 # 单独跑 dumpsys input 一次要 300ms 以上，不能塞进 supervisor 的 2s 轮询。
@@ -757,19 +757,19 @@ class TabletSession:
             LOG.warning("screen_off_timeout 原值不可读（%r），保持系统设置不动", raw)
             return
         original = int(raw)
-        if original >= _SCREEN_TIMEOUT_MAX_MS:
+        if original >= _SCREEN_TIMEOUT_KEEP_MS:
             return
         serial = self._facts.serial if self._facts is not None else ""
         # 先落盘再修改：进程在 put 之后、恢复之前崩溃时，下次启动仍能还原。
         save_screen_timeout_state(serial, original)
         if not self._dev_adb.shell_ok(
-            "settings", "put", "system", "screen_off_timeout", str(_SCREEN_TIMEOUT_MAX_MS)
+            "settings", "put", "system", "screen_off_timeout", str(_SCREEN_TIMEOUT_KEEP_MS)
         ):
             clear_screen_timeout_state()
             LOG.warning("screen_off_timeout 调大失败（不致命）")
             return
         self._orig_screen_timeout = original
-        LOG.info("screen_off_timeout: %d → %d（退出时还原）", original, _SCREEN_TIMEOUT_MAX_MS)
+        LOG.info("screen_off_timeout: %d → %d（退出时还原）", original, _SCREEN_TIMEOUT_KEEP_MS)
 
     def _restore_keep_screen_on(self) -> None:
         """还原 system.screen_off_timeout；失败时保留状态文件等下次启动。"""

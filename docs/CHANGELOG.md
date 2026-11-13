@@ -26,10 +26,12 @@
 - `device.known` / `device.macs` 标为已停用，只用于 1.3.0 首次迁移；设备列表与离线行改由
   `devices.json` 生成，一台设备只占一行。
 - 设备页「从列表移除」删除整条设备记录（含所有端点），不再只删一个 serial。
+- 「保持平板亮屏」的临时熄屏超时从 int32 最大值收紧到 30 分钟；设置页明确提示会临时修改
+  平板熄屏时间，用户可关闭。
 
 ### 验证
 
-- `pytest`：477 passed，3 skipped（新增设备注册表、候选连接、IPv6/主机名、mDNS 硬件号，
+- `pytest`：478 passed，3 skipped（新增设备注册表、候选连接、IPv6/主机名、mDNS 硬件号，
   以及 teardown 单步失败注入、真实父进程退出、facts 轮询落盘用例）；
   `ruff check .`、`tsc --noEmit` 通过；`vitest run`：43 passed（新增 actions 错误分支用例）。
 
