@@ -67,8 +67,9 @@
 |---|---|
 | 阶段 0 | 完成（`B2_STAGE_0_REPORT.md`） |
 | M0 | 部分完成：G1 无头 18/18 绿；**活体计数对拍被锁屏阻塞** |
-| M1 | 完成（`B2_M1_REPORT.md`）：167 测试、274 项跨语言字节对拍、G3 4/25 |
-| M2 | 完成（`B2_M2_REPORT.md`）：295 测试全绿、7 个 Win32 模块、11 个 ignored 待解锁验证 |
-| 提交 | `bb33e4a` feat(b2): port M1/M2 engine layers to the Rust sidecar |
-| M3 | 进行中：`core/router.py` 移植，门槛是 router_scenarios.json 的 5 场景回放 |
+| M1 | 完成（`B2_M1_REPORT.md`）：274 项跨语言字节对拍、G3 4/25 |
+| M2 | 完成（`B2_M2_REPORT.md`）：7 个 Win32 模块、295 测试 |
+| M3 | **移植完成**（`B2_M3_REPORT.md`）：router.rs 5447 行、36 测试、5/5 场景回放；SessionPort 实现待 M4 |
+| 提交 | `bb33e4a`（M1+M2）、`80cc63c`（M3 状态机 + 适配器 + DPI 接线） |
+| M4 | 进行中：`tablet/` 连接层（adb/locator/mdns/server/cursor/simulated/session/audio） |
 | 待人工 | 解锁桌面跑 `cargo test -- --ignored` 与 `run_gates --stage M0/M2` |
