@@ -73,7 +73,7 @@
 - 删除已废弃的 `Ctrl+Alt+V` 与 `hotkeys.clipboard`。
 - 配置路径统一为默认 `%APPDATA%\PadLend`（不可写时回退）。
 - 向导按实际步骤描述（1.2.1 起为连接平板/USB 调试 → UHID → 完成 3 步）；adb 与 scrcpy-server 说明为随包内置；UHID 文案统一为硬条件（不可写即无法创建虚拟鼠标/键盘），不再承诺不存在的绝对坐标降级。
-- `exit_overflow_px` 默认 120；补充 `device.known/mac`、`motion.hid_clamp/entry_margin_px`、`ui.close_to_tray`。
+- `exit_overflow_px` 默认 80；补充 `device.known/mac`、`motion.hid_clamp/entry_margin_px`、`ui.close_to_tray`。
 - `device.auto_connect` 真正生效（关闭后启动不自动连接）；向导最后一步的“自动连接 / 关闭时收进托盘”会写回配置。
 - 截图由 `tools/make_screenshots.py` 用真实 MainWindow 离屏生成，可重复执行。
 

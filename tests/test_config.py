@@ -172,6 +172,11 @@ def test_motion_defaults_are_sane():
     assert m.arm_px >= 1 and m.exit_overflow_px >= 1
 
 
+def test_exit_overflow_default_is_80():
+    assert C.EXIT_OVERFLOW_PX == 80
+    assert MotionCfg().exit_overflow_px == 80
+
+
 def test_known_devices_roundtrip(tmp_path):
     """记住的设备要能存盘、能读回，且顺序（新的在前）不变。"""
     path = tmp_path / "config.yaml"

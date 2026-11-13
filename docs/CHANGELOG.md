@@ -17,6 +17,10 @@
 
 ### 变更
 
+- **穿回阈值默认值 120 → 80 px**：从平板边缘回 PC 需要反向拖动的距离缩短，同时保留
+  防止边缘点按/晃动误交还的余量。旧配置里已显式写下的值不受影响。
+- **设备页删除多余说明**：首页不再显示「连接平板后才会读取……保留一行」这段长说明，
+  设备列表和详情本身已表达同样的信息。
 - **首次向导由 5 步压成 3 步**：连接平板/USB 调试 → 检查 UHID → 完成。删除前端
   `wizardPushJar`、`wizard.push_jar` 与后端 `wizard.finish` RPC，以及「安装 adb / 检查并
   推送 scrcpy-server」步骤；adb 与 `scrcpy-server` 本就随安装包内置，向导文案已说明，
@@ -24,7 +28,7 @@
 
 ### 验证
 
-- `pytest`：425 passed，3 skipped（新增 4 个回归用例）；`ruff check .`、`tsc --noEmit` 通过；
+- `pytest`：426 passed，3 skipped（新增 5 个回归用例）；`ruff check .`、`tsc --noEmit` 通过；
   `vitest run`：29 passed。
 
 ## [1.2.0] — 2026-11-13

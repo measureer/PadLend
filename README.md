@@ -116,7 +116,7 @@ motion:
   report_hz: 1000         # 125 / 250 / 500 / 1000
   hid_clamp: 127          # 1–127，单次 HID 位移上限
   entry_margin_px: 2
-  exit_overflow_px: 120   # 交还所需的外推距离
+  exit_overflow_px: 80    # 交还所需的外推距离
   debounce_ms: 250
   arm_px: 10
   arm_window_ms: 80
@@ -165,7 +165,7 @@ YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `c
 | 设备页显示 unauthorized | 在平板上点「允许 USB 调试」，勾选「始终允许」，再刷新 |
 | 无线 adb 连不上 | 确认平板和电脑在同一网段，无线调试端口没被路由器隔离；重新配对 |
 | 边缘手势被平板抢走 | 调大 `motion.boundary_inset_px`（8–16） |
-| 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 120）或 `debounce_ms` |
+| 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 80）或 `debounce_ms` |
 
 更完整的排障步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)；开发期踩坑与失效安全记录见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 

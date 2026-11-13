@@ -148,7 +148,7 @@
 - **AC3.4** 贴边后反向推 1px 立即响应（无虚位）
 
 ### US-4 穿回来
-- **AC4.1** 需连续外推 ≥ `exit_overflow_px`（0.3.16 起默认 120，原 24）
+- **AC4.1** 需连续外推 ≥ `exit_overflow_px`（0.3.16 起 120，1.2.1 起默认 80，原 24）
 - **AC4.2** 回 PC 后光标出现在对应边、比例位置，内缩 2px
 - **AC4.3** 连续来回 20 次，估计器与实际指针偏差 ≤ 3px
 
@@ -719,7 +719,7 @@ arm_accum += |delta|
 # CAPTURED → RETURNING
 若平板上的有效按键仍按下（拖动/框选）→ 不评估出口，清零溢出
 若 estimator 未抵达 entry_edge（直接检查对应坐标，角落可同时命中多条边）→ 清零溢出
-在 entry_edge 连续向外累计溢出 >= exit_overflow_px(120)       → RETURNING
+在 entry_edge 连续向外累计溢出 >= exit_overflow_px(80)        → RETURNING
 进入时已经按住的键保持中性，收到物理松键后才恢复平板按键转发
 
 # RETURNING → IDLE
@@ -881,7 +881,7 @@ motion:
   report_hz: 1000               # 125 / 250 / 500 / 1000（0.3.16 起固定档）
   hid_clamp: 127                # ≤ 127（描述符上限）
   entry_margin_px: 2
-  exit_overflow_px: 120
+  exit_overflow_px: 80
   debounce_ms: 250
   arm_px: 10
   arm_window_ms: 80

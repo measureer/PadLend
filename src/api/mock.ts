@@ -42,7 +42,7 @@ export function defaultConfig(): Config {
       report_hz: 1000,
       hid_clamp: 127,
       entry_margin_px: 2,
-      exit_overflow_px: 120,
+      exit_overflow_px: 80,
       debounce_ms: 250,
       arm_px: 10,
       arm_window_ms: 80,
