@@ -569,4 +569,23 @@
 - **顺带记一笔**：`raw_stream` 保留着没删——它对 5.0.1 无害（未知/视频选项被忽略），
   删掉也不会让音频变 raw；音频侧只认 `audio_codec`。
 
+## 14. 1.7.3 补录：自动连接不经过 devices.connect（2026-11-15）
+
+### 14.1 事实镜像开关只挂在 devices.connect 上，自动首连就成了「已连接但界面未连接」
+
+- **现象**：`auto_connect=true` 打开应用，supervisor 几秒内就把平板连上了（能控制、平板有反应），
+  但设备页、标题栏、托盘全显示「未连接」，设备详情一片空白；手动点一次「连接此设备」之后就正常了。
+- **根因**：`Engine::facts_ready` 是一道闸门——`poll_facts_once()` 第一行就检查它，没开就直接返回。
+  这道闸门只在 `devices.connect`（`service/api.rs` 的 `devices_connect`）里被 `enable_facts()` 打开。
+  而 `auto_connect` 的首次连接由 `Router::start()` 里的 supervisor 线程完成，**完全不经过**这个 RPC，
+  于是闸门一直关着：`app.bootstrap` 的 `facts` 恒为 `null`、`connected` 恒为 `false`，
+  `facts` 事件也永远不推。界面只能显示未连接。
+- **修法**：`Engine::open()` 启动 Router 之前，若配置里 `device.auto_connect` 为真就先 `enable_facts()`；
+  `devices_connect` 里的那次保留（关掉自动连接后手动连仍要能用）。
+- **如何验证 / 回归**：起一个独立引擎（`--config` 指向 auto_connect=true 的临时配置），
+  不调任何 RPC，8 秒后发一条 `{"id":1,"method":"app.bootstrap","params":{}}`，
+  应答里应是 `connected=true` 且 `facts.serial` 有值；事件流里也应看到 `"event":"facts"`。
+- **教训**：凡是「只有某条 RPC 才会打开的开关」，都要确认自动路径（supervisor / 定时器 / 回调）
+  是不是也走那条 RPC。这一次的表现是「功能正常、界面骗人」，比功能坏掉更难被发现。
+
 

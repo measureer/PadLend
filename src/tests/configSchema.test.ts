@@ -19,6 +19,14 @@ describe('声明式设置 schema', () => {
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
 
+    // 左列放鼠标 / 键盘 / 快捷键，右列只放杂项；标题按用户习惯叫「鼠标」。
+    expect(SETTING_GROUPS.filter((g) => g.column === 'main').map((g) => g.title)).toEqual([
+      '鼠标',
+      '键盘',
+      '快捷键',
+    ]);
+    expect(SETTING_GROUPS.filter((g) => g.column === 'side').map((g) => g.title)).toEqual(['杂项']);
+
     const keepScreen = fields.find((f) => f.id === 'keep_screen_on');
     expect(keepScreen?.hint).toContain('临时把');
     expect(keepScreen?.hint).toContain('熄屏时间');

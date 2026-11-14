@@ -302,6 +302,14 @@ impl Engine {
         *lock(&engine.metrics) = engine.current_metrics_value();
 
         if options.start_router.unwrap_or(true) {
+            // auto_connect 的首次连接由 Router::start() 里的 supervisor 线程完成，
+            // **不经过** devices.connect；如果只在 devices.connect 里 enable_facts()，
+            // supervisor 自己连上之后 poll_facts_once 会一直被 facts_ready=false 挡掉，
+            // 于是 bootstrap 的 facts 恒为 null、facts 事件也永远不推——界面明明
+            // 已经连上平板却一直显示「未连接」（1.7.3 修复）。
+            if cfg.device.auto_connect {
+                engine.enable_facts();
+            }
             if let Some(router) = engine.router.get() {
                 router.start();
             }

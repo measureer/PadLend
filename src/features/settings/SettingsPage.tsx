@@ -1,10 +1,10 @@
 /** 设置页：由 configSchema 一份声明驱动渲染，草稿本地化、只在保存时提交一次。 */
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { Config } from '../../api/types';
 import { Icon, type IconName } from '../../components/Icon';
 import { Banner, Button, Card, Field, Select, Slider, TextInput, Toggle } from '../../components/ui';
-import { SETTING_GROUPS, readField, validateConfig, settingsPatch, writeField, type FieldDef } from '../../lib/configSchema';
+import { SETTING_GROUPS, readField, validateConfig, settingsPatch, writeField, type FieldDef, type SettingGroup } from '../../lib/configSchema';
 import { saveConfig } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
 
@@ -52,6 +52,26 @@ function Control({ field, config, onChange }: {
   }
 }
 
+const GroupCard = memo(function GroupCard({ group, config, onChange }: {
+  group: SettingGroup;
+  config: Config;
+  onChange: (field: FieldDef, value: string | number | boolean) => void;
+}) {
+  return (
+    <Card
+      className="settings-group"
+      title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name={group.icon as IconName} size={17} />{group.title}</span>}
+      desc={group.description}
+    >
+      {group.fields.map((field) => (
+        <Field key={field.id} label={field.label} hint={field.hint}>
+          <Control field={field} config={config} onChange={(value) => onChange(field, value)} />
+        </Field>
+      ))}
+    </Card>
+  );
+});
+
 export function SettingsPage() {
   const config = useAppStore((s) => s.config);
   const issues = useAppStore((s) => s.configIssues);
@@ -93,7 +113,7 @@ export function SettingsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">设置</h1>
-          <p className="page-subtitle">手感、键盘、快捷键与杂项；保存后立即生效。平板摆位在「桌面布局」页调整，按 Ctrl+, 可快速回到这里。</p>
+          <p className="page-subtitle">鼠标、键盘、快捷键与杂项；保存后立即生效。平板摆位在「桌面布局」页调整，按 Ctrl+, 可快速回到这里。</p>
         </div>
         <div className="page-actions">
           {dirty && <span className="badge warn">有未保存的修改</span>}
@@ -105,19 +125,12 @@ export function SettingsPage() {
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
 
       <div className="settings-grid">
-        {SETTING_GROUPS.map((group) => (
-          <Card
-            key={group.id}
-            className="settings-group"
-            title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Icon name={group.icon as IconName} size={17} />{group.title}</span>}
-            desc={group.description}
-          >
-            {group.fields.map((field) => (
-              <Field key={field.id} label={field.label} hint={field.hint}>
-                <Control field={field} config={draft} onChange={(value) => change(field, value)} />
-              </Field>
+        {(['main', 'side'] as const).map((column) => (
+          <div className="settings-column" key={column}>
+            {SETTING_GROUPS.filter((group) => group.column === column).map((group) => (
+              <GroupCard key={group.id} group={group} config={draft} onChange={change} />
             ))}
-          </Card>
+          </div>
         ))}
       </div>
 

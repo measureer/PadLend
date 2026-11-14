@@ -32,7 +32,7 @@ describe('应用外壳与核心交互（浏览器 mock 后端）', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }));
     await waitFor(() => expect(screen.getAllByRole('button', { name: '保存设置' }).length).toBeGreaterThan(0));
-    expect(screen.getByText('手感')).toBeTruthy();
+    expect(screen.getByText('鼠标')).toBeTruthy();
     expect(screen.getByText('关闭窗口时最小化到托盘')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '切换到白天模式' }));

@@ -59,7 +59,7 @@ describe('核心功能与交互（mock 后端）', () => {
   it('设置页改动只在保存时提交，并给出成功反馈', async () => {
     await openDevices();
     nav('设置');
-    await waitFor(() => expect(screen.getByText('手感')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('鼠标')).toBeTruthy());
     const toggle = screen.getByRole('switch', { name: '关闭窗口时最小化到托盘' });
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-checked')).toBe('true');

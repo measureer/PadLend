@@ -27,6 +27,8 @@ export interface SettingGroup {
   title: string;
   icon: string;
   description: string;
+  /** 设置页的列：main = 左列（鼠标 / 键盘 / 快捷键），side = 右列（杂项）。 */
+  column: 'main' | 'side';
   fields: FieldDef[];
 }
 
@@ -44,9 +46,10 @@ const LAYOUT_OPTIONS = [
 export const SETTING_GROUPS: SettingGroup[] = [
   {
     id: 'motion',
-    title: '手感',
+    title: '鼠标',
     icon: 'pointer',
     description: '指针速度与进入 / 交还边缘的判定距离',
+    column: 'main',
     fields: [
       {
         id: 'gain', section: 'motion', key: 'gain', label: '速度', kind: 'slider',
@@ -77,6 +80,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
     title: '键盘',
     icon: 'keyboard',
     description: '接管期间的按键转发与拦截',
+    column: 'main',
     fields: [
       {
         id: 'forward', section: 'keyboard', key: 'forward', label: '转发按键到平板', kind: 'toggle',
@@ -98,6 +102,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
     title: '快捷键',
     icon: 'bolt',
     description: '全局生效的保命组合键',
+    column: 'main',
     fields: [
       {
         id: 'toggle', section: 'hotkeys', key: 'toggle', label: '接管 / 交还', kind: 'hotkey',
@@ -114,6 +119,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
     title: '杂项',
     icon: 'sliders',
     description: '托盘、剪贴板与平板行为',
+    column: 'side',
     fields: [
       {
         id: 'tray_notifications', section: 'ui', key: 'tray_notifications', label: '托盘气泡通知', kind: 'toggle',

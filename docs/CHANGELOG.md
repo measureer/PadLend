@@ -2,6 +2,32 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.7.3] — 2026-11-15
+
+### 修复
+
+- **打开应用后自动连上了平板，界面却一直显示「未连接」**。设备事实的镜像开关
+  （Engine::facts_ready）只在 devices.connect 里打开，而 auto_connect 的首次连接是
+  Router::start() 里的 supervisor 线程自己做的，根本不经过那个 RPC。于是 supervisor
+  连上之后 poll_facts_once() 一直提前返回，app.bootstrap 的 facts 恒为 null、
+  facts 事件也永远不推——设备页、标题栏、托盘全显示未连接，可平板其实已经能被控制。
+  现在引擎启动时若 auto_connect 已开就一并打开事实镜像；devices.connect 里的那次
+  保留不变（手动连接 / 关掉自动连接后手动连仍然生效）。
+
+### 变更
+
+- **设置页改版**：原来的「手感」分组改名为「鼠标」，并与「键盘」「快捷键」一起放在
+  左列；「杂项」单独放右列。窄窗口（< 1180px）下两列自动叠回单列。
+
+### 验证
+
+- cargo test --manifest-path padlend-core/Cargo.toml：**541 passed / 13 ignored**。
+- 前端 vitest：**44 passed / 9 files**（设置页用例改为断言「鼠标」与两列分组）；
+  tsc --noEmit 通过。
+- 独立引擎 + auto_connect=true 实测：不调用 devices.connect，8 秒后 app.bootstrap
+  返回 connected=true、facts.serial=192.168.68.129:35071（3200×2136），事件流里也能
+  看到 facts 推送。
+
 ## [1.7.2] — 2026-11-15
 
 ### 修复

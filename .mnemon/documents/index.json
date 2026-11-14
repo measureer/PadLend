@@ -579,7 +579,7 @@
       ],
       "createdAt": "2026-11-04T16:25:16.725Z",
       "updatedAt": "2026-11-04T16:25:16.725Z",
-      "lastAccessedAt": "2026-11-05T10:49:34.145Z",
+      "lastAccessedAt": "2026-11-14T17:30:43.926Z",
       "revision": 1,
       "contentHash": "2b8bc01bd6789584e34c46c89da3215fc9399e80b69782d60717958f19dbad8e",
       "sizeBytes": 6159,
@@ -636,7 +636,7 @@
       ],
       "createdAt": "2026-11-04T16:48:11.174Z",
       "updatedAt": "2026-11-04T16:48:11.174Z",
-      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "lastAccessedAt": "2026-11-14T17:30:43.926Z",
       "revision": 1,
       "contentHash": "3437829b65d4284c7daae54074550353a92a813ad7a8953c0d690dadd03475dc",
       "sizeBytes": 5102,
@@ -844,7 +844,7 @@
       ],
       "createdAt": "2026-11-05T11:57:18.972Z",
       "updatedAt": "2026-11-05T11:57:18.972Z",
-      "lastAccessedAt": "2026-11-06T15:03:48.397Z",
+      "lastAccessedAt": "2026-11-14T17:30:43.926Z",
       "revision": 1,
       "contentHash": "7f7a955e3516cb76cd6d487aefff06237f9ec6328d875b2ad0712893740e01c9",
       "sizeBytes": 5959,
@@ -1397,10 +1397,40 @@
       ],
       "createdAt": "2026-11-14T16:49:51.676Z",
       "updatedAt": "2026-11-14T16:49:51.676Z",
-      "lastAccessedAt": "2026-11-14T16:49:51.676Z",
+      "lastAccessedAt": "2026-11-14T17:30:43.926Z",
       "revision": 1,
       "contentHash": "932377db2d685797a0536cf2883f7f40028305ff90ace1f285540e6675af8e30",
       "sizeBytes": 5041,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "4c64a69f-dd9a-4b63-b340-2e49dcc5e3dc",
+      "title": "PadLend 1.7.2：音频终于播出（Windows accept() 继承非阻塞标志 + scrcpy 5.0.1 音频默认 Opus）、adb 无线链路清理与外壳日志",
+      "description": "1.7.2 发布：静音根因是 Windows accept() 继承 listener 非阻塞标志（1.4.0 起音频从未播出），爆音根因是 scrcpy 5.0.1 音频默认 Ogg Opus（需 audio_codec=raw，证据 OpusHead + 码率）；含 adb_links 断开、shell.log、541/44 测试与产物 sha256。",
+      "status": "active",
+      "filename": "padlend-1-7-2-windows-accept-scrcpy-5-0-1-opus-a-4c64a69f.md",
+      "relativePath": "documents/active/padlend-1-7-2-windows-accept-scrcpy-5-0-1-opus-a-4c64a69f.md",
+      "sourcePaths": [
+        "padlend-core/src/tablet/server.rs",
+        "padlend-core/src/tablet/adb_links.rs",
+        "padlend-core/src/tablet/adb.rs",
+        "padlend-core/src/service/engine.rs",
+        "src-tauri/src/audio.rs",
+        "src-tauri/src/shell_log.rs",
+        "src-tauri/src/lib.rs",
+        "docs/PITFALLS.md",
+        "docs/CHANGELOG.md",
+        ".github/release-notes.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-d51f5767-ae5e-4d0b-8f8f-0956ec3d91f1"
+      ],
+      "createdAt": "2026-11-14T17:31:53.636Z",
+      "updatedAt": "2026-11-14T17:31:53.636Z",
+      "lastAccessedAt": "2026-11-14T17:31:53.636Z",
+      "revision": 1,
+      "contentHash": "e024ac832ceda9f4ff59c515fa2d71e6dcbc7bbf591a8ffaf18fe1fd9c1c81bf",
+      "sizeBytes": 8410,
       "memoryBodyIds": []
     }
   ]
