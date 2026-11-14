@@ -112,6 +112,16 @@ fn config_get(engine: &Arc<Engine>) -> Result<Value, String> {
     }))
 }
 
+/// 把引擎里的最新配置推给会话。
+///
+/// Python 的会话共享同一个 Config 对象，保存即可见；Rust 的会话配置是构造期快照，
+/// 只在连接时读取的开关（转发平板声音、熄屏、端口、指针速度）必须显式推送。
+fn sync_session_config(engine: &Arc<Engine>) {
+    if let Some(session) = engine.session_port() {
+        session.sync_config(&engine.config_clone());
+    }
+}
+
 fn config_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
     let patch = match params.get("patch") {
         None | Some(Value::Null) => json!({}),
@@ -133,6 +143,7 @@ fn config_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
         return Err(problems.join("；"));
     }
     engine.save_config()?;
+    sync_session_config(engine);
     let config = engine.config_dict()?;
     engine.emit("config", json!({ "config": config.clone(), "issues": [] }));
     engine.emit_log("CONFIG", format!("配置已保存：{}", config_path_text(engine)));
@@ -295,6 +306,7 @@ fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String>
         });
     }
     engine.save_config()?;
+    sync_session_config(engine);
     let config = engine.config_dict()?;
     engine.emit("config", json!({ "config": config.clone(), "issues": [] }));
     engine.emit_log("DEVICE", format!("已从列表移除 {serial}"));
@@ -390,7 +402,7 @@ fn layout_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
 
 // -- 引擎 ----------------------------------------------------------------
 
-fn engine_toggle(engine: &Arc<Engine>) -> Value {
+pub(crate) fn engine_toggle(engine: &Arc<Engine>) -> Value {
     if let Some(router) = engine.router() {
         router.toggle_manual();
     }
@@ -398,7 +410,7 @@ fn engine_toggle(engine: &Arc<Engine>) -> Value {
     json!({ "ok": true })
 }
 
-fn engine_panic(engine: &Arc<Engine>) -> Value {
+pub(crate) fn engine_panic(engine: &Arc<Engine>) -> Value {
     if let Some(router) = engine.router() {
         router.emergency_stop();
     }

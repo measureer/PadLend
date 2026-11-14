@@ -403,6 +403,13 @@ pub trait SessionPort: Send + Sync + fmt::Debug {
     fn set_clipboard_callback(&self, _callback: Option<Arc<dyn Fn(String) + Send + Sync>>) -> bool {
         false
     }
+
+    /// 把最新的应用配置推给会话（可选扩展）。
+    ///
+    /// Python 里会话持有的是同一个 Config 对象，配置一保存就可见；Rust 的会话用的是
+    /// 构造期快照，所以 config.save 之后必须显式推送一次，否则「转发平板声音」这类
+    /// 只在连接时读取的开关要重启进程才生效。
+    fn sync_config(&self, _config: &crate::config::Config) {}
 }
 
 /// 光标遮罩端口（win/mask.py）。

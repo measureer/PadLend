@@ -28,6 +28,8 @@ use crate::tablet::locator;
 use crate::tablet::session::{SessionBuilder, TabletSession};
 use crate::tablet::simulated::{SimulatedAdb, SimulatedSession};
 use crate::win::desktop::DesktopMap;
+use crate::win::hotkeys::HotkeyManager;
+use crate::win::keyboard_hook::KeyboardHook;
 use crate::win::mask::MaskConfig;
 
 use super::{clockfmt, diagnostics, registry, serializers};
@@ -123,6 +125,10 @@ pub struct Engine {
     mask: Arc<dyn MaskPort>,
     adb: Option<Arc<dyn AdbApi>>,
     system_adb: Option<Arc<Adb>>,
+    /// 键盘低级钩子（必须由服务自己安装；见 install_input_hooks）。
+    keyboard: Mutex<Option<KeyboardHook>>,
+    /// 全局热键（Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停）。
+    hotkeys: Mutex<Option<HotkeyManager>>,
     session: OnceLock<Arc<dyn SessionPort>>,
     router: OnceLock<Arc<Router>>,
     logs: Mutex<VecDeque<LogEntry>>,
@@ -243,6 +249,8 @@ impl Engine {
             mask,
             adb,
             system_adb,
+            keyboard: Mutex::new(None),
+            hotkeys: Mutex::new(None),
             session: OnceLock::new(),
             router: OnceLock::new(),
             logs: Mutex::new(VecDeque::new()),
@@ -281,6 +289,8 @@ impl Engine {
                 router.start();
             }
             engine.spawn_watcher();
+            engine.install_input_hooks();
+            engine.install_hotkeys();
         }
         engine.emit_log(
             "APP",
@@ -405,6 +415,79 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// 安装键盘低级钩子。
+    ///
+    /// Python 的 Runtime 会创建 KeyboardHook(router.on_key)、由 PadLendService.start()
+    /// 显式 install()；Rust 服务最初只补了 Raw Input，键盘钩子整条漏掉——于是鼠标能
+    /// 进平板，PC 键盘却永远留在本机。钩子回调必须非阻塞、不拿锁（docs/PITFALLS.md 2.5），
+    /// 这里只把事件转成逻辑层结构后交给 Router::on_key；安装失败不阻断鼠标链路
+    /// （与 Python 的 warning 分支一致）。
+    fn install_input_hooks(self: &Arc<Self>) {
+        if self.simulate || self.no_hooks {
+            return;
+        }
+        let Some(router) = self.router().cloned() else {
+            return;
+        };
+        let mut hook = KeyboardHook::new(move |event: &crate::tablet::keymap::KeyEvent| {
+            let logical = crate::logic::events::KeyEvent {
+                vk: event.vk,
+                scan: event.scan,
+                is_extended: event.is_extended,
+                down: event.down,
+                ts: event.ts,
+            };
+            router.on_key(&logical)
+        });
+        match hook.install() {
+            Ok(()) => {
+                eprintln!("[engine] 键盘钩子已安装（服务模式）");
+                self.emit_log("KBD", "键盘钩子已安装");
+                *lock(&self.keyboard) = Some(hook);
+            }
+            Err(err) => {
+                eprintln!("[engine] 键盘钩子不可用：{err}");
+                self.emit_log("KBD", format!("键盘钩子不可用：{err}"));
+            }
+        }
+    }
+
+    /// 注册全局热键（Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停）。
+    ///
+    /// Python 的 PadLendService._start_hotkeys 在启动时注册它们；Rust 服务最初漏了这一步，
+    /// README 里写的热键整个不可用。注册失败只记日志，不影响接管。
+    fn install_hotkeys(self: &Arc<Self>) {
+        if self.simulate || self.no_hooks {
+            return;
+        }
+        let toggle_weak = Arc::downgrade(self);
+        let panic_weak = Arc::downgrade(self);
+        let mut hotkeys = HotkeyManager::new(
+            move || {
+                if let Some(engine) = toggle_weak.upgrade() {
+                    super::api::engine_toggle(&engine);
+                }
+            },
+            move || {
+                if let Some(engine) = panic_weak.upgrade() {
+                    super::api::engine_panic(&engine);
+                }
+            },
+        );
+        match hotkeys.start() {
+            Ok(()) => {
+                let ids = hotkeys.registered();
+                eprintln!("[engine] 全局热键已注册（id={ids:?}）");
+                self.emit_log("HOTKEY", format!("全局热键已注册：Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停（id={ids:?}）"));
+                *lock(&self.hotkeys) = Some(hotkeys);
+            }
+            Err(err) => {
+                eprintln!("[engine] 全局热键不可用：{err}");
+                self.emit_log("HOTKEY", format!("全局热键不可用：{err}"));
+            }
+        }
     }
 
     fn install_callbacks(self: &Arc<Self>, router: &Arc<Router>) {
@@ -578,6 +661,11 @@ impl Engine {
 
     pub fn router(&self) -> Option<&Arc<Router>> {
         self.router.get()
+    }
+
+    /// 会话端口（配置改动下推用）。
+    pub fn session_port(&self) -> Option<Arc<dyn SessionPort>> {
+        self.session.get().cloned()
     }
 
     pub fn adb_api(&self) -> Option<Arc<dyn AdbApi>> {
@@ -1309,6 +1397,13 @@ impl Engine {
         if !self.started.swap(false, Ordering::SeqCst) {
             // 仍旧执行清理：重复调用不会产生副作用。
         }
+        // 先卸热键与钩子再停 Router：与 Python teardown 的顺序一致，之后的按键不再进 Router。
+        if let Some(mut hotkeys) = lock(&self.hotkeys).take() {
+            hotkeys.stop();
+        }
+        if let Some(mut hook) = lock(&self.keyboard).take() {
+            hook.uninstall();
+        }
         self.stop.store(true, Ordering::SeqCst);
         let handle = lock(&self.watcher).take();
         if let Some(handle) = handle {
@@ -1417,6 +1512,19 @@ mod tests {
         })
         .expect("测试引擎应能构造");
         (engine, events)
+    }
+
+    #[test]
+    fn input_hooks_and_hotkeys_stay_off_in_simulate_mode() {
+        // simulate / --no-hooks 下不能真去挂 LL 钩子或注册全局热键（测试进程也要安全）；
+        // 真实服务模式由 install_input_hooks / install_hotkeys 安装，失败只记日志。
+        let (engine, _events) = test_engine("hooks");
+        engine.install_input_hooks();
+        engine.install_hotkeys();
+        assert!(lock(&engine.keyboard).is_none(), "simulate 下不应安装键盘钩子");
+        assert!(lock(&engine.hotkeys).is_none(), "simulate 下不应注册热键");
+        engine.shutdown();
+        assert!(lock(&engine.keyboard).is_none(), "shutdown 应可重复调用");
     }
 
     #[test]

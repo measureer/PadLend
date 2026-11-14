@@ -12,6 +12,7 @@
 | 内容 | 位置 |
 |---|---|
 | 运行日志 | `%APPDATA%\PadLend\logs\padlend.log`（2 MB 轮转，保留 3 个） |
+| 引擎日志（Rust sidecar） | `%LOCALAPPDATA%\PadLend\service.log`（Rust 引擎的 stderr，逐次覆盖） |
 | 崩溃日志 | `%APPDATA%\PadLend\logs\crash-YYYYmmdd-HHMMSS-<pid>.log` |
 | 原生崩溃栈 | `%APPDATA%\PadLend\logs\faulthandler-*.log` |
 | 配置 | `%APPDATA%\PadLend\config.yaml` |
@@ -152,6 +153,7 @@ adb forward tcp:1234 localabstract:scrcpy
 - 音频只在 PadLend 运行、且当前这台平板连接成功时转发。检查 Windows 音量合成器里
   PadLend 没有被静音，系统默认输出设备不是已拔掉的 HDMI/蓝牙。
 - 转发的是平板**全部系统声音**（通知、通话也会进来）；受 DRM 保护的视频可能只有画面没有声音。
+- 保存设置后**断开再重连**就够，不需要重启 PadLend；如果重连还是无声，确认引擎版本——早于本修复的 Rust 引擎把配置当构造期快照，改了开关也必须重启进程。
 - 仍无声时，把 `%APPDATA%\PadLend\logs\padlend.log` 和 Windows 的输出设备型号一起提供；
   当前版本没有在无声卡环境做真机试听，需要按实际设备排查。
 
@@ -229,6 +231,7 @@ adb shell dumpsys input | grep -c scrcpy    # 期望输出 0
 ### 平板上收不到键盘
 
 - 确认 `keyboard.forward: true` 且当前状态为 CAPTURED（顶栏红灯）；
+- 引擎日志里应有「键盘钩子已安装（服务模式）」；没有这一行说明服务根本没装低级钩子（早于本修复的 Rust 引擎整条漏装），升级 PadLend 即可。
 - `dumpsys input` 中应有 `PadLend Keyboard`；
 - 某些输入法只接受 `INJECT_TEXT`；中文可先在 PadLend 里复制，再到平板输入框长按粘贴兜底（PadLend 只同步剪贴板内容，不注入文本输入）。
 

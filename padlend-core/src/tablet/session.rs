@@ -742,7 +742,7 @@ impl SessionBuilder {
             socket_factory: self.socket_factory,
             sleeper: self.sleeper,
             store: self.store,
-            config: self.config,
+            config: Mutex::new(self.config),
             candidates: self.candidates,
             verify_facts: Mutex::new(self.verify_facts),
             facts_callback: Mutex::new(None),
@@ -842,6 +842,14 @@ impl TabletSession {
     /// 健康快照。
     pub fn health_report(&self) -> HealthReport {
         self.core.health()
+    }
+
+    /// 把配置改动同步进会话。
+    ///
+    /// Python 的 config.save 直接改 Router/会话共用的 Config 对象，所以「开开关 → 重连」
+    /// 立即生效；Rust 的会话配置是构造期快照，必须显式推送（音频、熄屏、端口、指针速度）。
+    pub fn update_config(&self, config: &crate::config::Config) {
+        self.core.apply_config(config);
     }
 
     /// 写鼠标报告（进发送队列，由 sender_frame 批量写出）。
@@ -1080,6 +1088,10 @@ impl SessionPort for TabletSession {
     ) -> bool {
         TabletSession::set_clipboard_callback(self, callback)
     }
+
+    fn sync_config(&self, config: &crate::config::Config) {
+        TabletSession::update_config(self, config);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,7 +1113,9 @@ struct SessionCore {
     socket_factory: Arc<dyn SocketFactory>,
     sleeper: Arc<dyn Sleeper>,
     store: Arc<StateStore>,
-    config: SessionConfig,
+    /// 配置快照（Python 共享同一个 Config 对象；Rust 是构造期拷贝，运行期改动靠
+    /// `update_config` 推送，见 service::api 的 config.save）。
+    config: Mutex<SessionConfig>,
     candidates: Option<Arc<dyn Fn() -> Vec<String> + Send + Sync>>,
     verify_facts: Mutex<Option<Arc<dyn Fn(&str, &DeviceFacts) -> bool + Send + Sync>>>,
     facts_callback: Mutex<Option<Arc<dyn Fn(DeviceFacts) + Send + Sync>>>,
@@ -1201,6 +1215,33 @@ impl SessionCore {
 
     fn shared(&self) -> Option<Arc<SessionCore>> {
         self.self_ref.get().and_then(|weak| weak.upgrade())
+    }
+
+    /// 当前配置快照。
+    fn config_snapshot(&self) -> SessionConfig {
+        match self.config.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// 把配置改动同步进会话。
+    ///
+    /// Python 的 config.save 直接改 Router/会话共用的 Config 对象，所以「开音频开关 →
+    /// 重连」立刻生效；Rust 的会话配置是构造期快照，必须显式推送。只覆盖下次连接才读的
+    /// 字段，`auto_flush` / `watch_orientation` / 握手超时这些运行时与测试旋钮保持原值。
+    fn apply_config(&self, config: &crate::config::Config) {
+        let next = SessionConfig::from_config(config);
+        let mut guard = match self.config.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.serial = next.serial;
+        guard.prefer_usb = next.prefer_usb;
+        guard.server_port = next.server_port;
+        guard.keep_screen_on = next.keep_screen_on;
+        guard.forward_audio = next.forward_audio;
+        guard.restore_pointer_speed = next.restore_pointer_speed;
     }
 
     fn set_facts(&self, facts: Option<DeviceFacts>) {
@@ -1365,10 +1406,11 @@ impl SessionCore {
     /// 退出兜底清理（对应 force_cleanup）：杀残留、摘转发、还原 pointer_speed。
     fn force_cleanup(&self, port: Option<u16>) -> bool {
         let pending = self.store.load_entry(POINTER_SPEED_STATE);
-        let serial = self.config.serial.trim().to_string();
+        let config = self.config_snapshot();
+        let serial = config.serial.trim().to_string();
         let restore = match &pending {
             Some((state_serial, value)) if serial.is_empty() || *state_serial == serial => *value,
-            _ => self.config.restore_pointer_speed as i64,
+            _ => config.restore_pointer_speed as i64,
         };
         let dev: Arc<dyn AdbApi> = if serial.is_empty() {
             self.adb.clone()
@@ -1438,15 +1480,16 @@ impl SessionCore {
 
     fn start_locked(&self) -> Result<DeviceFacts, SessionError> {
         let facts = self.connect_candidate()?;
-        let audio_active = self.config.forward_audio;
+        let config = self.config_snapshot();
+        let audio_active = config.forward_audio;
         self.audio_active.store(audio_active, Ordering::SeqCst);
         let device = self
             .dev_adb_clone()
             .ok_or_else(|| SessionError::offline("尚未选定设备"))?;
         let server = Arc::new(ScrcpyServer::with_parts(
             device.clone(),
-            Some(self.config.server_port),
-            self.config.jar.clone(),
+            Some(config.server_port),
+            config.jar.clone(),
             None,
             None,
             audio_active,
@@ -1510,7 +1553,7 @@ impl SessionCore {
         let server = Arc::new(ScrcpyServer::with_parts(
             device,
             port,
-            self.config.jar.clone(),
+            self.config_snapshot().jar.clone(),
             None,
             None,
             false,
@@ -1603,7 +1646,7 @@ impl SessionCore {
     // -- 设备选择（1.2.2 候选端点） ---------------------------------------
 
     fn candidate_serials(&self) -> Vec<Option<String>> {
-        let current = self.config.serial.trim().to_string();
+        let current = self.config_snapshot().serial.trim().to_string();
         let current_entry = if current.is_empty() {
             None
         } else {
@@ -1643,13 +1686,14 @@ impl SessionCore {
     fn select_device(&self) -> Result<Arc<dyn AdbApi>, SessionError> {
         let base = self.adb.clone();
         base.version()?;
-        let serial = self.config.serial.trim().to_string();
+        let config = self.config_snapshot();
+        let serial = config.serial.trim().to_string();
         let serial_ref = if serial.is_empty() {
             None
         } else {
             Some(serial.as_str())
         };
-        match base.select_device(serial_ref, self.config.prefer_usb) {
+        match base.select_device(serial_ref, config.prefer_usb) {
             Ok(entry) => Ok(base.with_serial(&entry.serial)),
             Err(error) if error.code == AdbErrorCode::DeviceOffline => {
                 eprintln!(
@@ -1920,7 +1964,7 @@ impl SessionCore {
     }
 
     fn keep_screen_on(&self, adb: &Arc<dyn AdbApi>) {
-        if !self.config.keep_screen_on {
+        if !self.config_snapshot().keep_screen_on {
             return;
         }
         let raw = match adb.shell(&["settings", "get", "system", "screen_off_timeout"], C::ADB_SHELL_TIMEOUT) {
@@ -2073,7 +2117,7 @@ impl SessionCore {
             .ok_or_else(|| SessionError::ForwardFailed("尚未分配转发端口".to_string()))?;
         let addr = format!("127.0.0.1:{port}");
         let deadline =
-            Instant::now() + Duration::from_secs_f64(self.config.handshake_retry_timeout.max(0.0));
+            Instant::now() + Duration::from_secs_f64(self.config_snapshot().handshake_retry_timeout.max(0.0));
         loop {
             if self.closing.load(Ordering::SeqCst) {
                 return Err(SessionError::handshake("启动已取消"));
@@ -2089,7 +2133,7 @@ impl SessionCore {
                     if Instant::now() >= deadline {
                         return Err(SessionError::handshake(format!(
                             "连接 {label}通道 127.0.0.1:{port} 失败（已重试 {}s）: {message}",
-                            self.config.handshake_retry_timeout
+                            self.config_snapshot().handshake_retry_timeout
                         )));
                     }
                     eprintln!("[tablet.session] 服务端尚未就绪，重试{label}握手: {message}");
@@ -2553,7 +2597,7 @@ impl SessionCore {
     // -- 朝向监听 ----------------------------------------------------------
 
     fn start_orientation_watch(&self) {
-        if !self.config.watch_orientation {
+        if !self.config_snapshot().watch_orientation {
             return;
         }
         if self
@@ -3823,6 +3867,57 @@ mod tests {
         // 回退会丢弃旧 server 并重新 spawn 一次。
         assert_eq!(harness.adb.snapshot().popen.len(), 2, "应当重启服务端");
         assert!(harness.session.is_started());
+        harness.session.disconnect();
+    }
+
+    #[test]
+    fn saved_config_reaches_the_session_snapshot() {
+        // Python 的会话共享同一个 Config 对象，config.save 之后下次连接就能看到新值；
+        // Rust 会话是构造期快照，必须靠 config_save 推送（service::api::sync_session_config）。
+        let harness = harness(); // forward_audio=false、auto_flush=false、watch_orientation=false
+        let mut config = crate::config::Config::default();
+        config.misc.forward_audio = true;
+        config.device.server_port = 27999;
+        config.device.serial = "S1".to_string();
+        harness.session.update_config(&config);
+        let snapshot = harness.session.core.config_snapshot();
+        assert!(snapshot.forward_audio, "音频开关必须进到会话快照");
+        assert_eq!(snapshot.server_port, 27999);
+        assert_eq!(snapshot.serial, "S1");
+        assert!(!snapshot.auto_flush, "运行时旋钮不能被打回默认值");
+        assert!(!snapshot.watch_orientation);
+    }
+
+    #[test]
+    fn audio_switch_saved_while_connected_takes_effect_on_reconnect() {
+        let mut config = SessionConfig::default();
+        config.serial = "S1".to_string();
+        let harness = harness_with(FakeFactory::new(0), config);
+        harness.session.connect().expect("首次连接");
+        let first = harness
+            .adb
+            .snapshot()
+            .popen
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        assert!(!first.contains("audio=true"), "默认不带音频通道：{first}");
+
+        // 设置里打开「转发平板声音」→ 保存配置 → 重连（用户实际操作顺序）。
+        let mut app = crate::config::Config::default();
+        app.misc.forward_audio = true;
+        app.device.serial = "S1".to_string();
+        harness.session.update_config(&app);
+        harness.session.disconnect();
+        harness.session.connect().expect("重连");
+        let second = harness
+            .adb
+            .snapshot()
+            .popen
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        assert!(second.contains("audio=true"), "重连后应当带音频通道：{second}");
         harness.session.disconnect();
     }
 
