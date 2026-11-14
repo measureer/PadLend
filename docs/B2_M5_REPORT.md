@@ -67,6 +67,22 @@ DesktopMap 的移植没有引入偏差。已作为 `parity` 门禁加入 `run_ga
 | 模拟模式用 `NoopMask` | 模拟下不会真的遮罩 | 与 Python `--simulate` 行为一致，可接受 |
 | `devices.json` 与 Python 同 schema 同目录 | 两版可共用、可回退 | 已确认 |
 
+## 4.5 最终门禁（含活体，2026-11-14）
+
+桌面解锁、平板接入后重跑全部阶段门禁，**全部 PASS**：
+
+| 阶段 | 门禁 | 结果 |
+|---|---|---|
+| M0 | rust-tests / python-suite / **rawinput-live** | 524 / 491 / PASS（注入 100 次，两实现均计 100，delta=0） |
+| M2 | + rpc-golden | + 25/25 |
+| M5 | rust-tests / python-suite / router-replay / rpc-golden / parity | 全 PASS |
+
+真机（EasyTier，HONOR CGA-W00/Android 17）：连接 6.7–9.8s、接管×3、交还×3、`send_hz≈993`、`p95 0.1–0.2ms`，
+退出后 `GetClipCursor` 回到全桌面（无泄漏）。详见 `B2_M4_REPORT.md` §7。
+
+> 唯一保留项：`auto_connect=true` 时 supervisor 自动连接与 `devices.connect` 互相 `cancel_start`（E105），
+> Python 与 Rust 表现一致，属**产品既有竞态**；真机回归用 `device.auto_connect: false` 绕过。修法见 §7.3。
+
 ## 5. 回退
 
 - 引擎级：删掉 `padlend-core.exe` 即回到 Python sidecar；

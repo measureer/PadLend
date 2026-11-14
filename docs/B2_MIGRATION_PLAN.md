@@ -61,16 +61,16 @@
 
 每阶段在 `docs/B2_<阶段>_REPORT.md` 写：**数据**（门禁输出、测量值）、**风险**（新发现 + 未覆盖项）、**回退方式**（如何退回上一状态）、**下一步**（下一阶段入口条件）。
 
-## 7. 当前状态（2026-11-14，滚动更新）
+## 7. 最终状态（2026-11-14）
 
-| 项 | 状态 |
-|---|---|
-| 阶段 0 | 完成 |
-| M0 | **完成**：活体计数对拍 PASS（同时启动两实现注入 100 次，rust=100 / python=100 / delta=0） |
-| M1 | 完成 |
-| M2 | **完成**：13 个 `#[ignore]` 活体用例全通过，无 ClipCursor 泄漏 |
-| M3 | 完成：状态机 5/5 场景回放 |
-| M4 | **真机回归通过**（`auto_connect=false` 绕过产品竞态）：connect 6.7–9.8s、接管×3、交还×3、send_hz≈993、p95≈0.1–0.2ms |
-| M5 | 门禁全绿：524 测试、491 pytest、G2、G3 25/25、parity 0 差异、externalBin 打包 |
-| 已知产品缺陷 | `auto_connect=true` 时 supervisor 自动连接与 `devices.connect` 互相 `cancel_start`（E105），Python/Rust 表现一致；建议修 `Router::connect_device` 同 serial 不取消 |
-| 提交 | `bb33e4a`→`80cc63c`→`ede1fa2`→`aec645a`→`f7c57a9`→`ba79b55`→`ddef42a`→`b1b28c7`→`1d5796a`→`673d54d` |
+| 项 | 状态 | 证据 |
+|---|---|---|
+| 阶段 0 | 完成 | `B2_STAGE_0_REPORT.md`（onefile 366.6ms/14.51MB vs onedir 146.3ms/31.92MB） |
+| M0 | **完成** | 活体计数对拍 PASS（rust=100 / python=100 / delta=0） |
+| M1 | **完成** | 524 Rust 测试、274 项跨语言字节对拍 |
+| M2 | **完成** | 7 个 Win32 模块；13 个 `#[ignore]` 全通过，ClipCursor 无泄漏 |
+| M3 | **完成** | 状态机 5/5 场景回放 |
+| M4 | **完成** | 真机 connect 6.7–9.8s、接管×3、交还×3、send_hz≈993、p95≈0.1–0.2ms |
+| M5 | **完成** | G3 25/25、parity 0 差异、externalBin 打包、A/B 数据 |
+| 提交 | — | `bb33e4a` `80cc63c` `ede1fa2` `aec645a` `f7c57a9` `ba79b55` `ddef42a` `b1b28c7` `1d5796a` `673d54d` `1bb5fa3` |
+| 遗留（非移植） | 产品竞态 | `auto_connect=true` 与显式连接互 cancel；修法见 `B2_M4_REPORT.md` §7.3 |
