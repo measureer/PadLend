@@ -999,6 +999,359 @@
       "contentHash": "85f910bbee486f0a7bf34f22ea13678afd96599e72b838bdb2c3de52b21037bc",
       "sizeBytes": 6407,
       "memoryBodyIds": []
+    },
+    {
+      "id": "e73a1e22-ab6d-4547-aad4-ea9904be47a6",
+      "title": "PadLend 前端迁移 GPUI / Python 换 Rust 可行性评估",
+      "description": "PadLend 1.4.0 基线：GPUI 重写前端与 Python 换 Rust 的结论、成本、生态事实（gpui-pre 0.3.12 / gpui-kit 0.9.1）、托盘与单实例补位方案、本机实测数据、7 项 spike 门禁。",
+      "status": "active",
+      "filename": "padlend-gpui-python-rust-e73a1e22.md",
+      "relativePath": "documents/active/padlend-gpui-python-rust-e73a1e22.md",
+      "sourcePaths": [
+        "docs/GPUI_RUST_FEASIBILITY.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-7d7aac03-fdd9-470a-bd6d-d5aaa7280ea6"
+      ],
+      "createdAt": "2026-11-13T19:30:05.656Z",
+      "updatedAt": "2026-11-13T19:30:05.656Z",
+      "lastAccessedAt": "2026-11-14T12:51:33.673Z",
+      "revision": 1,
+      "contentHash": "65428fdf34f961c6bc70355b009236e0abaa54e9573c7a95a2e1994c74102a07",
+      "sizeBytes": 6114,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e750fe37-ed26-43a5-b48c-e21a933c4605",
+      "title": "PadLend 迁移阶段 0 实测基线与 M0 门禁（onefile vs onedir / G1 / G3）",
+      "description": "PadLend 1.4.0 从 Python sidecar 迁往 Rust 的实际执行基线：onefile 366ms vs onedir 146ms 的启动拆解、G1 raw-input 18/18、G3 golden trace 25/25 与 1/25、fixture 与对拍工具路径、并行移植 M1 的拆分方式、以及 cargo 独占 exe / venv 缺包等环境坑。",
+      "status": "active",
+      "filename": "padlend-0-m0-onefile-vs-onedir-g1-g3-e750fe37.md",
+      "relativePath": "documents/active/padlend-0-m0-onefile-vs-onedir-g1-g3-e750fe37.md",
+      "sourcePaths": [
+        "docs/B2_MIGRATION_PLAN.md",
+        "docs/B2_STAGE_0_REPORT.md",
+        "tools/run_gates.py",
+        "tools/bench_sidecar.py",
+        "tools/raw_input_probe.py",
+        "tools/rpc_trace.py",
+        "tools/build_sidecar.py",
+        "tests/fixtures/rawinput_vectors.json",
+        "tests/fixtures/rpc_golden/simulate.ndjson",
+        "tests/fixtures/router_scenarios.json"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-806a4ae4-4c2b-4bb0-a0aa-0f627e43f323"
+      ],
+      "createdAt": "2026-11-13T20:13:31.473Z",
+      "updatedAt": "2026-11-13T20:13:31.473Z",
+      "lastAccessedAt": "2026-11-14T12:51:33.673Z",
+      "revision": 1,
+      "contentHash": "a4f06e89b05531a7c7cbf4f0d82251af6570efa9286e74c4ddb93da215e96191",
+      "sizeBytes": 5803,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "f89cb043-ee7b-4fce-b99f-ee4fb15609f5",
+      "title": "PadLend Rust sidecar 迁移：M2/M3 交付、门禁结果与原实现缺陷清单",
+      "description": "PadLend Rust 迁移 M2（Win32 层 7 模块 / 295+491 门禁 / 提交 bb33e4a）与 M3（Router 5447 行 / 5 场景回放 5/5 / 提交 80cc63c）的交付状态、门槛测试做法、冻结错误码，以及迁移中确认的 5 处 Python 原实现缺陷（钩子无自愈、锁内建窗等）与下一步 M4 接线。",
+      "status": "active",
+      "filename": "padlend-rust-sidecar-m2-m3-f89cb043.md",
+      "relativePath": "documents/active/padlend-rust-sidecar-m2-m3-f89cb043.md",
+      "sourcePaths": [
+        "padlend-core/src/logic/router.rs",
+        "padlend-core/src/logic/ports.rs",
+        "padlend-core/src/win/mask.rs",
+        "padlend-core/src/tablet/keymap.rs",
+        "padlend-core/src/main.rs",
+        "tools/router_scenarios.py",
+        "tools/run_gates.py",
+        "docs/B2_MIGRATION_PLAN.md",
+        "docs/B2_M1_REPORT.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-58101f2b-8414-453d-bdd8-7a4ba257d7ee"
+      ],
+      "createdAt": "2026-11-13T22:11:01.066Z",
+      "updatedAt": "2026-11-13T22:11:01.066Z",
+      "lastAccessedAt": "2026-11-14T12:32:04.049Z",
+      "revision": 1,
+      "contentHash": "87dcae5e1a920bc39ff83d05b7552fcc8ab18e546b60da902716f31055a552bc",
+      "sizeBytes": 6016,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "e7d05c7d-1fa7-4857-b5c1-45a0e290e6fc",
+      "title": "PadLend Rust sidecar M4/M5 验收：值级 parity 门禁、双 sidecar 打包与阻塞项",
+      "description": "B2 迁移 M4/M5 的验收状态（25 RPC、524 rust-tests、491 pytest、parity 0 差异）、tools/parity_probe.py 值级对拍门禁做法与差异收敛过程、M5 收尾修掉的 6 个偏差（含 app_dir 路径语义）、双 sidecar 打包与 PADLEND_ENGINE 回退、A/B 数字、9 个提交链，以及仅剩的桌面锁屏/真机两项人工门禁。",
+      "status": "active",
+      "filename": "padlend-rust-sidecar-m4-m5-parity-sidecar-e7d05c7d.md",
+      "relativePath": "documents/active/padlend-rust-sidecar-m4-m5-parity-sidecar-e7d05c7d.md",
+      "sourcePaths": [
+        "tools/parity_probe.py",
+        "tools/run_gates.py",
+        "tools/build_core.py",
+        "tools/release.py",
+        "padlend-core/src/constants.rs",
+        "padlend-core/src/service/api.rs",
+        "src-tauri/tauri.conf.json",
+        "docs/PITFALLS.md",
+        "docs/B2_MIGRATION_PLAN.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-86a14eba-9f34-45f6-b2db-095714b14cd0"
+      ],
+      "createdAt": "2026-11-13T23:49:32.455Z",
+      "updatedAt": "2026-11-13T23:49:32.455Z",
+      "lastAccessedAt": "2026-11-14T14:45:04.699Z",
+      "revision": 1,
+      "contentHash": "a8ecc38e632518c84372f26faae877b4a7d10839940986a74c9a3ffadcb70a3c",
+      "sizeBytes": 7120,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "b32cf8c8-66b6-4b81-b9d9-930671423f2f",
+      "title": "PadLend B2 收尾：活体/真机门禁全绿与 auto_connect 竞态根因（E105）",
+      "description": "B2 迁移收尾：活体/真机门禁全绿（G1 100/100、13/13 真机用例、25/25 RPC、parity 0）、EasyTier 下 993Hz/p95 0.1–0.2ms 实测、auto_connect 与 devices.connect 并发触发 cancel_start(E105) 导致 scrcpy 服务端被清理的根因与 §7.3 三种修法（未实施）。",
+      "status": "active",
+      "filename": "padlend-b2-auto-connect-e105-b32cf8c8.md",
+      "relativePath": "documents/active/padlend-b2-auto-connect-e105-b32cf8c8.md",
+      "sourcePaths": [
+        "docs/B2_M4_REPORT.md",
+        "docs/B2_MIGRATION_PLAN.md",
+        "padlend-core/src/logic/router.rs",
+        "src/tablet/session.py",
+        "tools/run_gates.py"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-9efe9ce0-ec50-4f55-92d1-6683d2de75cf"
+      ],
+      "createdAt": "2026-11-14T03:31:46.556Z",
+      "updatedAt": "2026-11-14T03:31:46.556Z",
+      "lastAccessedAt": "2026-11-14T08:21:30.347Z",
+      "revision": 1,
+      "contentHash": "8e2c3f36887bd487583d0596dbbae5f56a4ff90baaf24960cdf480b4227b5ed9",
+      "sizeBytes": 6356,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "65d4f746-d4e3-43ed-80aa-e1d486a58ee0",
+      "title": "PadLend B2：E105 连接竞态修复与真机复验（debug 构建交付限制）",
+      "description": "E105 竞态的两步修复（复用 in-flight 连接 + 空串目标视为同一设备）、未取到 DeviceFacts 时写失败不计 FAULT、auto_connect=true 真机复验数据（3.6s 连接、993/983/988Hz、p95 0.1ms）、521/491/25-25 回归，以及无 Node 导致只能出 debug 构建、需旁置 vendor/adb 的交付现状。",
+      "status": "active",
+      "filename": "padlend-b2-e105-debug-65d4f746.md",
+      "relativePath": "documents/active/padlend-b2-e105-debug-65d4f746.md",
+      "sourcePaths": [
+        "core/router.py",
+        "padlend-core/src/logic/router.rs",
+        "tests/test_router.py",
+        "docs/B2_M4_REPORT.md",
+        "docs/PITFALLS.md",
+        "tools/device_regression.py",
+        "tools/release.py"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-762a165e-c900-4472-91f1-12f1c1e2c042"
+      ],
+      "createdAt": "2026-11-14T04:52:12.262Z",
+      "updatedAt": "2026-11-14T04:52:12.262Z",
+      "lastAccessedAt": "2026-11-14T09:20:20.086Z",
+      "revision": 1,
+      "contentHash": "6a7f399e5c3c51da7463eee9e98dce670637b93edb32e1af5f49d5b1cd5fdf85",
+      "sizeBytes": 6346,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "9993747b-78e5-4211-968f-8663e2b8c50c",
+      "title": "PadLend 1.4.0 安装包交付与「设备在线却连接超时」三类根因修复",
+      "description": "首次产出可分发 NSIS 安装包（19.93 MB）与便携 zip 的交付路径；构建前提（便携 Node v26.13.1 未入 PATH、NSIS 需用 gh-proxy.com 镜像并缓存到 %LOCALAPPDATA%\\tauri\\NSIS）；以及三个已修缺陷：移除按钮 disabled 判据与 remembered 字段语义不符、安装包未内置 vendor/adb/platform-tools、bridge.rs 用 Stdio::null() 丢弃 sidecar stderr（改写入 %LOCALAPPDATA%\\PadLend\\service.log）；附用户侧「扫描到 1 台但 connect 48s 超时、adb devices 为空」的待定位矛盾点与排查步骤。",
+      "status": "active",
+      "filename": "padlend-1-4-0-9993747b.md",
+      "relativePath": "documents/active/padlend-1-4-0-9993747b.md",
+      "sourcePaths": [
+        "src/features/devices/DevicesPage.tsx",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/src/bridge.rs",
+        "padlend-core/src/service/api.rs",
+        "padlend-core/src/service/serializers.rs",
+        "service/serializers.py",
+        "service/api.py"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-08f5276b-ebb6-4595-8092-5dcc87dc6a5d"
+      ],
+      "createdAt": "2026-11-14T07:05:07.936Z",
+      "updatedAt": "2026-11-14T07:05:07.936Z",
+      "lastAccessedAt": "2026-11-14T14:45:04.699Z",
+      "revision": 1,
+      "contentHash": "0ac65d6d55713ae4ccdbba71319489970087e2c9338eac523054e4803329317d",
+      "sizeBytes": 6827,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "ee05f509-1697-46a5-8cba-ad09cd82dc99",
+      "title": "PadLend 1.4.0 连接超时第四根因：Rust 配置未同步导致连旧端口 44731",
+      "description": "用 service.log 证明「设备在线却连接超时」的真实根因是 devices.connect 未把用户目标 serial 写回引擎配置，会话候选地址仍取记住的旧端口 44731；含修复提交 b24d933、验证数据（44581 出现 9 行 / 44731 出现 0 行）、521 项 Rust 回归、重打包路径，以及下一版结构化连接日志与诊断附 service.log 尾部的计划。",
+      "status": "active",
+      "filename": "padlend-1-4-0-rust-44731-ee05f509.md",
+      "relativePath": "documents/active/padlend-1-4-0-rust-44731-ee05f509.md",
+      "sourcePaths": [
+        "padlend-core/src/service/engine.rs",
+        "padlend-core/src/service/api.rs",
+        "padlend-core/src/session.rs",
+        "core/router.py",
+        "src-tauri/src/bridge.rs",
+        "src-tauri/tauri.conf.json",
+        "src/features/devices/DevicesPage.tsx"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-d7b19e5c-d0d5-420e-958e-9d262ad001d0"
+      ],
+      "createdAt": "2026-11-14T08:22:07.997Z",
+      "updatedAt": "2026-11-14T08:22:07.997Z",
+      "lastAccessedAt": "2026-11-14T14:45:04.699Z",
+      "revision": 1,
+      "contentHash": "680f8ff4cf56e1f6406bfbce73ad6328de81a62503b62e0215989796ce71901a",
+      "sizeBytes": 4993,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "049a72cf-bc54-4cfb-aa25-2f05b2363f33",
+      "title": "PadLend：诊断导出移出桌面与「能连接但穿越不到平板」的证据链",
+      "description": "2026-11-14 傍晚复验：诊断导出默认目录从 Desktop 改为 Downloads（提交 724b081，清理桌面 18 个 padlend-diagnostics 包）；cap.start reports=11→0 的日志证据表明接管/UHID 正常而 PC 侧鼠标 delta 未转发，给出 raw_hz 判别表、RDP 绝对坐标假设与下一步埋点计划。",
+      "status": "active",
+      "filename": "padlend-049a72cf.md",
+      "relativePath": "documents/active/padlend-049a72cf.md",
+      "sourcePaths": [
+        "src-tauri/src/bridge.rs",
+        "src-tauri/tauri.conf.json",
+        "src/features/devices/DevicesPage.tsx",
+        "padlend-core/src/service/engine.rs",
+        "padlend-core/src/service/api.rs",
+        "service/api.py",
+        "service/serializers.py"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-049c0885-1ea6-417a-86da-ce70892c33d3"
+      ],
+      "createdAt": "2026-11-14T09:11:47.465Z",
+      "updatedAt": "2026-11-14T09:11:47.465Z",
+      "lastAccessedAt": "2026-11-14T09:37:02.796Z",
+      "revision": 1,
+      "contentHash": "ae7ce3b80f77e0c7b9288cee408a069df009c57eeb720ef0f491fd3924fe6482",
+      "sizeBytes": 5892,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "5177c574-12ca-40c4-a705-c9b09eef5574",
+      "title": "PadLend 鼠标穿越取证续：RDP 假设排除、raw.seen 埋点与三分支修法",
+      "description": "2026-11-14 17:20 续验：连接已由 b24d933 修好，穿越仍卡在 PC 侧 delta；用户确认本机操作（RDP 分支排除），新增 raw.seen 每 500 事件落 service.log（dx/dy/buttons/wheel/absolute）并打包 vendor/SHA256SUMS，给出「无 raw.seen / dx=dy=0 / dxdy 非 0」三分支诊断表与安装包路径（19.93 MiB）。",
+      "status": "active",
+      "filename": "padlend-rdp-raw-seen-5177c574.md",
+      "relativePath": "documents/active/padlend-rdp-raw-seen-5177c574.md",
+      "sourcePaths": [
+        "src-tauri/src/service/diagnostics.rs",
+        "src-tauri/src/bridge.rs",
+        "src-tauri/tauri.conf.json",
+        "src/features/devices/DevicesPage.tsx"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-5f98556c-5725-4a00-b086-4334861e5555"
+      ],
+      "createdAt": "2026-11-14T09:20:51.048Z",
+      "updatedAt": "2026-11-14T09:20:51.048Z",
+      "lastAccessedAt": "2026-11-14T09:37:02.796Z",
+      "revision": 1,
+      "contentHash": "d94ca7687a9c596930ed0fc0cc439707ab1df0dab8c42dabcd9f8344f467e705",
+      "sizeBytes": 5289,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "cf91cbcb-bc48-4c3a-8150-1a860f275ff9",
+      "title": "PadLend 穿越失灵结案：服务模式从未启动 Raw Input（c5adae1）",
+      "description": "2026-11-14 17:36 结案：cap.start reports 归零的真正根因是 Rust 常驻服务模式从未调用 RawInputSource::start()（仅 --debug-raw 调用），引擎补接线 + RAW_INPUT_STARTED 幂等守卫，提交 c5adae1，重出 19.94 MiB 安装包；同批删除桌面 18 个诊断包并把导出默认改到 Downloads（724b081），附取证链与可复用教训。",
+      "status": "active",
+      "filename": "padlend-raw-input-c5adae1-cf91cbcb.md",
+      "relativePath": "documents/active/padlend-raw-input-c5adae1-cf91cbcb.md",
+      "sourcePaths": [
+        "src-tauri/src/engine.rs",
+        "src-tauri/src/main.rs",
+        "padlend-core/src/router.rs",
+        "padlend-core/src/constants.rs",
+        "src-tauri/src/service/diagnostics.rs"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-e9fb7e8a-3431-41d3-9e38-afbddbc0d92e"
+      ],
+      "createdAt": "2026-11-14T09:37:34.168Z",
+      "updatedAt": "2026-11-14T09:37:34.168Z",
+      "lastAccessedAt": "2026-11-14T09:37:34.168Z",
+      "revision": 1,
+      "contentHash": "9e8abc93fb5b275d5281a01c843e8bfca2be951bc4422ca0a44759efeb26db23",
+      "sizeBytes": 7359,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "0402943a-f7fb-4446-90af-5e0185b46cd9",
+      "title": "PadLend 服务模式接线缺陷：键盘钩子/热键未安装与音频配置不下推（d9cd687）",
+      "description": "迁移后真机反馈暴露的两个服务模式接线缺口：Rust 引擎从未安装 keyboard_hook/hotkeys（键盘不转发、Ctrl+Alt+S/Q 失效），以及 SessionConfig 为拷贝导致 forward_audio 无法下推到已建会话；含修法（engine.rs 安装钩子与关闭顺序、SessionCore::update_config/sync_config）、524 测试与 25/25 回放验证、NSIS 安装包重建与哈希，以及仍待真机验证的三项门禁。",
+      "status": "active",
+      "filename": "padlend-d9cd687-0402943a.md",
+      "relativePath": "documents/active/padlend-d9cd687-0402943a.md",
+      "sourcePaths": [
+        "padlend-core/src/service/engine.rs",
+        "padlend-core/src/service/api.rs",
+        "padlend-core/src/tablet/session.rs",
+        "padlend-core/src/logic/router.rs",
+        "padlend-core/src/win/keyboard_hook.rs",
+        "padlend-core/src/win/hotkeys.rs",
+        "padlend-core/src/win/cursor_watch.rs",
+        "docs/PITFALLS.md",
+        "docs/TROUBLESHOOTING.md",
+        "src-tauri/tauri.conf.json",
+        ".gitignore"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-1a35f1a2-5141-4941-ba65-9c86c49f7077"
+      ],
+      "createdAt": "2026-11-14T12:32:50.668Z",
+      "updatedAt": "2026-11-14T12:32:50.668Z",
+      "lastAccessedAt": "2026-11-14T14:45:04.699Z",
+      "revision": 1,
+      "contentHash": "b35920768cecdfc83022e5190fe9cce479ac65f533cde6bec0664b7165eb9d05",
+      "sizeBytes": 7421,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "c484629c-87b2-49ed-ab23-e70f90502351",
+      "title": "PadLend 1.6.0：RPC 并发化、可取消连接、低版本音频降级与端点合并",
+      "description": "1.6.0 三坑根因与修法（RPC 串行导致界面卡死、devices.cancel+epoch 竞态、Android<API30 音频降级）加无线换端口的注册表合并策略；含 cargo 532 测试、前端 44 测试、165ms/1.6s 实测、安装包路径与引擎 sha256、提交 9199cd2。",
+      "status": "active",
+      "filename": "padlend-1-6-0-rpc-c484629c.md",
+      "relativePath": "documents/active/padlend-1-6-0-rpc-c484629c.md",
+      "sourcePaths": [
+        "padlend-core/src/service/api.rs",
+        "padlend-core/src/service/engine.rs",
+        "padlend-core/src/service/registry.rs",
+        "padlend-core/src/logic/router.rs",
+        "padlend-core/src/tablet/session.rs",
+        "src/features/devices/DevicesPage.tsx",
+        "src/lib/actions.ts",
+        "src/store/appStore.ts",
+        "src-tauri/tauri.conf.json",
+        "docs/PITFALLS.md",
+        "docs/CHANGELOG.md"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-1de97bca-e0a5-4a30-b1e7-f2b11ae0a2da"
+      ],
+      "createdAt": "2026-11-14T14:45:56.300Z",
+      "updatedAt": "2026-11-14T14:45:56.300Z",
+      "lastAccessedAt": "2026-11-14T14:45:56.300Z",
+      "revision": 1,
+      "contentHash": "5b65db70f1351626cf3ffcd1e771da94f87d49873bb2bbc6ce9c660de60201f6",
+      "sizeBytes": 7629,
+      "memoryBodyIds": []
     }
   ]
 }
