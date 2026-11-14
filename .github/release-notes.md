@@ -1,44 +1,38 @@
-# PadLend 1.7.3
+# PadLend 1.7.4
 
-这一版修的是「明明连上了，界面却说没连上」，顺带把设置页的分组重排了一下。
+只加了一个开关：**设置 → 杂项 → 打开软件自动连接上次连接的设备**。
 
-## 修了什么
+## 为什么加
 
-### 1. 打开应用就自动连上了平板，界面却一直显示「未连接」
+这个开关本来就存在（配置里的 auto_connect），但它只在首次运行向导里出现过一次。装好之后再想关掉自动连接、或者想重新打开，界面上找不到入口，只能去改 config.yaml。
 
-auto_connect 打开时，supervisor 线程会在启动后自己把设备连上，可界面里的设备详情、标题栏、托盘全停在「未连接」，连接按钮也还是灰的——实际上平板已经可以被控制了。
+现在它固定放在杂项第一项：
 
-根因：设备事实（分辨率、方向、序列号这些）的镜像开关只挂在 devices.connect 这个 RPC 里，而自动首连根本不走它。supervisor 连上以后，事实轮询线程每次都在第一行就提前返回，bootstrap 的 facts 恒为 null，facts 事件也从没推出去过。
+- 开着：启动后自动连上次用过的那台设备（地址就存在配置里，无线调试换了地址也能自己找回来）。
+- 关掉：启动后停在设备页，需要手动点「连接此设备」。
 
-修法：引擎启动时如果 auto_connect 已经打开，就先打开事实镜像；手动连接那条路径保持原样。这样无论谁连上的，界面都能拿到事实。
-
-### 2. 设置页：手感 → 鼠标，按列重排
-
-- 原来的「手感」分组改名为「鼠标」。
-- 左列放「鼠标」「键盘」「快捷键」三块，右列单独放「杂项」。
-- 窗口窄于 1180px 时两列自动叠回单列，不会出现挤成两条窄条的情况。
+这项在引擎启动时读取，所以**保存后下次启动生效**——当前这次运行里已经连着的设备不会因为关掉开关就断开。
 
 ## 升级提示
 
-- 覆盖安装或解压覆盖即可；config.yaml、devices.json 格式没有变化。
-- 1.7.2 的音频修复都在，声音不需要重新设。
+- 覆盖安装或解压覆盖即可；config.yaml、devices.json 格式没有变化，已有设置原样保留。
+- 1.7.2 的音频修复、1.7.3 的自动连接状态与设置页分列都在。
 - 未签名发布，SmartScreen 仍可能提示「未知发布者」。
 
 ## 验证
 
-- 引擎：cargo test **541 passed / 13 ignored**。
-- 前端：vitest **44 passed / 9 files**，tsc --noEmit 通过。
-- 独立引擎 + auto_connect=true：不调 devices.connect，8 秒后 bootstrap 返回 connected=true、facts.serial=192.168.68.129:35071（3200×2136）。
-- 设置页真机截图确认左列三块、右列一块。
+- 前端：vitest 45 passed / 9 files（含新增的开关用例），tsc --noEmit 通过。
+- 引擎：cargo test 541 passed / 13 ignored（本次未改引擎）。
+- 真机：关掉开关重启应用 → 停在设备页不自动连接；打开开关重启 → 自动连到 HONOR CGA-W00。
 
 ## 下载
 
-- PadLend-1.7.3-setup.exe — NSIS 安装器，安装到当前用户目录，不需要管理员权限
-- PadLend-1.7.3-win64.zip — 免安装包，解压后运行 padlend-desktop.exe
+- PadLend-1.7.4-setup.exe — NSIS 安装器，安装到当前用户目录，不需要管理员权限
+- PadLend-1.7.4-win64.zip — 免安装包，解压后运行 padlend-desktop.exe
 - SHA256SUMS.txt — 下载后建议核对
 
 ```powershell
-Get-FileHash .\PadLend-1.7.3-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.7.4-win64.zip -Algorithm SHA256
 ```
 
 ## 环境要求

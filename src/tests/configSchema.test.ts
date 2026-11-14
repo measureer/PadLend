@@ -12,9 +12,9 @@ const gainField = SETTING_GROUPS[0].fields[0];
 const reportField = SETTING_GROUPS[0].fields[1];
 
 describe('声明式设置 schema', () => {
-  it('覆盖 14 个可编辑字段，且每个字段都有提示文案', () => {
+  it('覆盖 15 个可编辑字段，且每个字段都有提示文案', () => {
     const fields = SETTING_GROUPS.flatMap((group) => group.fields);
-    expect(fields).toHaveLength(14);
+    expect(fields).toHaveLength(15);
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
@@ -37,6 +37,26 @@ describe('声明式设置 schema', () => {
     expect(audio?.label).toBe('转发平板声音');
     expect(audio?.hint).toContain('Android 11');
     expect(audio?.hint).toContain('重新连接');
+
+    // 自动连接开关放在杂项首项，写的是 device.auto_connect。
+    const misc = SETTING_GROUPS.find((g) => g.id === 'misc');
+    expect(misc?.fields[0].id).toBe('auto_connect');
+    expect(misc?.fields[0].section).toBe('device');
+    expect(misc?.fields[0].label).toBe('打开软件自动连接上次连接的设备');
+    expect(misc?.fields[0].hint).toContain('下次启动');
+  });
+
+  it('自动连接写回 device 段且不影响同段其它字段', () => {
+    const config = defaultConfig();
+    config.device.serial = '192.168.68.129:35071';
+    const field = SETTING_GROUPS.find((g) => g.id === 'misc')!.fields[0];
+    expect(readField(config, field)).toBe(true);
+    const next = writeField(config, field, false);
+    expect(next.device.auto_connect).toBe(false);
+    expect(next.device.serial).toBe('192.168.68.129:35071');
+    expect(next.device.known).toEqual(config.device.known);
+    expect(config.device.auto_connect).toBe(true);
+    expect(settingsPatch(next).device?.auto_connect).toBe(false);
   });
 
   it('速度滑条以 1/100 倍率显示并写回', () => {

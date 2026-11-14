@@ -3,7 +3,7 @@
 
 import type { Config } from '../api/types';
 
-export type SettingSection = 'motion' | 'keyboard' | 'hotkeys' | 'ui' | 'misc';
+export type SettingSection = 'device' | 'motion' | 'keyboard' | 'hotkeys' | 'ui' | 'misc';
 
 export interface FieldDef {
   id: string;
@@ -118,9 +118,13 @@ export const SETTING_GROUPS: SettingGroup[] = [
     id: 'misc',
     title: '杂项',
     icon: 'sliders',
-    description: '托盘、剪贴板与平板行为',
+    description: '启动、托盘、剪贴板与平板行为',
     column: 'side',
     fields: [
+      {
+        id: 'auto_connect', section: 'device', key: 'auto_connect', label: '打开软件自动连接上次连接的设备', kind: 'toggle',
+        hint: '启动后自动连上次用过的那台设备（地址存在配置里）。关闭后停在设备页，需要手动点「连接此设备」。保存后下次启动生效。',
+      },
       {
         id: 'tray_notifications', section: 'ui', key: 'tray_notifications', label: '托盘气泡通知', kind: 'toggle',
         hint: '连接成功、断开或出故障时，在右下角托盘弹一个气泡提醒。',
