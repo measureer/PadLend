@@ -72,3 +72,50 @@ crate 累计 467 → 服务层完成后 518 个测试，全绿。
 - Android 17 + scrcpy 5.0.1 的兼容性（手动能起、能被连上，倾向时序问题）。
 
 建议下一步：① 先试 USB 连接（排除 EasyTier 延迟因素）；② 若必须无线，在 `tablet/session.py` 临时加一行异常日志定位，再决定修法。
+
+## 7. 真机回归通过（2026-11-14，EasyTier 网络）
+
+### 7.1 根因：不是环境问题，是连接路径的竞态
+
+失败时的 Rust 侧日志（`padlend-core` 的 stderr）给出了完整链条：
+
+```
++0.01s router.start_waiting code=E101 detail=尚无设备信息；连接由 supervisor 线程异步完成
++1.09s state.fault code=E106 detail=连续 3 次写失败: E106: 控制通道未建立或已断开
++3.77s tablet.server 启动服务端: ... app_process ... scrcpy.Server 5.0.1 ...
++3.85s tablet.server adb forward tcp:1234 → localabstract:scrcpy
++3.85s tablet.session 启动失败: 启动已取消 (E105)
++4.60s router.connect_failed attempt=1 code=E105 detail=启动已取消
++6.61s router.connect_failed attempt=1 code=E101 detail=连接后健康检查失败
+```
+
+`router.start` 在 `auto_connect=true` 时会让 supervisor 线程**自动发起连接**；紧接着 `devices.connect`
+又显式调用 `router.connect_device()`，后者对**正在进行的 start** 调用了 `cancel_start()` →
+会话在握手阶段收到"启动已取消"（E105）→ 清理杀掉刚起的服务端 → 显式连接拿到的是一条已死的通道。
+
+Python 原实现的行为完全相同（同样的 E105/E101 序列、同样的超时文案），所以这是**产品既有竞态**，
+被 EasyTier 的每次 adb 往返 300–700ms 放大到稳定复现；USB 本地快得多，窗口小到通常撞不上。
+
+### 7.2 绕过竞态后的真机结果
+
+`tools/device_regression.py` 先写 `config.yaml`（`device.auto_connect: false`）关掉自动连接，
+再走显式 `devices.connect`，全流程通过：
+
+| 步骤 | 结果 |
+|---|---|
+| `devices.connect` | **ok**（6.7–9.8s） |
+| `engine.state` | `connected: true`，facts: 3200×2136、xscale 1.312、landscape |
+| 接管 ×3 | ok |
+| 接管期指标 | `send_hz = 996 / 992 / 994`，`p95 = 0.1 / 0.1 / 0.2 ms` |
+| 交还 ×3 | ok |
+| 退出 | 遮罩与 ClipCursor 已释放（`GetClipCursor` 回到 `0,0,1705,987`） |
+
+**1000Hz 发送链路在 EasyTier 上实测成立**：`send_hz≈993`、`p95≈0.1–0.2ms`、`cpu_pct≈16.6`。
+
+### 7.3 建议修法（属产品代码，不在 B2 移植范围）
+
+1. `Router::connect_device` 在"同一 serial 的 start 正在进行"时**不要** `cancel_start`，直接等它完成或复用；
+2. 或让 `devices.connect` 先等 supervisor 的 in-flight 连接结束（同 serial 时返回其结果）；
+3. 顺带：`send_mouse` 在会话未就绪时不应计为"写失败"（当前 1.09s 就把状态打成 E106 fault）。
+
+修复后 `auto_connect=true` 的默认路径应当即恢复；在修复前，真机回归用 `auto_connect=false` 可稳定通过。

@@ -32,9 +32,13 @@ def main(argv=None) -> int:
     parser.add_argument("--exe", default="padlend-core/target/debug/padlend-core.exe")
     parser.add_argument("--serial", required=True)
     parser.add_argument("--json", default="build/gates/m4-device.json")
+    parser.add_argument("--cycles", type=int, default=3, help="接管/交还循环次数")
     args = parser.parse_args(argv)
 
     home = Path(tempfile.mkdtemp(prefix="pl-device-"))
+    # 已知产品问题：supervisor 的自动连接与 devices.connect 会互相 cancel_start
+    # （E105 启动已取消，两个实现一致）。真机回归先把 auto_connect 关掉，避免这条竞态。
+    (home / "config.yaml").write_text("device:\n  auto_connect: false\n", encoding="utf-8")
     env = dict(os.environ, PADLEND_HOME=str(home), PYTHONUNBUFFERED="1")
     env.pop("PADLEND_SIMULATE", None)
     proc = subprocess.Popen(
@@ -77,7 +81,8 @@ def main(argv=None) -> int:
         t0 = time.time()
         connect = call(3, "devices.connect", {"serial": args.serial}, timeout=180)
         connect_result = connect.get("result") or {}
-        steps.append(("devices.connect", connect.get("ok"), f"{connect_result} ({time.time()-t0:.1f}s)"))
+        steps.append(("devices.connect", bool(connect_result.get("ok")),
+                      f"{connect_result} ({time.time()-t0:.1f}s)"))
 
         time.sleep(3)
         state = call(4, "engine.state")
@@ -86,15 +91,21 @@ def main(argv=None) -> int:
         steps.append(("engine.state", state.get("ok"), {"state": state_result.get("state"), "connected": connected}))
 
         if connected:
-            toggle = call(5, "engine.toggle")
-            steps.append(("engine.toggle(capture)", toggle.get("ok"), (toggle.get("result") or {}).get("state")))
-            time.sleep(3)
-            metrics = call(6, "engine.metrics")
-            steps.append(("engine.metrics(captured)", metrics.get("ok"), metrics.get("result")))
-            toggle2 = call(7, "engine.toggle")
-            steps.append(("engine.toggle(release)", toggle2.get("ok"), (toggle2.get("result") or {}).get("state")))
-            time.sleep(2)
-            final = call(8, "engine.state")
+            index = 5
+            for cycle in range(1, args.cycles + 1):
+                toggle = call(index, "engine.toggle"); index += 1
+                steps.append((f"cycle{cycle}.capture", toggle.get("ok"),
+                              (toggle.get("result") or {}).get("state")))
+                time.sleep(2)
+                metrics = call(index, "engine.metrics"); index += 1
+                payload = metrics.get("result") or {}
+                steps.append((f"cycle{cycle}.metrics", metrics.get("ok"),
+                              f"send_hz={payload.get('send_hz')} p95={payload.get('p95_ms')}"))
+                toggle2 = call(index, "engine.toggle"); index += 1
+                steps.append((f"cycle{cycle}.release", toggle2.get("ok"),
+                              (toggle2.get("result") or {}).get("state")))
+                time.sleep(1)
+            final = call(index, "engine.state")
             steps.append(("engine.state(after)", final.get("ok"), (final.get("result") or {}).get("state")))
         call(99, "app.shutdown")
         proc.wait(timeout=20)
