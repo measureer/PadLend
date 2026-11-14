@@ -12,15 +12,8 @@ jobs:
   release:
     name: build and publish Windows release
     runs-on: windows-latest
-    env:
-      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
 
       - uses: actions/setup-node@v4
         with:
@@ -29,35 +22,35 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # 引擎是独立 crate，两个 target 目录都要缓存。
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "src-tauri -> target"
+          workspaces: |
+            src-tauri -> target
+            padlend-core -> target
 
-      - name: Verify tag matches padlend.__version__
+      - name: Verify tag matches tauri.conf.json version
         shell: pwsh
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          $version = python -c "import padlend; print(padlend.__version__)"
-          if ("v$version" -ne "${{ github.ref_name }}") {
-            Write-Error "tag ${{ github.ref_name }} does not match padlend.__version__ $version"
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ("v$($conf.version)" -ne $env:GITHUB_REF_NAME) {
+            Write-Error "tag $env:GITHUB_REF_NAME does not match tauri.conf.json version $($conf.version)"
             exit 1
           }
+          Write-Host "version $($conf.version) ok"
 
       - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install -r requirements-build.txt
-          npm ci
+        run: npm ci
 
-      - name: Lint + tests
+      - name: Tests
         run: |
-          ruff check .
-          pytest -q
+          cargo test --manifest-path padlend-core\Cargo.toml
           npx vitest run
 
-      - name: Build, package, checksum
-        run: python tools/release.py --build --zip --sha256
+      # 一条命令完成：前端 → 引擎 → Tauri 外壳 → NSIS 安装包 → 免安装 zip → SHA256。
+      - name: Bundle
+        run: powershell -ExecutionPolicy Bypass -File tools\release.ps1 -SkipTests
 
       - name: Show outputs
         shell: pwsh
@@ -71,12 +64,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          prerelease: false
           body_path: .github/release-notes.md
           generate_release_notes: false
           fail_on_unmatched_files: false
           files: |
             dist/PadLend-*-win64.zip
-            dist/PadLend-*-bundle.zip
             dist/PadLend-*-setup.exe
             dist/SHA256SUMS.txt

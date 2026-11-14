@@ -1,4 +1,4 @@
-//! Tauri 命令层：只做转发与窗口状态，业务规则一律留在 Python 服务里。
+//! Tauri 命令层：只做转发与窗口状态，业务规则一律留在 `padlend-core` 引擎里。
 
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};

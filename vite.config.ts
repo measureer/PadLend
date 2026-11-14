@@ -13,7 +13,7 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
-    // 与 Python/PyInstaller 的发布目录 dist/ 分开，避免前端构建清空既有发布产物。
+    // 与发布产物目录 dist/ 分开，避免前端构建清空既有发布产物。
     outDir: 'frontend-dist',
     // 浏览器预览（无 Tauri 运行时）走 mock 后端，产物可用静态服务器直接打开。
     base: './',

@@ -70,6 +70,20 @@
       "updated_at": "2026-11-14T15:09:04.826Z",
       "target": "memory",
       "importance": "normal"
+    },
+    {
+      "content": "PadLend 构建环境（2026-11-14 在本机 C:\\Users\\measu 装好）：Rust 1.100.0（rustup，%USERPROFILE%\\.cargo\\bin）；VS 2022 BuildTools 17.14.45（MSVC 14.44.35207 + Windows SDK 10.0.26100，路径 C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools）。本机 static.rust-lang.org 与 static.crates.io 直连不通，rustup 用 rsproxy 镜像装成，并在 %USERPROFILE%\\.cargo\\config.toml 把 crates-io 换成 sparse+https://rsproxy.cn/index/（删掉该段即回官方源）。系统代理 127.0.0.1:7897 用户会按需打开。构建命令：先 `& 'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\Tools\\Launch-VsDevShell.ps1' -Arch amd64 -HostArch amd64 -SkipAutomaticLocation`，再把 %USERPROFILE%\\.cargo\\bin 前置到 PATH，然后 `npx tauri build`；Node 24.22.2 / npm 11.19.1 已有，.venv 里 PyInstaller 6.22.3 可重打 Python sidecar。",
+      "created_at": "2026-11-14T15:55:26.477Z",
+      "updated_at": "2026-11-14T15:55:26.477Z",
+      "target": "memory",
+      "importance": "critical"
+    },
+    {
+      "content": "PadLend 版本号陷阱：padlend/__init__.py 的 __version__ 停在 1.4.0（1.5.0/1.6.0 都没跟改），而 package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、padlend-core/Cargo.toml 都是 1.6.0。安装包版本取 tauri.conf.json（所以是 1.6.0），但 tools/release.py 用 padlend.__version__ 命名 zip、release.yml 又校验 tag == padlend.__version__，所以打 v1.6.0 tag 之前必须先把 __init__.py 改成 1.6.0。另外 dist/ 里还留着 1.1.1 的旧产物，release.py 的 make_sha256 会把 dist 里所有文件都算进去，发版前要清理。",
+      "created_at": "2026-11-14T15:55:26.483Z",
+      "updated_at": "2026-11-14T15:55:26.483Z",
+      "target": "memory",
+      "importance": "critical"
     }
   ]
 }

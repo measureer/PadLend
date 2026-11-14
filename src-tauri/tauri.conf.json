@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PadLend",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "identifier": "com.padlend.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -34,7 +34,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "externalBin": ["binaries/padlend-core", "binaries/padlend-service"],
+    "externalBin": ["binaries/padlend-core"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,10 +48,6 @@
       "../vendor/SHA256SUMS": "vendor/SHA256SUMS",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../LICENSES/Apache-2.0.txt": "LICENSES/Apache-2.0.txt",
-      "../LICENSES/BSD-3-Clause-psutil.txt": "LICENSES/BSD-3-Clause-psutil.txt",
-      "../LICENSES/MIT-PyYAML.txt": "LICENSES/MIT-PyYAML.txt",
-      "../LICENSES/PyInstaller-COPYING.txt": "LICENSES/PyInstaller-COPYING.txt",
-      "../LICENSES/Python-3.13-PSF.txt": "LICENSES/Python-3.13-PSF.txt",
       "../LICENSES/adb-NOTICE.txt": "LICENSES/adb-NOTICE.txt"
     },
     "windows": {

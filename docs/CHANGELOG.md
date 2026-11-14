@@ -2,6 +2,52 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.7.0] — 2026-11-15
+
+### 变更
+
+- **Python 业务服务整体移除，仓库只剩 Rust**：`core/`、`win/`、`tablet/`、`service/`、
+  `padlend/`、`main.py`、`config.py`、`constants.py`、`pyproject.toml`、
+  `requirements*.txt` 与 `tests/` 全部删除，业务逻辑只由 `padlend-core` 承担。
+  安装包不再捆绑 14 MB 的 `padlend-service.exe`，也不再包含 CPython 运行时与
+  PyInstaller bootloader；`LICENSES/` 里对应的四份许可证一并移除。
+- **构建工具链改为 PowerShell**：新增 `tools/build-core.ps1`（编译引擎、按 Tauri 要求的
+  `padlend-core-<triple>.exe` 命名放进 `src-tauri/binaries`，并同步刷新
+  `src-tauri/target/{release,debug}` 里会被手工运行复用的副本）与 `tools/release.ps1`
+  （前端 → 引擎 → 测试 → `tauri build` → 免安装 zip → SHA256）。原先的
+  `tools/*.py`（release / build_sidecar / build_core / probe / acceptance / 图标与
+  jar 重打包）随 Python 一起删除。
+- **引擎发现逻辑收口**：`src-tauri/src/bridge.rs` 的 `resolve_service()` 只找
+  `padlend-core*.exe`，删掉 `PADLEND_ENGINE=python` 与 `python -m service.server`
+  回退分支；外壳不再给子进程注入 `PYTHONUNBUFFERED` / `PYTHONIOENCODING`。
+  `PADLEND_SERVICE_CMD` / `PADLEND_SIMULATE` 保留。
+- **对拍 fixture 随源码搬家**：`tests/fixtures/` 迁到 `padlend-core/tests/fixtures/`，
+  `tablet_vectors.rs`、`rawinput_vectors.rs`、`logic/router.rs` 三处路径引用改到
+  `CARGO_MANIFEST_DIR`，`cargo test` 不再依赖仓库根的 Python 目录；向量测试名从
+  `*_match_python` 改为 `*_match_baseline`。
+- **CI / Release 工作流**：删除 `setup-python` 与 pip 步骤，新增独立的 Rust 引擎测试
+  job；desktop job 用 `tools/build-core.ps1` 产出 externalBin；Release 直接调用
+  `tools/release.ps1`。
+- 版本号 1.7.0：`package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、
+  `src-tauri/Cargo.toml`、`padlend-core/Cargo.toml`。
+
+### 修复
+
+- **校验和不再混入历史产物**：旧 `release.py` 的 `make_sha256()` 会把 `dist/` 里所有
+  文件都算进去，包括 1.1.x 遗留的安装包。`tools/release.ps1` 打包前先清掉
+  `dist/PadLend-*`，只对本轮产物生成 `SHA256SUMS.txt`。
+- **版本号只有一个来源**：发版脚本统一读 `src-tauri/tauri.conf.json`；Release 工作流的
+  tag 校验也从 `padlend.__version__` 改成该字段——1.6.0 时 `padlend/__init__.py` 还写着
+  1.4.0，旧校验会让 `v1.6.0` 的 tag 构建直接失败。
+
+### 验证
+
+- `cargo test --manifest-path padlend-core/Cargo.toml`：**538 passed / 13 ignored**
+  （532 单测 + 6 个 fixture 回放）。
+- 前端 `vitest`：**44 passed / 9 files**；`npm run build`（`tsc --noEmit` + vite）通过。
+- `npx tauri build` 产出 `PadLend_1.7.0_x64-setup.exe`；引擎 `--simulate` 的
+  `system.paths` 返回 `version: 1.7.0`，`ready` 事件同步。
+
 ## [1.6.0] — 2026-11-14
 
 ### 修复

@@ -1,8 +1,8 @@
 //! PadLend Tauri 2 外壳。
 //!
 //! 职责边界（迁移的核心）：
-//! * Rust：进程/窗口/托盘/单实例/clipboard/路径打开 + sidecar 生命周期；
-//! * Python（`service/`）：Router 状态机、ADB、UHID、几何、配置、诊断；
+//! * Rust 外壳：进程/窗口/托盘/单实例/clipboard/路径打开 + 引擎生命周期；
+//! * padlend-core（Rust 引擎，独立进程）：Router 状态机、ADB、UHID、几何、配置、诊断；
 //! * React/TS（`src/`）：纯展示与交互，不直接触碰任何业务对象。
 
 mod audio;

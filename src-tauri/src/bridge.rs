@@ -1,9 +1,9 @@
-//! Python 业务 sidecar 的异步 JSON-RPC 客户端。
+//! 业务引擎（`padlend-core`）的异步 JSON-RPC 客户端。
 //!
 //! * 命令调用走 `stdin`，响应与事件走 `stdout`（NDJSON）；
 //! * `call()` 是 async 的，等待期间不占用任何线程，WebView 永远不被阻塞；
 //! * 服务进程里发生的事件直接转发为 Tauri `emit`，前端只需订阅一次；
-//! * 退出时先发 `app.shutdown` 让 Python 优雅释放 UHID / 遮罩 / 指针速度，
+//! * 退出时先发 `app.shutdown` 让引擎优雅释放 UHID / 遮罩 / 指针速度，
 //!   超时才强杀。
 
 use serde_json::{json, Value};
@@ -31,11 +31,11 @@ impl Bridge {
     pub fn start(app: AppHandle, audio_port: u16) -> Result<Arc<Self>, String> {
         let (program, args, cwd) = resolve_service();
         let mut command = Command::new(&program);
-        // 业务服务的 stderr 是唯一的诊断入口（Rust sidecar 用它打日志），
+        // 业务引擎的 stderr 是唯一的诊断入口（用它打日志），
         // 不能丢进 null：落到 %LOCALAPPDATA%\PadLend\service.log，用户可直接回传。
         let log_path = env::var("LOCALAPPDATA")
             .map(|base| PathBuf::from(base).join("PadLend").join("service.log"))
-            .unwrap_or_else(|_| std::env::temp_dir().join("padlend-service.log"));
+            .unwrap_or_else(|_| std::env::temp_dir().join("padlend-core.log"));
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -47,17 +47,15 @@ impl Bridge {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
-            .env("PYTHONUNBUFFERED", "1")
-            .env("PYTHONIOENCODING", "utf-8")
-            // 父进程看门狗：外壳崩溃后 sidecar 必须自行 teardown 退出，
+            // 父进程看门狗：外壳崩溃后引擎必须自行 teardown 退出，
             // 否则它持有的全屏遮罩会留在桌面上（1.2.0 缺陷 A 的失效安全）。
             .env("PADLEND_PARENT_PID", std::process::id().to_string())
-            // 0 表示音频 sink 没起来；Python 会把它当成“只读掉音频、不播放”。
+            // 0 表示音频 sink 没起来；引擎会把它当成“只读掉音频、不播放”。
             .env("PADLEND_AUDIO_PORT", audio_port.to_string());
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }
-        // sidecar 用 Python 控制台子系统保留 stdio 管道，但不弹黑框。
+        // 引擎是控制台子系统程序：保留 stdio 管道，但不弹黑框。
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -159,10 +157,10 @@ impl Bridge {
         }
     }
 
-    /// 请求优雅退出并等待 sidecar 收尾。
+    /// 请求优雅退出并等待引擎收尾。
     ///
     /// 1.1.2 把等待丢进后台线程后立即返回：Tauri 主进程随即退出，后台线程
-    /// 被一起终止，Python 的遮罩/ClipCursor/UHID/adb 清理可能只做了一半。
+    /// 被一起终止，引擎的遮罩/ClipCursor/UHID/adb 清理可能只做了一半。
     /// 退出路径必须等待，超时才强杀；sidecar 自己也有父进程看门狗兜底。
     /// 上限 8s：遮罩释放最坏会等专用线程 5s，4s 会在它完成前就强杀。
     pub fn shutdown(&self) {
@@ -174,9 +172,8 @@ impl Bridge {
                 let _ = stdin.write_all(b"\n");
                 let _ = stdin.flush();
             }
-            // 关掉 stdin 让 Python 的读循环立即 EOF。只发 app.shutdown 不行：
-            // 它把 stopping 置位，但主线程还阻塞在 sys.stdin 上，进程不会退出，
-            // Rust 只能等满 8s 再强杀。
+            // 关掉 stdin 让引擎的读循环立即 EOF：app.shutdown 正常会让它跳出
+            // 循环并退出，但若那一行没送到（管道写失败），EOF 是唯一的兜底。
         }
         let child = self.child.lock().unwrap().take();
         if let Some(mut child) = child {
@@ -187,9 +184,9 @@ impl Bridge {
                 std::thread::sleep(Duration::from_millis(100));
             }
             let pid = child.id();
-            // PyInstaller onefile 会再派生一个真正的 Python 子进程；
-            // 只 kill 外层父进程会留下它。必须先按进程树强杀，再 wait：
-            // 先 kill 父进程的话，taskkill 可能已经找不到这棵树。
+            // 引擎自己会派生 adb 等子进程；只 kill 外层会留下它们。
+            // 必须先按进程树强杀，再 wait：先 kill 父进程的话 taskkill
+            // 可能已经找不到这棵树。
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
@@ -214,7 +211,10 @@ fn normalize_event(name: &str) -> String {
     name.replace('.', ":")
 }
 
-/// 解析 sidecar 启动方式：环境变量 → 随包 exe → 开发期 Python 源码。
+/// 解析引擎启动方式：环境变量 → 随包 exe。
+///
+/// 1.7.0 起只剩 Rust 引擎（`padlend-core`）：Python sidecar 随实现一起移除，
+/// 所以这里不再有“找不到 exe 就退回 `python -m service.server`”的分支。
 fn resolve_service() -> (String, Vec<String>, Option<PathBuf>) {
     if let Ok(raw) = env::var("PADLEND_SERVICE_CMD") {
         let mut parts = raw.split_whitespace().map(str::to_string);
@@ -227,58 +227,22 @@ fn resolve_service() -> (String, Vec<String>, Option<PathBuf>) {
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
-    // A/B 切换点：把 padlend-core.exe 放进可执行目录即切到 Rust 引擎，删掉即回退到
-    // Python sidecar（两者的 NDJSON 契约完全相同，见 padlend-core/src/rpc.rs）。
-    // 安装包里同时带两个实现；PADLEND_ENGINE=python 可在不删文件的情况下强制回退。
-    let prefer_rust = env::var("PADLEND_ENGINE")
-        .map(|value| !value.trim().eq_ignore_ascii_case("python"))
-        .unwrap_or(true);
-    let mut candidates: Vec<&str> = Vec::new();
-    if prefer_rust {
-        candidates.extend([
-            "padlend-core-x86_64-pc-windows-msvc.exe",
-            "padlend-core.exe",
-            "resources/padlend-core.exe",
-        ]);
-    }
-    candidates.extend([
-        "padlend-service-x86_64-pc-windows-msvc.exe",
-        "padlend-service.exe",
-        "resources/padlend-service.exe",
-        "binaries/padlend-service-x86_64-pc-windows-msvc.exe",
-    ]);
-    for name in candidates {
-        let path = exe_dir.join(name);
-        if path.is_file() {
-            let mut args = Vec::new();
-            if env::var("PADLEND_SIMULATE").is_ok() {
-                args.push("--simulate".to_string());
-            }
-            return (path.to_string_lossy().to_string(), args, Some(exe_dir.clone()));
-        }
-    }
-
-    let python = env::var("PADLEND_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let mut args = vec!["-m".to_string(), "service.server".to_string()];
+    let mut args = Vec::new();
     if env::var("PADLEND_SIMULATE").is_ok() {
         args.push("--simulate".to_string());
     }
-    let root = env::var("PADLEND_PROJECT_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            if cwd.join("service/server.py").is_file() {
-                cwd
-            } else {
-                cwd.parent().map(PathBuf::from).unwrap_or(cwd)
-            }
-        });
-    // 打包运行时，业务模块位于 resource_dir；开发时位于项目根。
-    let module_root = if root.join("service/server.py").is_file() {
-        root
-    } else {
-        let resource = exe_dir.join("resources");
-        if resource.join("service/server.py").is_file() { resource } else { root }
-    };
-    (python, args, Some(module_root))
+    // 安装包里叫 padlend-core.exe；开发时 tauri 会把带 target triple 的名字拷到
+    // 可执行目录，所以两个名字都认。
+    for name in [
+        "padlend-core-x86_64-pc-windows-msvc.exe",
+        "padlend-core.exe",
+        "resources/padlend-core.exe",
+    ] {
+        let path = exe_dir.join(name);
+        if path.is_file() {
+            return (path.to_string_lossy().to_string(), args.clone(), Some(exe_dir.clone()));
+        }
+    }
+    // 都没找到时仍然返回约定名字：spawn 会失败，原因由上层显示给用户。
+    ("padlend-core.exe".to_string(), args, Some(exe_dir))
 }

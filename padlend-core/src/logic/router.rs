@@ -4575,10 +4575,7 @@ mod tests {
     /// 门槛测试：5 个场景逐条回放，state/transitions/mouse_reports/key_reports/clip/estimator 全比。
     #[test]
     fn fixture_scenarios_replay_identically() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tests/fixtures/router_scenarios.json"
-        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/router_scenarios.json");
         let text = std::fs::read_to_string(path).expect("读取 router_scenarios.json");
         let scenarios: Vec<Scenario> =
             serde_json::from_str(&text).expect("解析 router_scenarios.json");

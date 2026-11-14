@@ -27,7 +27,7 @@
       ],
       "createdAt": "2026-11-02T05:07:02.319Z",
       "updatedAt": "2026-11-02T05:07:02.319Z",
-      "lastAccessedAt": "2026-11-05T16:10:30.099Z",
+      "lastAccessedAt": "2026-11-14T15:56:28.614Z",
       "revision": 1,
       "contentHash": "e2fe0c0ec2c5ea7800ae662ec4f9089544d5fc2ec5c40dc623fc402f3fa7e33a",
       "sizeBytes": 5356,
@@ -878,7 +878,7 @@
       ],
       "createdAt": "2026-11-05T16:10:55.437Z",
       "updatedAt": "2026-11-05T16:10:55.437Z",
-      "lastAccessedAt": "2026-11-11T10:23:05.815Z",
+      "lastAccessedAt": "2026-11-14T15:56:28.614Z",
       "revision": 1,
       "contentHash": "358ce49cb477e30e0ef12ce27dc0217db8eb31eab5e31345fc1ca12f78a6dd69",
       "sizeBytes": 6100,
@@ -910,7 +910,7 @@
       ],
       "createdAt": "2026-11-06T10:27:41.212Z",
       "updatedAt": "2026-11-06T10:27:41.212Z",
-      "lastAccessedAt": "2026-11-12T15:35:10.022Z",
+      "lastAccessedAt": "2026-11-14T15:56:28.614Z",
       "revision": 1,
       "contentHash": "a85b7766da88fc094b45b6f6eb83f41a963b28b6a781f8384fbd96d03e0659e1",
       "sizeBytes": 7503,
@@ -994,7 +994,7 @@
       ],
       "createdAt": "2026-11-12T15:35:54.817Z",
       "updatedAt": "2026-11-12T15:35:54.817Z",
-      "lastAccessedAt": "2026-11-12T15:35:54.817Z",
+      "lastAccessedAt": "2026-11-14T15:56:28.614Z",
       "revision": 1,
       "contentHash": "85f910bbee486f0a7bf34f22ea13678afd96599e72b838bdb2c3de52b21037bc",
       "sizeBytes": 6407,
@@ -1351,6 +1351,32 @@
       "revision": 1,
       "contentHash": "5b65db70f1351626cf3ffcd1e771da94f87d49873bb2bbc6ce9c660de60201f6",
       "sizeBytes": 7629,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "494d4905-7a87-44d3-a1c3-0dfd920ac656",
+      "title": "PadLend 1.6.0 Windows 构建环境补齐与 Tauri+Rust 安装包构建流程",
+      "description": "从零安装 Rust 1.100.0 + VS 2022 BuildTools（MSVC 14.44.35207 / Windows SDK 10.0.26100）、rsproxy 镜像绕过直连超时、sidecar 与 padlend-core 双 externalBin 的 tauri build/NSIS 打包步骤与耗时、1.6.0 安装包校验证据，以及 padlend.__version__ 停在 1.4.0 导致 release.py/release.yml 失败的发版前陷阱。",
+      "status": "active",
+      "filename": "padlend-1-6-0-windows-tauri-rust-494d4905.md",
+      "relativePath": "documents/active/padlend-1-6-0-windows-tauri-rust-494d4905.md",
+      "sourcePaths": [
+        "src-tauri/tauri.conf.json",
+        "src-tauri/Cargo.toml",
+        "padlend-core/Cargo.toml",
+        "tools/release.py",
+        "padlend/__init__.py",
+        ".github/workflows/release.yml"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-25a4bde0-f82c-43d3-8db3-cccb465d35ac"
+      ],
+      "createdAt": "2026-11-14T15:56:56.614Z",
+      "updatedAt": "2026-11-14T15:56:56.614Z",
+      "lastAccessedAt": "2026-11-14T15:56:56.614Z",
+      "revision": 1,
+      "contentHash": "2e683abe83661930b53f1c608c936d63a3548300c92d669cf4a2d43fe0f92b05",
+      "sizeBytes": 6735,
       "memoryBodyIds": []
     }
   ]

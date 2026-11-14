@@ -408,6 +408,9 @@
 - **如何验证 / 回归**：`python -c "import padlend; print(padlend.__version__)"`、`package.json`、`tauri.conf.json` 三处一致；安装包属性/关于页/文件名一致；tag 与三处一致。
 - **相关文件**：`padlend/__init__.py:11`、`package.json:4`、`src-tauri/tauri.conf.json:4`、`.github/workflows/release.yml:36-44`、`tools/release.py:34`
 - **版本**：1.0.0（1.2.0 仍适用）
+- **1.7.0 更新**：Python 已移除，版本号只剩 `package.json`、`src-tauri/tauri.conf.json`、
+  `src-tauri/Cargo.toml`、`padlend-core/Cargo.toml` 四处；发版脚本与 `release.yml` 统一以
+  `tauri.conf.json` 为事实源，其余三处靠人同步。
 - **再犯的代价**：用户装了两个版本无法区分；自动更新/问题单对不上版本，排障先输一半。
 
 ### 7.2 sidecar 解析失败，回退到开发期 Python
@@ -417,8 +420,10 @@
 - **根因**：`resolve_service` 有一串候选路径，最后回退到开发期 Python；frozen 环境没有 Python，回退只会把「缺文件」变成「看不懂的 Python 错误」。
 - **修法**：打包时 `externalBin` 带 target triple 后缀；`tauri.conf.json` 与 `build_sidecar.py` 的输出名必须一致；发版前在**干净机器**上跑安装包，而不是只跑 `tauri dev`。
 - **如何验证 / 回归**：解压 zip 后直接运行 `PadLend.exe`，日志应显示 sidecar 路径；把 sidecar 改名应报明确错误而不是静默回退；安装版同样验证。
-- **相关文件**：`src-tauri/src/bridge.rs:195-248`、`src-tauri/tauri.conf.json:37`、`tools/build_sidecar.py`
+- **相关文件**：`src-tauri/src/bridge.rs` 的 `resolve_service()`、`src-tauri/tauri.conf.json` 的 `externalBin`、`tools/build-core.ps1`
 - **版本**：1.1.0
+- **1.7.0 更新**：Python 回退分支已删除，找不到引擎时直接 `spawn` 失败并把
+  `无法启动业务服务 ...` 交给界面显示；`externalBin` 只剩 `binaries/padlend-core`。
 - **再犯的代价**：开发机永远复现不了，用户一装就废；这类问题通常到发布后才发现。
 
 ### 7.3 资源清单双轨，安装版与 zip 版不一致
@@ -442,102 +447,47 @@
 - **相关文件**：`tools/release.py:37-43`、`tools/release.py:55-62`、`.github/workflows/ci.yml:13-36`
 - **版本**：1.1.0（1.2.0 仍适用）
 
-## 10. Rust 引擎真机问题（2026-11-14 补录）
 
-> B2 迁移完成后在另一台本机操作的机器上联调暴露的三条：前两条是移植缺陷，第三条是既有设计不合理。
+## 12. 1.7.0 补录：移除 Python 侧踩到的坑（2026-11-15）
 
-### 10.1 服务模式漏启动 RawInputSource：接管后平板指针一动不动
+> 1.7.0 把 Python 实现与 Python 构建工具链整体删除，发版脚本第一次改用 PowerShell。
 
-- **现象**：按 Ctrl+Alt+S 接管成功，平板入口处出现指针（日志 cap.start edge=bottom manual=true reports=8 pin=13），PC 光标消失，但之后平板指针完全不动，日志里再没有任何鼠标报文。
-- **根因**：RawInputSource 在整个 Rust 侧只有 padlend-core/src/main.rs:137 的 --debug-raw 模式启动；常驻服务（service/engine）从未创建它，router.on_raw 没有调用者。Python 版不会，因为 Runtime.start() 会起捕获源。
-- **修法**（提交 c5adae1）：engine 在路由器就绪后调用 RawInputSource::start_with(handler)，把解码后的 MousePacket 转成 RawDelta（按钮位图用 constants::raw_button_flag，绝对坐标设备按 desktop bounding box 归一化）喂给 router.on_raw；并加首个事件与每 500 事件一条 raw.seen 诊断。
-- **如何验证**：注入鼠标位移后 service.log 出现 raw.seen 且 dx/dy 非零；接管时平板指针跟随移动。
-- **再犯的代价**：表现成连上了但不会动，会被误判为平板/UHID/协议问题。
+### 12.1 `git mv` 到已存在的目录，fixture 被套了两层
 
-### 10.2 点了新端口却一直连配置里的旧地址
+- **现象**：迁移后出现 `padlend-core/tests/fixtures/fixtures/router_scenarios.json` 这种双层路径，
+  测试找不到向量文件。
+- **根因**：目标目录 `padlend-core/tests/fixtures/` 已经存在（放着 `config_*.json`），
+  `git mv tests/fixtures <target>` 会把源目录整体塞成子目录。
+- **修法**：把内容摊平到 `padlend-core/tests/fixtures/`；`tablet_vectors.rs`、
+  `rawinput_vectors.rs`、`logic/router.rs` 三处引用改用 `CARGO_MANIFEST_DIR` 拼
+  `tests/fixtures/...`，不再依赖进程工作目录。
+- **如何验证 / 回归**：`cargo test --manifest-path padlend-core/Cargo.toml` 通过，
+  且在任意 CWD 下运行都通过。
 
-- **现象**：UI 点 192.168.68.129:44581，日志反复出现 192.168.68.129:44731 的 TCP 端口不可达（已跳过，避免等待 adb connect 超时）(E101)，45 秒后报连接超时。
-- **根因**：Rust 侧 Config 不可变，devices.connect 只更新 Router 自己的 requested_serial；会话候选地址来自 Engine::device_candidates()（读 self.config.device.serial），仍是旧端口。无线调试端口每次重开都会变。
-- **修法**（提交 b24d933）：devices.connect 先调 Engine::set_requested_serial 把目标写回引擎配置再发起连接。
-- **如何验证**：配置里故意写坏地址、点击另一个地址，日志只应出现被点击的那个。
-- **再犯的代价**：列表显示在线、点击也成功，却永远连不上，错误文案还把方向引向未授权。
+### 12.2 Windows PowerShell 5.1 读无 BOM 的 UTF-8 脚本：中文注释吃掉语法
 
-### 10.3 诊断包默认写到桌面
+- **现象**：`powershell -File tools\release.ps1` 报 `Missing expression after ','`、
+  `Unexpected token '}'`，报错位置都紧跟在中文注释之后；同一个文件在 `pwsh` 7 下正常。
+- **根因**：Windows PowerShell 5.1 按系统 ANSI 代码页读没有 BOM 的 `.ps1`，UTF-8 中文被
+  拆成乱码，行尾的括号/反引号被吞掉，于是整段语法失效。
+- **修法**：`.ps1` 一律存成 UTF-8 **带 BOM**：
+  `[IO.File]::WriteAllText($p, $c, (New-Object System.Text.UTF8Encoding($true)))`。
+  注意用编辑器/工具改完文件会丢 BOM，改完要补回去。
+- **如何验证 / 回归**：`$null = [ScriptBlock]::Create((Get-Content -Raw $p))` 能解析；
+  `powershell -NoProfile -File` 与 `pwsh -File` 都能跑通。
 
-- **现象**：用户桌面出现 18 个 padlend-diagnostics-*.zip/.txt。
-- **根因**：desktop_dir() 优先 %USERPROFILE%\Desktop，每次导出生成一个新文件。
-- **修法**（提交 724b081）：Rust padlend-core/src/service/diagnostics.rs 与 Python core/diagnostics.py 的 desktop_dir() 改为优先下载目录，桌面只作兜底。
-- **再犯的代价**：用户桌面被应用产物污染，且这类文件看起来像用户自己的东西、不敢删。
+### 12.3 `Join-Path [Environment]::GetFolderPath(...) "..."` 参数绑定失败
 
-### 10.4 无线端点过期后没人重定位：一直重试死端口
+- **现象**：`A positional parameter cannot be found that accepts argument 'Microsoft Visual Studio\Installer\vswhere.exe'`。
+- **根因**：`Join-Path` 的位置参数不能直接跟方法调用，方法调用没加括号时整串被当成第一个参数。
+- **修法**：方法调用加括号：`Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "..."`。
 
-- **现象**：平板重开无线调试（或换网络、在虚拟局域网里换了地址）后，日志每 30 秒一条
-  `... TCP 端口不可达（已跳过，避免等待 adb connect 超时） (E101)` +
-  `router.connect_failed` + `tablet.reconnect ... result=fail`；界面只说「连接失败」，
-  看不出是地址过期还是平板没开。用户会把「连不上」当成新版本坏了。
-- **根因**：`Engine::locate_devices()`（padlend-core/src/service/engine.rs）只在 RPC
-  `devices.locate`（padlend-core/src/service/api.rs 的 devices_locate，界面「查找设备」）里被调用；
-  `device_candidates()` 只读 devices.json 的端点，`spawn_watcher` 也只轮询 facts。会话于是
-  永远重试注册表里那个已经不存在的 `IP:端口`，没有任何自救路径。
-- **修法**（1.5.0）：抽出 `wireless_targets()` + `relocate_wireless()`；watcher 每 500 ms 顺带调
-  `maybe_auto_relocate()`——仅当「未连接 + device.auto_connect + 当前 serial 是无线端点」时，
-  每 10 秒做一次 1.2 秒静默 mDNS/ARP 查找，迁移成功就写回 devices.json 与 config 并 emit
-  `config`（日志 `平板换了地址：旧 → 新（已自动更新）`）；连续 3 次落空只发一条可操作提示
-  （`连不上平板：… 无响应，局域网里也没有它的 mDNS 广播…`）。
-- **如何验证**：`adb mdns services` 能看到平板新端口时，断开后 10 秒内日志出现「平板换了地址」，
-  随后 `tablet.reconnect ... result=ok`；把平板彻底下线，约 30 秒后出现那条提示（只出现一次）。
-- **注意**：mDNS 只在一层物理网络里有效。本机用 EasyTier / ZeroTier / Tailscale 这类虚拟局域网时，
-  平板地址由虚拟网分配、mDNS 组播不会转发，定位找不到属于正常；先确认平板真在虚拟网里
-  （例如 `easytier-cli peer` 要有平板的虚拟 IP）。
-- **再犯的代价**：「平板离线」被误判成「新版本连不上」，用户反复重装、白排查一轮打包。
+### 12.4 `bundle/nsis` 留着旧安装器，`*-setup.exe` 抓到上一个版本
 
-## 11. 1.6.0 补录：连接卡死、重复设备、音频降级（2026-11-14）
-
-### 11.1 RPC 在 stdin 线程里同步执行：一个慢请求冻结整个界面
-
-- **现象**：点「连接此设备」后界面一直显示「连接中」，这时去设置页关掉「转发平板声音」、
-  点「从列表移除」、甚至点急停都没有任何反应；要等 45 秒超时之后才一起生效。
-- **根因**：`padlend-core/src/rpc.rs` 的 `serve()` 在 stdin 循环里直接调用
-  `methods::dispatch`，一条请求处理完才读下一行。`devices.connect` 会 `adb connect` 再轮询
-  `router.facts()` 最多 45 秒（`CONNECT_TIMEOUT_S`），这段时间里所有请求都排在 stdin 后面，
-  前端看起来就像整个程序卡死。
-- **修法**（1.6.0）：`serve()` 改成 `spawn_request(method, params, id)`，每个请求
-  `std::thread::Builder::new().name(format!("rpc-{method}"))` 单独执行，stdout 仍靠全局锁串行写；
-  `app.shutdown` 保持内联特判。耗时 ≥1500ms 的请求打
-  `[rpc] devices.connect 耗时 12000ms（期间其它请求不受影响）`，方便下次一眼看出是谁慢。
-- **再犯的代价**：用户会认为「程序死了」，并且把界面上的其他操作误判为失灵——排查方向会完全跑偏
-  到前端状态机上（这次前端的 busy 处理是对的，`try/finally` 一直会清）。
-
-### 11.2 无线端口变了就多一台设备：改名撞上临时记录直接失败
-
-- **现象**：设备列表里同一台平板两行：`CGA W00 …:44667 在线` 和
-  `CGA-W00 …:42263 不在线·已记住`；点连接后界面一直「连接中」。
-- **根因**：Android 每次重开无线调试都换端口。扫描先看到新端口，因为那一刻还没拿到硬件序列号，
-  `Registry::upsert` 先建了一条「临时记录」；等拿到硬件序列号要把旧记录改名到新端口时，
-  `rename_endpoint`（`padlend-core/src/service/registry.rs`）发现目标端点已属于另一条记录，
-  直接返回 `None`——两条记录于是长期并存。型号串的差异（`CGA W00` 来自 mDNS 名、
-  `CGA-W00` 来自 adb model）就是两条记录来源不同的证据。
-- **修法**（1.6.0）：三条一起做——① `rename_endpoint` 撞到「同主机 + 型号兼容
-  （`normalize_model` 去掉空格/连字符并小写）」的记录时合并而不是拒绝；
-  ② 新增 `adopt_live_endpoint`，扫描到在线端点时把同主机、已下线、型号兼容的旧端点就地改到新地址，
-  旧端口留作别名（布局迁移仍然认）；③ `Registry::load` 读盘后调 `merge_duplicates()`，
-  把历史遗留的重复条目自动合并并提示一次。
-- **注意**：合并判据必须是「同主机 + 型号兼容」或「同硬件序列号」，只凭「有一条没有身份」就合并，
-  会把同一网段里两台都没拿到序列号的平板并成一条。
-- **再犯的代价**：列表越积越多，用户分不清该点哪一行；点错旧行就永远连不上。
-
-### 11.3 Android 10 及以下没有系统音频回采：开「转发声音」等于连不上
-
-- **现象**：打开「转发平板声音」并保存后点连接，界面卡在「连接中」，很久之后失败；
-  关掉这个选项、重连也一样——因为配置已经保存，重连仍然带着 `audio=true`。
-- **根因**：scrcpy 5.0 的 `audio_source=output` 需要 Android 11（API 30）的 AudioRecord 回采；
-  低版本上服务端起不来，客户端在 `handshake_socket` 里白等
-  `HANDSHAKE_RETRY_TIMEOUT_S`=8 秒才走回退分支，再叠加 45 秒的连接轮询，看起来就是「卡死」。
-- **修法**（1.6.0）：连接前用 `adb shell getprop ro.build.version.sdk` 读 API 级别，
-  低于 30 就不带音频通道，并记
-  `系统 Android API 29 不支持音频回采（需要 11/API 30），本次只开控制通道`；
-  读不到版本时按支持处理，保留原来的「音频握手失败 → 回退为仅控制通道」。
-- **如何验证**：Android 10 平板上打开该选项，日志应立刻出现上面那行，`popen` 的 scrcpy 命令里
-  `audio=false`，连接正常完成。
-
-
+- **现象**：1.7.0 的 `dist/PadLend-1.7.0-setup.exe` 是 20.17 MB——实际是 1.6.0 的包
+  （新包 5.59 MB），sha256 自然也对不上。
+- **根因**：`tauri build` 输出到 `src-tauri/target/release/bundle/nsis/`，旧版本安装器不会
+  被清掉；脚本用 `-Filter "*-setup.exe"` 取 `[0]`，按名字排序 1.6.0 排在 1.7.0 前面。
+- **修法**：按版本过滤 `("PadLend_" + $Version + "_*-setup.exe")` 并校验文件名含当前版本；
+  `dist/` 里旧的 `PadLend-*` 在打包前清掉，避免被 `make_sha256` 一起算进
+  `SHA256SUMS.txt`（1.1.x 遗留产物就是这么混进去的）。

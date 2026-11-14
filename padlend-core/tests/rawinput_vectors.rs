@@ -1,6 +1,6 @@
 //! 跨语言解码对拍（M0 门禁 A，无需桌面）。
 //!
-//! 向量由 `tools/gen_rawinput_vectors.py` 用 **Python 实现** 生成真值，
+//! 向量在 B2 迁移期用 Python 实现生成真值后固化成基线，
 //! 这里用 Rust 实现解码同一批字节，逐字段比对。
 
 use padlend_core::decode::decode_raw_input;
@@ -19,9 +19,8 @@ fn hex_to_bytes(text: &str) -> Vec<u8> {
 }
 
 #[test]
-fn decodes_every_python_vector() {
+fn decodes_every_baseline_vector() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
         .join("tests")
         .join("fixtures")
         .join("rawinput_vectors.json");

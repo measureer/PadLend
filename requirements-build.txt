@@ -1,8 +1,0 @@
-# Reproducible build inputs for the Python business sidecar
-# (tested on Windows 11 x64, CPython 3.13.14).
-# Runtime constraints live in pyproject.toml; this file pins the exact versions
-# used by tools/build_sidecar.py and the release workflow.
-PyYAML==6.0.3
-psutil==7.2.2
-PyInstaller==6.22.3
-pyinstaller-hooks-contrib==2026.9

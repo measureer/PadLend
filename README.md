@@ -181,64 +181,60 @@ PadLend/
 │  ├─ lib/                 # 纯逻辑、动作编排、几何与配置 schema
 │  ├─ components/          # 统一组件库与图标
 │  └─ features/            # 设备 / 布局 / 设置 / 日志 / 向导 / 诊断
-├─ src-tauri/              # Tauri 2 Rust 外壳（窗口、托盘、单实例、剪贴板、sidecar 生命周期）
-├─ service/                # Python 业务服务（NDJSON over stdin/stdout）
-├─ core/                   # 状态机、几何、指标、错误、日志、崩溃、诊断
-├─ win/                    # DPI、桌面几何、Raw Input、遮罩、钩子、热键
-├─ tablet/                 # adb、协议、UHID、server、session、键盘映射
-├─ config.py / constants.py / main.py
-├─ tools/                  # 探针、验收、发版、sidecar 与图标构建
+├─ src-tauri/              # Tauri 2 Rust 外壳（窗口、托盘、单实例、剪贴板、引擎生命周期）
+├─ padlend-core/           # Rust 业务引擎（NDJSON over stdin/stdout，唯一实现）
+│  ├─ src/logic/           # 状态机、几何、指标、路由
+│  ├─ src/win/             # DPI、桌面几何、Raw Input、遮罩、钩子、热键
+│  ├─ src/tablet/          # adb、协议、UHID、server、session、键盘映射
+│  └─ src/service/         # RPC 方法、序列化、诊断、设备注册表
+├─ tools/                  # PowerShell 构建与发版脚本
 ├─ vendor/                 # scrcpy-server jar、内置 adb、SHA256SUMS
 ├─ frontend-dist/          # 前端构建输出（与 dist/ 分离）
 └─ dist/                   # 发布产物
 ```
 
-线程模型：Tauri WebView 只负责渲染；Rust 外壳转发 RPC；Python 服务用线程池跑耗时操作，Router / 发送 / 监督 / Raw Input / 键盘钩子各占独立线程。发送队列满时丢最老的输入，并计入 `drop_pct`。
+线程模型：Tauri WebView 只负责渲染；Rust 外壳转发 RPC；引擎每个 RPC 请求独立线程（慢请求不再堵住后面的请求），Router / 发送 / 监督 / Raw Input / 键盘钩子各占独立线程。发送队列满时丢最老的输入，并计入 `drop_pct`。
+
+1.7.0 起 Python 实现（`core/`、`win/`、`tablet/`、`service/`、`padlend-service.exe`）已整体移除，仓库里只剩 Rust 引擎与 Tauri 外壳两套代码。
 
 > `docs/DESIGN.md` 等历史文档描述的是引擎与协议设计，仍然有效；其中涉及 Qt 窗口/控件的章节属于 1.0.x 旧界面，已由 `docs/TAURI_MIGRATION.md` 取代。
 
 ## 从源码构建
 
+依赖：Node 20+、Rust 1.77+（MSVC 工具链 + Windows SDK）、WebView2 运行时。
+
 ```powershell
-# 前端与业务服务（Python）
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -U pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 npm ci
 
 # 浏览器预览（无需 Rust，使用内存演示设备）
 npm run dev
 # http://127.0.0.1:1420/?page=layout&theme=light
 
-# 单独启动业务服务
-.\.venv\Scripts\python.exe -m service --simulate --no-hooks
-
-# 完整桌面应用（需要 Rust 1.77+ / MSVC / WebView2）
-.\.venv\Scripts\python.exe tools\build_sidecar.py
+# 开发期桌面应用：先编译引擎，外壳会在自身目录里找 padlend-core.exe
+powershell -ExecutionPolicy Bypass -File tools\build-core.ps1
 npm run tauri:dev
-npm run tauri:build
 ```
 
-一条命令构建并打发布包（本机没有 Rust 时会跳过原生外壳，CI 会补全）：
+一条命令出发布产物（编译引擎 → 前端 → Tauri 外壳 → NSIS 安装包 → 免安装 zip → SHA256）：
 
 ```powershell
-.\.venv\Scripts\python.exe tools\release.py --build --zip --sha256
+powershell -ExecutionPolicy Bypass -File tools\release.ps1
 ```
+
+产物落在 `src-tauri/target/release/bundle/nsis/PadLend_<版本>_x64-setup.exe` 与 `dist/`。
 
 `vendor/scrcpy-server-v5.0.1.jar` 和 `vendor/adb/platform-tools/` 随仓库提供，校验和见 `vendor/SHA256SUMS`。adb 的查找顺序是：`PADLEND_ADB` → 内置 `vendor/adb/platform-tools/` → PATH → 常见 SDK 目录。
 
 ## 开发与验收
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q       # 引擎 + 服务协议测试
-.\.venv\Scripts\python.exe -m ruff check .
-npx vitest run                               # 前端单元与交互测试
-npm run build                                # tsc --noEmit + vite build
-.\.venv\Scripts\python.exe tools\probe.py    # 探测真实设备
-.\.venv\Scripts\python.exe tools\acceptance.py  # 端到端验收（假平板 + 真实遮罩/状态机）
+cargo test --manifest-path padlend-core\Cargo.toml   # 引擎单测 + fixture 回放（532 例）
+cargo test --manifest-path src-tauri\Cargo.toml      # 外壳单测
+npx vitest run                                      # 前端单元与交互测试
+npm run build                                       # tsc --noEmit + vite build
 ```
 
-`acceptance.py` 走真实代码路径，不 mock 被测逻辑。进入接管后会检查遮罩是否吞掉 `WM_SETCURSOR`、`ClipCursor` 是否钉在屏幕边缘的 1px 条上，再用真实输入事件验证单击、连点、双击和拖动，最后交还并检查遮罩销毁、`ClipCursor` 解除。
+`padlend-core/tests/fixtures/` 里的 router 场景、UHID 报文、Raw Input 解码向量都是 B2 迁移期固化下来的对拍基线：Rust 实现必须逐字节复现，改动引擎行为时先跑 `cargo test`。
 
 ## 已知限制
 
@@ -252,6 +248,6 @@ npm run build                                # tsc --noEmit + vite build
 
 ## 许可
 
-Apache-2.0。Tauri、React、scrcpy、Android platform-tools、PyYAML、psutil、PyInstaller 等第三方组件的许可证和归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，发布包的 `LICENSES/` 目录里有许可证原文。程序内「关于 PadLend…」可以查看版本、许可摘要并打开该文件。
+Apache-2.0。Tauri、React、scrcpy、Android platform-tools 等第三方组件的许可证和归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，发布包的 `LICENSES/` 目录里有许可证原文。程序内「关于 PadLend…」可以查看版本、许可摘要并打开该文件。
 
 平板端的 scrcpy server jar 和协议来自 [scrcpy](https://github.com/Genymobile/scrcpy)（Apache-2.0），PadLend 侧的协议实现是独立编写的。

@@ -1,6 +1,6 @@
-//! tablet 层跨语言对拍：Python 生成的字节级真值 → Rust 必须逐字节一致。
+//! tablet 层字节级对拍：固定基线向量 → Rust 必须逐字节一致。
 //!
-//! 向量由 `tools/gen_tablet_vectors.py` 生成（UHID 报文、VK→usage、修饰位、
+//! 向量在 B2 迁移期由 Python 实现生成并固化成基线（UHID 报文、VK→usage、修饰位、
 //! scrcpy 控制协议），覆盖 M1 的 uhid/keymap/protocol 三个模块。
 
 use padlend_core::tablet::{keymap, protocol, uhid};
@@ -8,7 +8,6 @@ use serde_json::Value;
 
 fn fixture() -> Value {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
         .join("tests")
         .join("fixtures")
         .join("tablet_vectors.json");
@@ -40,7 +39,7 @@ fn from_hex(text: &str) -> Vec<u8> {
 }
 
 #[test]
-fn uhid_mouse_reports_match_python() {
+fn uhid_mouse_reports_match_baseline() {
     let data = fixture();
     for case in data["uhid_mouse"].as_array().expect("uhid_mouse 缺失") {
         let buttons = case["buttons"].as_i64().unwrap() as i32;
@@ -54,7 +53,7 @@ fn uhid_mouse_reports_match_python() {
 }
 
 #[test]
-fn uhid_keyboard_reports_match_python() {
+fn uhid_keyboard_reports_match_baseline() {
     let data = fixture();
     for case in data["uhid_keyboard"].as_array().expect("uhid_keyboard 缺失") {
         let modifier = case["modifier"].as_i64().unwrap() as i32;
@@ -71,7 +70,7 @@ fn uhid_keyboard_reports_match_python() {
 }
 
 #[test]
-fn vk_to_usage_matches_python() {
+fn vk_to_usage_matches_baseline() {
     let data = fixture();
     for case in data["vk_to_usage"].as_array().expect("vk_to_usage 缺失") {
         let vk = case["vk"].as_i64().unwrap() as i32;
@@ -81,7 +80,7 @@ fn vk_to_usage_matches_python() {
 }
 
 #[test]
-fn modifier_bits_match_python() {
+fn modifier_bits_match_baseline() {
     let data = fixture();
     for case in data["modifier_bit"].as_array().expect("modifier_bit 缺失") {
         let vk = case["vk"].as_i64().unwrap() as i32;
@@ -97,7 +96,7 @@ fn modifier_bits_match_python() {
 }
 
 #[test]
-fn protocol_frames_match_python() {
+fn protocol_frames_match_baseline() {
     let data = fixture();
     for case in data["protocol"].as_array().expect("protocol 缺失") {
         let name = case["fn"].as_str().unwrap();
