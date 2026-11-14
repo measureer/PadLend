@@ -87,6 +87,9 @@ export function connectEvents(): () => void {
     backend.on('orientation', (payload) => {
       const facts = payload as DeviceFacts;
       s().appendLogs([makeLog('ORIENT', `平板旋转为${facts?.orientation === 'landscape' ? '横屏' : '竖屏'}`)]);
+      // 旋转事件本身就带着新的事实（宽高已互换）；立刻写进 store，
+      // 不必等下一轮 facts 轮询，标题栏/设备页/布局页同时对齐。
+      if (facts && typeof facts.width === 'number') s().setFacts(facts);
     }),
     backend.on('diagnostics:progress', (payload) => {
       const p = payload as { label: string };

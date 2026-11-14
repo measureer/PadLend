@@ -10,6 +10,7 @@ mod bridge;
 mod commands;
 mod shell_log;
 mod tray;
+mod updates;
 
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,6 +70,8 @@ pub fn run() {
             commands::set_close_to_tray,
             commands::set_tray_state,
             commands::open_path,
+            commands::open_url,
+            commands::check_update,
             commands::service_shutdown,
             commands::quit_app,
             commands::app_info,

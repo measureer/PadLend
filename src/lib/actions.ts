@@ -12,6 +12,7 @@ import type {
   Theme,
 } from '../api/types';
 import { useAppStore } from '../store/appStore';
+import { fetchLatestRelease, resultFromTag, type UpdateResult } from './updates';
 
 const store = () => useAppStore.getState();
 
@@ -302,6 +303,42 @@ export async function openPath(kind: 'config' | 'logs' | 'notices'): Promise<voi
     await backend.openPath(target);
   } catch (error) {
     store().pushToast(`无法打开：${(error as Error).message}`, 'err');
+  }
+}
+
+/** 检查更新：拉 GitHub 最新 release，结果放 store，由「检查更新」对话框展示。 */
+export async function checkUpdates(): Promise<void> {
+  const s = store();
+  s.setUpdate({ checking: true, error: '' });
+  try {
+    // 外壳里优先走 Rust（WinHTTP：能用系统代理，也不受浏览器 CORS 限制）；
+    // 浏览器预览 / 外壳命令失败时退回纯前端 fetch。
+    let result: UpdateResult | null = null;
+    if (isTauri) {
+      try {
+        const payload = await backend.checkUpdate();
+        result = resultFromTag(s.version, payload.tag, payload.release);
+      } catch {
+        result = null;
+      }
+    }
+    const final = result ?? (await fetchLatestRelease(s.version));
+    s.setUpdate({ checking: false, result: final, error: '', checkedAt: new Date().toLocaleString('zh-CN') });
+  } catch (error) {
+    s.setUpdate({ checking: false, error: (error as Error).message, checkedAt: new Date().toLocaleString('zh-CN') });
+  }
+}
+
+/** 用系统默认浏览器打开网页（更新下载页、Release 页）。 */
+export async function openUrl(url: string): Promise<void> {
+  if (!isTauri) {
+    store().pushToast(`链接：${url}`, 'warn');
+    return;
+  }
+  try {
+    await backend.openUrl(url);
+  } catch (error) {
+    store().pushToast(`无法打开链接：${(error as Error).message}`, 'err');
   }
 }
 

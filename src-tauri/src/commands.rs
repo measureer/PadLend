@@ -77,6 +77,37 @@ pub fn open_path(path: String) -> Result<(), String> {
     })
 }
 
+/// 检查更新：返回最新发布的 tag，能拿到详情时一并返回 GitHub 的 release JSON。
+///
+/// 网络请求在 Rust 侧做（见 updates.rs）：前端 fetch 读不了 github.com（无 CORS），
+/// 而 WinHTTP 还能用上系统代理。
+#[tauri::command]
+pub async fn check_update() -> Result<serde_json::Value, String> {
+    // 网络请求放到阻塞线程：同步命令会占着主线程，界面会卡住。
+    tauri::async_runtime::spawn_blocking(|| -> Result<serde_json::Value, String> {
+        let tag = crate::updates::latest_tag()?;
+        let release = crate::updates::release_details();
+        Ok(serde_json::json!({ "tag": tag, "release": release }))
+    })
+    .await
+    .map_err(|e| format!("检查更新任务失败：{e}"))?
+}
+
+/// 用系统默认浏览器打开网页（检查更新里的下载页 / Release 页）。
+///
+/// 和 `open_path` 一样直连插件 Rust API：前端那条 `plugin:opener|open_url` 同样要过
+/// capability 的 URL 白名单，而清单里没有条目。
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("只允许打开 http(s) 链接".into());
+    }
+    tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| {
+        crate::shell_log::write_line(&format!("打开链接 {url} 失败：{e}"));
+        e.to_string()
+    })
+}
+
 #[tauri::command]
 pub fn service_shutdown(bridge: State<'_, Arc<Bridge>>) {
     bridge.shutdown();

@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { defaultConfig } from '../api/mock';
+import type { UpdateResult } from '../lib/updates';
 import type {
   Bootstrap,
   Config,
@@ -28,6 +29,14 @@ export interface DiagnosticsState {
   status: string;
   progress: string;
   collecting: boolean;
+}
+
+/** 检查更新的结果（对话框与顶栏共用一份，重复打开不必重新联网）。 */
+export interface UpdateState {
+  checking: boolean;
+  result: UpdateResult | null;
+  error: string;
+  checkedAt: string;
 }
 
 interface AppStore {
@@ -59,6 +68,7 @@ interface AppStore {
   toasts: ToastMessage[];
   configBanner: { tone: 'ok' | 'err' | 'warn'; text: string } | null;
   diagnostics: DiagnosticsState;
+  update: UpdateState;
   paths: { configPath: string; logDir: string; noticesPath: string; version: string; license: string; appName: string };
 
   hydrate(data: Bootstrap): void;
@@ -84,6 +94,7 @@ interface AppStore {
   dismissToast(id: number): void;
   setConfigBanner(value: AppStore['configBanner']): void;
   setDiagnostics(value: Partial<DiagnosticsState>): void;
+  setUpdate(value: Partial<UpdateState>): void;
   setPaths(paths: AppStore['paths']): void;
 }
 
@@ -119,6 +130,7 @@ export const useAppStore = create<AppStore>()((set) => ({
   toasts: [],
   configBanner: null,
   diagnostics: { text: '', status: '尚未采集', progress: '', collecting: false },
+  update: { checking: false, result: null, error: '', checkedAt: '' },
   paths: { configPath: '', logDir: '', noticesPath: '', version: '1.6.0', license: 'Apache-2.0', appName: 'PadLend' },
 
   hydrate: (data) =>
@@ -181,5 +193,6 @@ export const useAppStore = create<AppStore>()((set) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setConfigBanner: (configBanner) => set({ configBanner }),
   setDiagnostics: (value) => set((s) => ({ diagnostics: { ...s.diagnostics, ...value } })),
+  setUpdate: (value) => set((s) => ({ update: { ...s.update, ...value } })),
   setPaths: (paths) => set({ paths }),
 }));

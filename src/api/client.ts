@@ -16,6 +16,9 @@ export interface Backend {
   windowToggleMaximize(): Promise<void>;
   windowClose(): Promise<void>;
   openPath(path: string): Promise<void>;
+  openUrl(url: string): Promise<void>;
+  /** 检查更新：网络请求在 Rust 侧（WinHTTP，能走系统代理、不受 CORS 限制）。 */
+  checkUpdate(): Promise<{ tag: string; release: unknown }>;
   setCloseToTray(enabled: boolean): Promise<void>;
   setTrayState(captured: boolean, connected: boolean, device: string): Promise<void>;
   shutdown(): Promise<void>;
@@ -85,6 +88,22 @@ class TauriBackend implements Backend {
     } catch (error) {
       // Rust 命令返回 Err(String)，Tauri 直接以裸字符串 reject；不包一层
       // Error 的话上层读 .message 会得到 undefined（1.7.5 前的「无法打开：undefined」）。
+      throw normalizeError(error);
+    }
+  }
+
+  async openUrl(url: string): Promise<void> {
+    try {
+      await invoke('open_url', { url });
+    } catch (error) {
+      throw normalizeError(error);
+    }
+  }
+
+  async checkUpdate(): Promise<{ tag: string; release: unknown }> {
+    try {
+      return await invoke<{ tag: string; release: unknown }>('check_update');
+    } catch (error) {
       throw normalizeError(error);
     }
   }

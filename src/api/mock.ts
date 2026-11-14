@@ -453,6 +453,11 @@ export class MockBackend {
   async windowToggleMaximize(): Promise<void> {}
   async windowClose(): Promise<void> {}
   async openPath(): Promise<void> {}
+  async openUrl(): Promise<void> {}
+  async checkUpdate(): Promise<{ tag: string; release: unknown }> {
+    // 浏览器预览：假装 GitHub 上最新就是当前版本，避免走真网络。
+    return { tag: 'v1.7.6', release: null };
+  }
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}
   async shutdown(): Promise<void> {}

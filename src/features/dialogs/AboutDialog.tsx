@@ -19,7 +19,7 @@ export function AboutDialog() {
         <>
           <Button icon="folder" onClick={() => void openPath('notices')}>第三方许可…</Button>
           <Button icon="folder" onClick={() => void openPath('logs')}>打开日志目录…</Button>
-          <Button icon="refresh" disabled title="发行地址确定后启用">检查更新…</Button>
+          <Button icon="download" onClick={() => useAppStore.getState().openDialog('update')}>检查更新…</Button>
           <Button variant="primary" onClick={close}>关闭</Button>
         </>
       }

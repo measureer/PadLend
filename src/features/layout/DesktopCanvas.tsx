@@ -86,6 +86,26 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
   fitRef.current = fitView;
   useEffect(() => { fitRef.current(); }, [fitNonce, desktop.monitors]);
 
+  // 平板实际尺寸由设备事实决定：旋转后 width/height 互换，画布必须跟着换。
+  // （1.7.5 之前只有双击预览能改尺寸，引擎报来的竖屏尺寸从没被用上，
+  //  于是出现「设备页写着竖屏、布局页还是横的」。）
+  const factsWidth = facts?.width ?? 0;
+  const factsHeight = facts?.height ?? 0;
+  useEffect(() => {
+    if (factsWidth <= 0 || factsHeight <= 0) return;
+    const current = tabletSizeRef.current;
+    if (current.width === factsWidth && current.height === factsHeight) return;
+    tabletSizeRef.current = { width: factsWidth, height: factsHeight };
+    setSizeNonce((n) => n + 1);
+  }, [factsWidth, factsHeight]);
+
+  // 形状变了（旋转 / 双击预览）后视野要跟着重算，否则竖屏平板可能整个跑到画布外。
+  // 放在下一次渲染之后：此时 tablet 已经按新尺寸算好，fitRef 里的闭包也是新的。
+  useEffect(() => {
+    if (sizeNonce === 0) return;
+    fitRef.current();
+  }, [sizeNonce]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === ' ') spaceRef.current = true;
@@ -231,9 +251,11 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
     setCtx(null);
   };
 
-  const tabletLabel = facts ? `${facts.width} × ${facts.height}` : '未连接设备';
-  const tabletMeta = facts ? `${facts.orientation === 'landscape' ? '横屏' : '竖屏'} · 拖动吸附` : '连接后显示实际尺寸';
   const size = tabletSizeRef.current;
+  // 标签跟着画出来的尺寸走：双击预览横竖时不会出现「写着竖屏却是横的」。
+  const portrait = size.width < size.height;
+  const tabletLabel = facts ? `${size.width} × ${size.height}` : '未连接设备';
+  const tabletMeta = facts ? `${portrait ? '竖屏' : '横屏'} · 拖动吸附` : '连接后显示实际尺寸';
 
   return (
     <div className="canvas-frame" ref={frameRef}>

@@ -1,6 +1,6 @@
 [package]
 name = "padlend-desktop"
-version = "1.7.5"
+version = "1.7.6"
 description = "PadLend - share keyboard and mouse with an Android tablet"
 authors = ["PadLend contributors"]
 edition = "2021"
@@ -25,6 +25,9 @@ tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }
 cpal = "0.15"
 # 1.7.2：GUI 进程没有控制台，外壳日志要自己带本地时间戳。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 1.7.6：检查更新走 WinHTTP —— 前端 fetch 读不了 github.com（没有 CORS），
+# 而 WinHTTP 还能顺带用上 Windows 的系统代理设置。
+windows = { version = "0.62", features = ["Win32_Networking_WinHttp"] }
 
 [features]
 default = ["custom-protocol"]

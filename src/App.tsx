@@ -17,6 +17,7 @@ const AddDeviceDialog = lazy(() => import('./features/devices/AddDeviceDialog').
 const SetupWizard = lazy(() => import('./features/dialogs/SetupWizard').then((m) => ({ default: m.SetupWizard })));
 const DiagnosticsDialog = lazy(() => import('./features/dialogs/DiagnosticsDialog').then((m) => ({ default: m.DiagnosticsDialog })));
 const AboutDialog = lazy(() => import('./features/dialogs/AboutDialog').then((m) => ({ default: m.AboutDialog })));
+const UpdateDialog = lazy(() => import('./features/dialogs/UpdateDialog').then((m) => ({ default: m.UpdateDialog })));
 
 function PageFallback() {
   return <div className="log-empty"><span className="spinner" /> 正在加载…</div>;
@@ -41,6 +42,7 @@ function DialogHost() {
       {dialog === 'wizard' && <SetupWizard />}
       {dialog === 'diagnostics' && <DiagnosticsDialog />}
       {dialog === 'about' && <AboutDialog />}
+      {dialog === 'update' && <UpdateDialog />}
     </Suspense>
   );
 }

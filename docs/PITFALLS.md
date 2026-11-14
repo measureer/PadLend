@@ -623,4 +623,29 @@
   `window.show()` + `unminimize()` + `set_focus()`。
 - **教训**：托盘菜单里凡是「结果落在主窗口里」的项，点击时都要先把窗口唤回来，否则用户只能判断为坏了。
 
+## 16. 1.7.6 补录：旋转平板，布局页不跟着转（2026-11-15）
 
+### 16.1 画布尺寸从来没跟设备事实同步过
+
+- **现象**：平板转成竖屏后，标题栏/设备页显示「竖屏 · 2136×3200」，但「桌面布局」里的矩形还是横的。
+- **根因**：`src/features/layout/DesktopCanvas.tsx` 把平板尺寸放在 `tabletSizeRef`，初值写死
+  `DEFAULT_TABLET = { 3200, 2136 }`，**唯一会改它的地方是双击平板**（`onDoubleClick` 里交换一次宽高）。
+  引擎通过 `facts` 事件报来的真实宽高只用于文字标签，画布几何一律按写死的那套算，所以旋转永远不生效。
+  另外 `orientation` 事件只写了一条日志，没有更新 store 里的 facts，旋转瞬间界面会短暂维持旧方向。
+- **修法**：加一个 `useEffect` 监听 `facts.width/height`，变化时写进 `tabletSizeRef` 并 `setSizeNonce`
+  触发重算；尺寸变化后再跑一次 `fitRef.current()` 重算视野（否则竖屏平板会跑到画布外）。标签改成读画出来
+  的尺寸（`size.width/height`），双击预览时也不会出现「写着竖屏却是横的」。`orientation` 事件同时写 facts。
+- **教训**：凡是「引擎报状态、界面画几何」的地方，几何必须从状态推出来；用 ref + 常量默认值兜底时，
+  一定要留一条从真实状态同步的路径，否则表现是「状态对了但画面不对」，很容易被误判成引擎没检测到。
+
+### 16.2 GitHub「检查更新」别只靠 REST API
+
+- **现象**：第一版检查更新（只请求 `api.github.com/repos/.../releases/latest`）在真机上总是报
+  「GitHub 接口限流，请稍后再试」——403。
+- **原因**：未认证的 REST API 每个出口 IP 每小时 60 次，共享网络/代理很容易耗尽；`Invoke-WebRequest`
+  与 WebView2 都复现。
+- **修法**：主路径改成跟随网页重定向 `https://github.com/<repo>/releases/latest`（200 后 `response.url`
+  就是 `/releases/tag/v1.4.0`，不消耗 API 配额），拿到 tag 后用 REST API *尽量*补发布说明与资产列表；
+  API 401/403/限流都只是「没有详情」，不影响版本判断。没有资产列表时按本仓库发布命名约定推算
+  `releases/download/<tag>/PadLend-<版本>-setup.exe`。
+- **教训**：给桌面应用做「查最新版本」时，网页重定向是最便宜可靠的信号源；REST API 只当详情增强。

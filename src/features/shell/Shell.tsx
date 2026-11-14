@@ -40,16 +40,18 @@ export const TitleBar = memo(function TitleBar() {
   );
 });
 
-const MENU_ITEMS: { label: string; icon: IconName; action: () => void; danger?: boolean }[] = [
+/** 溢出菜单。sep 表示这一项之前画一条分隔线（比按下标判断稳）。 */
+const MENU_ITEMS: { label: string; icon: IconName; action: () => void; danger?: boolean; sep?: boolean }[] = [
   { label: '手动接管 / 交还', icon: 'link', action: () => void actions.toggleManual() },
   { label: '重连', icon: 'refresh', action: () => void actions.reconnect() },
-  { label: '打开配置…', icon: 'folder', action: () => void actions.openPath('config') },
+  { label: '打开配置…', icon: 'folder', action: () => void actions.openPath('config'), sep: true },
   { label: '复制诊断信息', icon: 'copy', action: () => void actions.copyStaticDiagnostics() },
   { label: '打开日志目录…', icon: 'folder', action: () => void actions.openPath('logs') },
   { label: '关于 PadLend…', icon: 'info', action: () => useAppStore.getState().openDialog('about') },
-  { label: '运行诊断…', icon: 'shield', action: () => { useAppStore.getState().openDialog('diagnostics'); void actions.runDiagnostics(); } },
+  { label: '运行诊断…', icon: 'shield', action: () => { useAppStore.getState().openDialog('diagnostics'); void actions.runDiagnostics(); }, sep: true },
+  { label: '检查更新…', icon: 'download', action: () => useAppStore.getState().openDialog('update') },
   { label: '首次设置向导…', icon: 'sparkle', action: () => useAppStore.getState().openDialog('wizard') },
-  { label: '退出 PadLend', icon: 'power', action: () => void actions.quitApp(), danger: true },
+  { label: '退出 PadLend', icon: 'power', action: () => void actions.quitApp(), danger: true, sep: true },
 ];
 
 export const Header = memo(function Header() {
@@ -108,9 +110,9 @@ export const Header = memo(function Header() {
         />
         {menuOpen && (
           <div className="menu-popover" role="menu">
-            {MENU_ITEMS.map((item, index) => (
+            {MENU_ITEMS.map((item) => (
               <div key={item.label}>
-                {(index === 2 || index === 6 || index === 8) && <div className="menu-sep" />}
+                {item.sep && <div className="menu-sep" />}
                 <button
                   type="button"
                   className={`menu-item ${item.danger ? 'danger' : ''}`}

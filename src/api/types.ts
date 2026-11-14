@@ -196,7 +196,7 @@ export interface SystemPaths {
   appName: string;
 }
 
-export type DialogId = 'about' | 'diagnostics' | 'wizard' | 'addDevice' | null;
+export type DialogId = 'about' | 'diagnostics' | 'wizard' | 'addDevice' | 'update' | null;
 
 export interface ToastMessage {
   id: number;
