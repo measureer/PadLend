@@ -2,6 +2,31 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.7.1] — 2026-11-15
+
+### 修复
+
+- **开启「转发平板声音」后一直卡在「连接中」，约 30 秒报连接超时**。两个 bug 叠加所致：
+  1. scrcpy 5.0.1 的 dummy 字节只发给**第一条** accept 的 socket，而 `connect_socket()`
+     让音频、控制两条通道都去读 dummy，控制通道必然白等 `handshake_retry_timeout`（8 秒）
+     后被误判成「音频通道不可用」。现在 `handshake_socket` / `try_handshake` 接收
+     `expect_dummy`，只有该通道确实是第一条连接时才读：audio=true 时音频读、控制不读，
+     audio=false 时单通道仍读。
+  2. `restart_without_audio()` 重启服务端前没有重推 jar。服务端带 `cleanup=true`，被杀时会把
+     `/data/local/tmp/scrcpy-server-manual.jar` 删掉，新服务端 ClassNotFound 秒退，之后每次
+     握手都被立即关闭，一路耗到 `CONNECT_TIMEOUT_S=30`。现在 `spawn()` 前先
+     `push_if_needed()`（用 `adb md5` 判断远端 jar 还在不在）。
+  合起来的效果是：音频这条可选通道失败不会再拖死整次连接，真机开音频 2 秒级连上。
+
+### 验证
+
+- `cargo test --manifest-path padlend-core/Cargo.toml`：**539 passed / 13 ignored**
+  （新增 `audio_mode_does_not_wait_for_dummy_on_control_channel`；回退用例补了
+  「重启前必须重新推送 jar」的断言）。
+- 前端 `vitest`：**44 passed / 9 files**；`tsc --noEmit` + `vite build` 通过。
+- 真机 HONOR CGA-W00（Android 17）开启「转发平板声音」：日志顺序为
+  「音频通道已建立 → 控制通道已建立 → UHID 已创建」，`tablet.connect` 2.2 秒返回 3200×2136。
+
 ## [1.7.0] — 2026-11-15
 
 ### 变更

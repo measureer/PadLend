@@ -44,9 +44,9 @@
       "importance": "normal"
     },
     {
-      "content": "PadLend 引擎现状（2026-11-14 起 Python 实现不再维护，只维护 Rust）：Rust 引擎在 padlend-core/（独立 crate，windows 0.62.2），26 个 RPC 方法已全部实现（1.6.0 起新增 devices.cancel）。外壳 src-tauri/src/bridge.rs 的 resolve_service 在“外壳 exe 所在目录”按 padlend-core-x86_64-pc-windows-msvc.exe → padlend-core.exe 找引擎，可用 PADLEND_SERVICE_CMD 覆盖。tools/build_core.py 只把 release 产物写到 src-tauri/binaries，而 dev/release 实际加载 src-tauri/target/{debug,release}/ 里的拷贝（旧文件会盖过新构建），更新引擎后必须同步拷到这两个目录或重新 tauri build；用户实测跑 src-tauri/target/release/padlend-desktop.exe。重新构建前先 `Get-Process padlend-core | Stop-Process -Force`，否则 exe 被占。桌面锁屏时 SendInput/SetCursorPos 返回 ERROR_ACCESS_DENIED，活体门禁用例需解锁后跑。",
+      "content": "PadLend 引擎现状（2026-11-15，1.7.0 起 Python 实现与工具链已整体删除，提交 345dc6f）：Rust 引擎在 padlend-core/（独立 crate，windows 0.62.2），26 个 RPC 方法全在 Rust；外壳 src-tauri/src/bridge.rs 的 resolve_service 只按“外壳 exe 所在目录”找 padlend-core-x86_64-pc-windows-msvc.exe → padlend-core.exe → resources/padlend-core.exe，可用 PADLEND_SERVICE_CMD 覆盖，PADLEND_SIMULATE=1 走模拟设备，没有 Python 回退。构建用 tools/build-core.ps1（cargo build --release 后同时写 src-tauri/binaries/padlend-core-x86_64-pc-windows-msvc.exe 和 src-tauri/target/{release,debug}/padlend-core.exe——手工运行的 exe 读后者，不刷新会跑旧引擎）；发版用 tools/release.ps1（前端→引擎→测试→tauri build→免安装 zip→SHA256，会先清 dist/PadLend-*，并按版本号挑 bundle/nsis 里的安装器）。引擎测试基线在 padlend-core/tests/fixtures/，用 CARGO_MANIFEST_DIR 定位，cargo test 538 passed。重新构建前先 Get-Process padlend-core | Stop-Process -Force，否则 exe 被占。桌面锁屏时 SendInput/SetCursorPos 返回 ERROR_ACCESS_DENIED，活体门禁用例需解锁后跑。",
       "created_at": "2026-11-13T23:35:04.123Z",
-      "updated_at": "2026-11-14T15:09:04.821Z",
+      "updated_at": "2026-11-14T16:15:08.452Z",
       "target": "memory",
       "importance": "critical"
     },
@@ -84,6 +84,13 @@
       "updated_at": "2026-11-14T15:55:26.483Z",
       "target": "memory",
       "importance": "critical"
+    },
+    {
+      "content": "PadLend 的 .ps1 脚本必须存成 UTF-8 带 BOM：Windows PowerShell 5.1 按系统 ANSI 代码页读无 BOM 脚本，中文注释会被拆成乱码并吃掉后面的括号，报 `Missing expression after ','` 之类的语法错（pwsh 7 没事）。用工具/编辑器改完 .ps1 后 BOM 会丢，要补：`[IO.File]::WriteAllText($p,$c,(New-Object System.Text.UTF8Encoding($true)))`。另外 `Join-Path [Environment]::GetFolderPath(...) \"x\"` 必须给方法调用加括号。",
+      "created_at": "2026-11-14T16:15:29.876Z",
+      "updated_at": "2026-11-14T16:15:29.876Z",
+      "target": "memory",
+      "importance": "normal"
     }
   ]
 }

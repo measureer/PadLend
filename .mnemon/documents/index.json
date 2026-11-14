@@ -27,7 +27,7 @@
       ],
       "createdAt": "2026-11-02T05:07:02.319Z",
       "updatedAt": "2026-11-02T05:07:02.319Z",
-      "lastAccessedAt": "2026-11-14T15:56:28.614Z",
+      "lastAccessedAt": "2026-11-14T16:49:19.641Z",
       "revision": 1,
       "contentHash": "e2fe0c0ec2c5ea7800ae662ec4f9089544d5fc2ec5c40dc623fc402f3fa7e33a",
       "sizeBytes": 5356,
@@ -84,7 +84,7 @@
       ],
       "createdAt": "2026-11-02T07:28:28.458Z",
       "updatedAt": "2026-11-02T07:28:28.458Z",
-      "lastAccessedAt": "2026-11-04T16:47:30.286Z",
+      "lastAccessedAt": "2026-11-14T16:49:19.641Z",
       "revision": 1,
       "contentHash": "c9a11b0dc031f8a230a137921f1ad600ba8456000ba7add8ebfe338c2a3c5bb8",
       "sizeBytes": 5549,
@@ -724,7 +724,7 @@
       ],
       "createdAt": "2026-11-05T10:38:40.958Z",
       "updatedAt": "2026-11-05T10:38:40.958Z",
-      "lastAccessedAt": "2026-11-05T10:49:34.145Z",
+      "lastAccessedAt": "2026-11-14T16:49:19.641Z",
       "revision": 1,
       "contentHash": "c143df3bfe448fb481a5ed91c779a9c3a847c816a9b44f289d40961d7218741d",
       "sizeBytes": 5326,
@@ -968,7 +968,7 @@
       ],
       "createdAt": "2026-11-11T10:23:18.454Z",
       "updatedAt": "2026-11-11T10:23:18.454Z",
-      "lastAccessedAt": "2026-11-11T10:23:18.454Z",
+      "lastAccessedAt": "2026-11-14T16:49:19.641Z",
       "revision": 1,
       "contentHash": "8e0507c972e62b7d362ee759d798cc532de4642d3b204e473330168c94d30a96",
       "sizeBytes": 4903,
@@ -1377,6 +1377,30 @@
       "revision": 1,
       "contentHash": "2e683abe83661930b53f1c608c936d63a3548300c92d669cf4a2d43fe0f92b05",
       "sizeBytes": 6735,
+      "memoryBodyIds": []
+    },
+    {
+      "id": "49dd65b2-350b-4ebe-b634-543b99085b27",
+      "title": "PadLend 1.7.0：音频模式「一直卡在连接中」的两个根因（dummy 字节 / 回退未重推 jar）",
+      "description": "真机排查：audio=true 时控制通道误等 dummy 字节，且 restart_without_audio 未在 cleanup 删 jar 后重推，导致 30s E105；含实验证据、行号与 forward_audio=false 规避。",
+      "status": "active",
+      "filename": "padlend-1-7-0-dummy-jar-49dd65b2.md",
+      "relativePath": "documents/active/padlend-1-7-0-dummy-jar-49dd65b2.md",
+      "sourcePaths": [
+        "padlend-core/src/tablet/session.rs",
+        "padlend-core/src/tablet/server.rs",
+        "padlend-core/src/constants.rs",
+        "padlend-core/src/logic/router.rs"
+      ],
+      "sessionIds": [
+        "mnemon-run-v1-349e1c3e-9c37-44fe-bbfa-25ecd63431f0"
+      ],
+      "createdAt": "2026-11-14T16:49:51.676Z",
+      "updatedAt": "2026-11-14T16:49:51.676Z",
+      "lastAccessedAt": "2026-11-14T16:49:51.676Z",
+      "revision": 1,
+      "contentHash": "932377db2d685797a0536cf2883f7f40028305ff90ace1f285540e6675af8e30",
+      "sizeBytes": 5041,
       "memoryBodyIds": []
     }
   ]

@@ -1625,6 +1625,11 @@ impl SessionCore {
             None,
             false,
         ));
+        // 旧服务端带 cleanup=true，退出时会自删远端 jar（真机实测：杀进程后
+        // /data/local/tmp/scrcpy-server-manual.jar 立刻不在了）。回退重启前必须重新
+        // 确认/推送，否则 app_process 找不到 class，握手会一直"对端在 dummy 字节前关闭"，
+        // 用户只能干等到 30s 连接超时。
+        server.push_if_needed()?;
         server.spawn()?;
         server.forward()?;
         self.set_server(Some(server));
@@ -2182,7 +2187,16 @@ impl SessionCore {
 
     // -- 握手与通道 --------------------------------------------------------
 
-    fn handshake_socket(&self, label: &str) -> Result<Arc<dyn SocketIo>, SessionError> {
+    /// 握手一条 scrcpy 通道。
+    ///
+    /// `expect_dummy` 只在**第一条**被接受的连接上为 true：scrcpy 5.0.1 的
+    /// `send_dummy_byte` 只发给第一个 accept 的 socket（真机实测：audio=true 时
+    /// 音频通道先拿到 `00`，随后的控制通道没有任何前缀字节，直接就是控制消息流）。
+    fn handshake_socket(
+        &self,
+        label: &str,
+        expect_dummy: bool,
+    ) -> Result<Arc<dyn SocketIo>, SessionError> {
         let port = self
             .current_port()
             .ok_or_else(|| SessionError::ForwardFailed("尚未分配转发端口".to_string()))?;
@@ -2193,7 +2207,7 @@ impl SessionCore {
             if self.closing.load(Ordering::SeqCst) {
                 return Err(SessionError::handshake("启动已取消"));
             }
-            let attempt = self.try_handshake(&addr, label, port);
+            let attempt = self.try_handshake(&addr, label, port, expect_dummy);
             match attempt {
                 Ok(socket) => {
                     eprintln!("[tablet.session] {label}通道已建立（tcp:{port}）");
@@ -2219,6 +2233,7 @@ impl SessionCore {
         addr: &str,
         label: &str,
         _port: u16,
+        expect_dummy: bool,
     ) -> Result<Arc<dyn SocketIo>, HandshakeFailure> {
         let socket = self
             .socket_factory
@@ -2230,18 +2245,20 @@ impl SessionCore {
             let _ = socket.shutdown();
             return Err(HandshakeFailure::Retry(error.to_string()));
         }
-        let mut dummy = [0u8; 1];
-        if let Err(error) = recv_exactly(&socket, &mut dummy) {
-            let _ = socket.shutdown();
-            return Err(HandshakeFailure::Retry(error.to_string()));
-        }
-        if dummy[..] != C::HANDSHAKE_DUMMY[..] {
-            let _ = socket.shutdown();
-            return Err(HandshakeFailure::Protocol(SessionError::handshake(format!(
-                "{label}通道 dummy 字节不符: {:02x}（期望 {}）",
-                dummy[0],
-                C::HANDSHAKE_DUMMY[0]
-            ))));
+        if expect_dummy {
+            let mut dummy = [0u8; 1];
+            if let Err(error) = recv_exactly(&socket, &mut dummy) {
+                let _ = socket.shutdown();
+                return Err(HandshakeFailure::Retry(error.to_string()));
+            }
+            if dummy[..] != C::HANDSHAKE_DUMMY[..] {
+                let _ = socket.shutdown();
+                return Err(HandshakeFailure::Protocol(SessionError::handshake(format!(
+                    "{label}通道 dummy 字节不符: {:02x}（期望 {}）",
+                    dummy[0],
+                    C::HANDSHAKE_DUMMY[0]
+                ))));
+            }
         }
         let send_timeout = Some(Duration::from_secs_f64(C::SOCKET_SEND_TIMEOUT));
         let _ = socket.set_read_timeout(send_timeout);
@@ -2250,11 +2267,15 @@ impl SessionCore {
     }
 
     fn connect_socket(&self) -> Result<(), SessionError> {
+        // dummy 字节只出现在第一条连接上：音频模式下第一条是音频通道，纯控制模式下
+        // 第一条就是控制通道。把控制通道也按 dummy 握手，音频模式会白等一整轮重试，
+        // 最终误判"音频通道不可用"。
+        let audio_active = self.audio_active.load(Ordering::SeqCst);
         let mut audio: Option<Arc<dyn SocketIo>> = None;
-        if self.audio_active.load(Ordering::SeqCst) {
-            audio = Some(self.handshake_socket("音频")?);
+        if audio_active {
+            audio = Some(self.handshake_socket("音频", true)?);
         }
-        let control = match self.handshake_socket("控制") {
+        let control = match self.handshake_socket("控制", !audio_active) {
             Ok(socket) => socket,
             Err(error) => {
                 if let Some(socket) = &audio {
@@ -3363,6 +3384,8 @@ mod tests {
         fail: AtomicBool,
         /// 只让第一次 connect 的 dummy 字节错误（用于音频握手失败后回退的用例）。
         first_dummy_bad: AtomicBool,
+        /// 模拟 scrcpy 5.0.1：只有第一条连接带 dummy，之后建立的通道没有。
+        first_only_dummy: AtomicBool,
         sockets: Mutex<Vec<Arc<FakeSocket>>>,
     }
 
@@ -3372,6 +3395,7 @@ mod tests {
                 dummy,
                 fail: AtomicBool::new(false),
                 first_dummy_bad: AtomicBool::new(false),
+                first_only_dummy: AtomicBool::new(false),
                 sockets: Mutex::new(Vec::new()),
             })
         }
@@ -3379,6 +3403,11 @@ mod tests {
         /// 让第一条通道的 dummy 字节错误（模拟"音频通道握手失败"）。
         fn fail_first_dummy(&self) {
             self.first_dummy_bad.store(true, Ordering::SeqCst);
+        }
+
+        /// 只有第一条连接带 dummy（对应真机 scrcpy 5.0.1 的行为）。
+        fn dummy_first_only(&self) {
+            self.first_only_dummy.store(true, Ordering::SeqCst);
         }
 
         fn last(&self) -> Option<Arc<FakeSocket>> {
@@ -3400,7 +3429,13 @@ mod tests {
             } else {
                 self.dummy
             };
-            let socket = FakeSocket::new(vec![dummy]);
+            let first = self.count() == 0;
+            let initial = if first || !self.first_only_dummy.load(Ordering::SeqCst) {
+                vec![dummy]
+            } else {
+                Vec::new()
+            };
+            let socket = FakeSocket::new(initial);
             if let Ok(mut guard) = self.sockets.lock() {
                 guard.push(socket.clone());
             }
@@ -3952,6 +3987,37 @@ mod tests {
         assert_eq!(facts.serial, "S1");
         // 回退会丢弃旧 server 并重新 spawn 一次。
         assert_eq!(harness.adb.snapshot().popen.len(), 2, "应当重启服务端");
+        // 旧服务端带 cleanup=true，退出时会自删远端 jar：回退重启前必须重新推送，
+        // 否则新服务端起不来，用户会一直卡在连接中直到 30s 超时。
+        assert_eq!(
+            harness.adb.snapshot().pushes,
+            2,
+            "回退重启前必须重新推送 jar"
+        );
+        assert!(harness.session.is_started());
+        harness.session.disconnect();
+    }
+
+    #[test]
+    fn audio_mode_does_not_wait_for_dummy_on_control_channel() {
+        let mut config = SessionConfig::default();
+        config.serial = "S1".to_string();
+        config.forward_audio = true;
+        let factory = FakeFactory::new(0);
+        // 真机 scrcpy 5.0.1：只有第一条被 accept 的连接带 dummy，控制通道没有。
+        factory.dummy_first_only();
+        let harness = harness_with(factory.clone(), config);
+        let facts = harness
+            .session
+            .connect()
+            .expect("控制通道没有 dummy 也应当连上");
+        assert_eq!(facts.serial, "S1");
+        assert_eq!(factory.count(), 2, "音频 + 控制两条通道都要建立");
+        assert_eq!(
+            harness.adb.snapshot().pushes,
+            1,
+            "不该因为假失败触发回退重推"
+        );
         assert!(harness.session.is_started());
         harness.session.disconnect();
     }

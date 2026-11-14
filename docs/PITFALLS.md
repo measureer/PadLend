@@ -20,6 +20,7 @@
 | 托盘退出后进程还在 | [6.1](#61-托盘退出只隐藏窗口进程还在) [6.2](#62-close_to_tray-把窗口生命周期和-sidecar-生命周期缠在一起) |
 | 退出后下次启动报「上次未正常退出」 | [4.2](#42-python-关闭被守护线程截断) [4.3](#43-首次运行就报上次未正常退出) |
 | 高 DPI / 多屏遮罩错位、落点偏 | [5.1](#51-dpi-感知晚于建窗遮罩只盖住一部分) [5.2](#52-物理坐标与逻辑坐标混用) [5.3](#53-接管中显示器拓扑变化) [5.4](#54-负坐标副屏) |
+| 开「转发平板声音」后一直卡在「连接中」 | [2.8](#28-audio-模式下控制通道等-dummy回退重启又丢了-jar) |
 | 连上平板但输入乱/没反应 | [1.1](#11-幽灵-scrcpy-server-杀不掉) [2.2](#22-心跳把按住冲成松开) [2.4](#24-进入接管没有先补发全松) |
 | 换 Wi-Fi 后设备多出一台 / 自动连接卡 40 秒 | [1.6](#16-把-adb-serial-当设备身份换网就多出一台) [1.7](#17-坏历史地址把首连拖-40-秒) |
 | 安装版缺 jar/adb、sidecar 找不到 | [7.2](#72-sidecar-解析失败回退到开发期-python) [7.3](#73-资源清单双轨安装版与-zip-版不一致) |
@@ -170,7 +171,7 @@
 
 - **现象**：开启「转发平板声音」后连接失败，或连接成功但鼠标键盘完全没反应、日志里控制 socket 读到的是 PCM 字节。
 - **触发条件**：`audio=true` 时仍按旧的单通道逻辑先连控制、或只连一个 socket。
-- **根因**：scrcpy 5.0.1 的 `DesktopConnection` 在 `audio=true` 时按 **audio → control** 的顺序 accept，两条通道各写 1 字节 dummy；先连的那条被当成音频，控制流被当成裸 PCM，控制通道直接坏掉。
+- **根因**：scrcpy 5.0.1 的 `DesktopConnection` 在 `audio=true` 时按 **audio → control** 的顺序 accept；先连的那条被当成音频，控制流被当成裸 PCM，控制通道直接坏掉。注意 dummy 字节只发给**第一条** accept 的 socket（1.7.0 时按「两条都读」处理，正是 2.8 的第一个 bug）。
 - **修法**：`TabletSession._connect_socket()` 固定先 `_handshake_socket("音频")`、再 `_handshake_socket("控制")`；只有 `audio=false` 才走单通道旧路径。音频 socket 交给 `AudioRelay` 前设 0.5s 轮询超时；控制 socket 保持发送超时。音频通道建立失败时丢弃服务端并按 `audio=false` 重连一次，不允许可选功能拖死键鼠。
 - **如何验证 / 回归**：`tests/test_audio_relay.py::test_connect_socket_uses_audio_then_control_order`、`test_connect_socket_without_audio_keeps_single_channel`、`test_restart_without_audio_discards_server_and_clears_flag`；真机开音频后鼠标/键盘事件仍应正常，关闭音频后走单通道。
 - **相关文件**：`tablet/session.py:846-931`（握手与顺序）、`tablet/audio.py:49-121`、`constants.py:113-129`、`src-tauri/src/audio.rs:104-166`
@@ -194,6 +195,20 @@
   （配置里还没写），与显式传入的 serial 不等，于是又被当成"切换设备"去取消。正确判据是
   **进行中目标为空（自动首连）或相等都算同一目标**。空串这一层是最容易漏的。
 - **再犯的代价**：无线调试连不上、报错却指向"未授权/看不到设备"，排查方向完全被带偏。
+
+### 2.8 audio 模式下控制通道等 dummy，回退重启又丢了 jar
+
+- **现象**：1.7.0 开启「转发平板声音」后，连接一直停在「连接中」，约 30 秒后报连接超时。日志里音频握手正常（重试几次后「音频通道已建立」），控制握手连续「对端在 dummy 字节前关闭」，接着「音频通道不可用，回退为仅控制通道」，回退之后仍然是几十次同样的握手失败。
+- **触发条件**：`forward_audio=true`（服务端起两条 socket），并且第一次握手失败触发了 audio=false 回退。
+- **根因**：两个 bug 叠加。
+  1. scrcpy 5.0.1 的 `send_dummy_byte` 只发给**第一个** accept 的 socket。audio=true 的顺序是音频→控制，而 `connect_socket()` 对两条通道都读 dummy，控制通道必然白等满 `handshake_retry_timeout`（8s）后被判「音频通道不可用」。
+  2. `restart_without_audio()` 重启服务端前没有 `push_if_needed()`。服务端带 `cleanup=true`，被杀时会把 `/data/local/tmp/scrcpy-server-manual.jar` 删掉，新服务端 ClassNotFound 秒退，之后每次握手都被立即关闭，一路耗到 `CONNECT_TIMEOUT_S=30` 才失败。
+  两个 bug 叠在一起，才表现为「可选功能失败 → 整次连接失败」。
+- **修法**：`handshake_socket(label, expect_dummy)` / `try_handshake(..., expect_dummy)` 只在**该通道确实是第一条连接**时读 dummy——audio=true 时音频读、控制不读，audio=false 时单通道仍读；`restart_without_audio()` 在 `server.spawn()?` 前补 `server.push_if_needed()?`（`kill()` 后 `ScrcpyServer.pushed` 已失效，`push_if_needed` 会用 `adb md5` 判断远端还在不在）。
+- **如何验证 / 回归**：`cargo test` 的 `audio_mode_does_not_wait_for_dummy_on_control_channel`（dummy 只在第一条也能连上）与 `audio_failure_falls_back_to_control_only`（断言 `pushes == 2`，回退必须重推 jar）；真机开音频应在 2 秒级连上，日志顺序为「音频通道已建立 → 控制通道已建立 → UHID 已创建」。
+- **相关文件**：`padlend-core/src/tablet/session.rs`（`handshake_socket` / `try_handshake` / `connect_socket` / `restart_without_audio`）、`padlend-core/src/tablet/server.rs:224`（`push_if_needed`）、`padlend-core/src/tablet/protocol.rs:9`
+- **版本**：1.7.1
+- **再犯的代价**：开音频就等于连不上，而且现场证据全指向「对端关闭连接」，很容易去查网络、adb 授权或服务端 jar 版本，绕很远。
 
 ## 3. Windows 遮罩与光标
 

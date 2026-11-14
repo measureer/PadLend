@@ -6,7 +6,8 @@
 //! PC --TCP 127.0.0.1:{port}--> adb forward --> localabstract:scrcpy --> scrcpy-server
 //! ```
 //!
-//! * 连接后先读 1 字节 `00`（`send_dummy_byte=true`；实测 scrcpy 5.0.1）。
+//! * **第一条**连接先读 1 字节 `00`（`send_dummy_byte=true`；实测 scrcpy 5.0.1：
+//!   `audio=true` 时音频通道带 dummy，随后建立的控制通道没有任何前缀字节）。
 //! * 之后是连续消息流，无长度前缀，首字节 `type` 分派。
 //! * **全部大端**（网络序）。
 //!
