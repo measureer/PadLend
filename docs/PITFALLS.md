@@ -441,50 +441,30 @@
 - **如何验证 / 回归**：在中文 Windows 上跑 `python tools/release.py --build`；CI 日志无 `UnicodeEncodeError`；路径含中文也能打包。
 - **相关文件**：`tools/release.py:37-43`、`tools/release.py:55-62`、`.github/workflows/ci.yml:13-36`
 - **版本**：1.1.0（1.2.0 仍适用）
-- **再犯的代价**：发版脚本只在作者机器上能跑；错误信息还是 `FileNotFoundError: npm`，误导排查方向。
 
----
+## 10. Rust 引擎真机问题（2026-11-14 补录）
 
-## 8. 测试与 CI
+> B2 迁移完成后在另一台本机操作的机器上联调暴露的三条：前两条是移植缺陷，第三条是既有设计不合理。
 
-### 8.1 无设备环境测试必须 skip 而不是 fail
+### 10.1 服务模式漏启动 RawInputSource：接管后平板指针一动不动
 
-- **现象**：没连平板时 `pytest` 一片红；CI 无法区分「环境缺失」和「真 bug」。
-- **触发条件**：测试直接假设设备/窗口存在。
-- **根因**：没有在收集阶段判断环境；或 skip 条件写在用例内部，fixture 先炸了。
-- **修法**：设备测试用 `skipif` 并打印原因；真实窗口测试用 `PADLEND_UI_TESTS=1` 显式开启；无设备时单测必须全绿（见 `docs/IMPLEMENTATION_NOTES.md:51`）。
-- **如何验证 / 回归**：不接设备跑 `pytest -q`，应只有 skip；接设备再跑同一套，skip 变为 pass；skip 原因要能看懂缺什么。
-- **相关文件**：`tests/test_mask.py:469-478`、`docs/IMPLEMENTATION_NOTES.md:51`
-- **版本**：1.0.0
-- **再犯的代价**：红色 CI 会被忽略，真回归混在噪声里；久而久之没人看测试结果。
+- **现象**：按 Ctrl+Alt+S 接管成功，平板入口处出现指针（日志 cap.start edge=bottom manual=true reports=8 pin=13），PC 光标消失，但之后平板指针完全不动，日志里再没有任何鼠标报文。
+- **根因**：RawInputSource 在整个 Rust 侧只有 padlend-core/src/main.rs:137 的 --debug-raw 模式启动；常驻服务（service/engine）从未创建它，router.on_raw 没有调用者。Python 版不会，因为 Runtime.start() 会起捕获源。
+- **修法**（提交 c5adae1）：engine 在路由器就绪后调用 RawInputSource::start_with(handler)，把解码后的 MousePacket 转成 RawDelta（按钮位图用 constants::raw_button_flag，绝对坐标设备按 desktop bounding box 归一化）喂给 router.on_raw；并加首个事件与每 500 事件一条 raw.seen 诊断。
+- **如何验证**：注入鼠标位移后 service.log 出现 raw.seen 且 dx/dy 非零；接管时平板指针跟随移动。
+- **再犯的代价**：表现成连上了但不会动，会被误判为平板/UHID/协议问题。
 
-### 8.2 真实窗口测试藏在 PADLEND_UI_TESTS 后面
+### 10.2 点了新端口却一直连配置里的旧地址
 
-- **现象**：遮罩相关回归在 CI 永远不跑；1.1.2 的残留问题就是这类测试缺口。
-- **触发条件**：默认跳过真实窗口测试。
-- **根因**：创建真实 topmost 窗口会干扰桌面/CI 无桌面会话，只能用环境变量隔离。
-- **修法**：本地/专用机用 `PADLEND_UI_TESTS=1` 跑全套；CI 至少跑无窗口的 mock 版；新增遮罩逻辑必须同时有 mock 单测和 UI 测试。
-## 9. Rust sidecar（B2 迁移）
+- **现象**：UI 点 192.168.68.129:44581，日志反复出现 192.168.68.129:44731 的 TCP 端口不可达（已跳过，避免等待 adb connect 超时）(E101)，45 秒后报连接超时。
+- **根因**：Rust 侧 Config 不可变，devices.connect 只更新 Router 自己的 requested_serial；会话候选地址来自 Engine::device_candidates()（读 self.config.device.serial），仍是旧端口。无线调试端口每次重开都会变。
+- **修法**（提交 b24d933）：devices.connect 先调 Engine::set_requested_serial 把目标写回引擎配置再发起连接。
+- **如何验证**：配置里故意写坏地址、点击另一个地址，日志只应出现被点击的那个。
+- **再犯的代价**：列表显示在线、点击也成功，却永远连不上，错误文案还把方向引向未授权。
 
-### 9.1 服务模式漏了 Python Runtime 负责的输入接线（键盘钩子 / 全局热键）
+### 10.3 诊断包默认写到桌面
 
-- **现象**：鼠标能穿到平板，键盘却完全不进平板；`Ctrl+Alt+S` 切换接管、`Ctrl+Alt+Q` 急停也都没反应。接管状态、UHID 鼠标都正常，只有键盘像没插线。
-- **触发条件**：外壳切到 Rust sidecar（把 `padlend-core*.exe` 放进可执行目录）并以真实服务模式运行。
-- **根因**：Python 的输入接线拆在两处——`Runtime.start()` 里起 Raw Input 与 `KeyboardHook(router.on_key)`，`PadLendService.start()` 里再 `keyboard_hook.install()` + `_start_hotkeys()`。B2 迁移只搬了 Router/Session 这些库，服务组装时漏掉了这两个“进程级”安装步骤，于是 `win/keyboard_hook.rs` 与 `win/hotkeys.rs` 全仓没有生产调用点，`Router::on_key` 只有测试在调。
-- **修法**：`Engine::open` 在 Router 起来之后调 `install_input_hooks()` / `install_hotkeys()`（`--simulate` / `--no-hooks` 时跳过），钩子回调把 `tablet::keymap::KeyEvent` 手工转成 `logic::events::KeyEvent` 交给 `Router::on_key`；`shutdown()` 先停热键、卸钩子再停 Router。安装失败只记日志（`KBD` / `HOTKEY`），不阻断鼠标链路。
-- **如何验证 / 回归**：切 Rust 引擎后日志应有「键盘钩子已安装（服务模式）」「全局热键已注册（id=[...]）」，接管后 PC 键盘能打字到平板；不接外壳空跑 `padlend-core.exe < nul`（把 `APPDATA` 指到临时目录）就能看到这两行。`cargo test service::engine::tests::input_hooks_and_hotkeys_stay_off_in_simulate_mode` 守住 simulate 下不挂真钩子。
-- **相关文件**：`padlend-core/src/service/engine.rs`（`Engine::install_input_hooks` / `install_hotkeys` / `shutdown`）、`padlend-core/src/win/keyboard_hook.rs`、`padlend-core/src/win/hotkeys.rs`、`service/api.py:165`、`service/api.py:211`
-- **版本**：1.4.0 之后（Rust sidecar 上线后）
-- **再犯的代价**：症状特别像“UHID 键盘坏了”或“平板输入法不接收”，排查会往设备/ROM 上走；README 写着的两个热键也会直接骗人。
-- **仍未接的同类接线**：`win::cursor_watch`（Raw Input 静默时的绝对光标兜底）也只在 Python 的 `Runtime.start()` 里启动。它需要 `RouterLike` 与 `RawInputLike::inject`（把合成事件投递回 Raw Input 的消息线程），Rust 侧这两个生产实现都还没有，本版先不接。
-
-### 9.2 会话配置是构造期快照，config.save 必须显式下推
-
-- **现象**：设置里打开「转发平板声音」→ 保存 → 断开重连平板，仍然没有声音，只有整个 PadLend 重启后才生效；Python 版同一个操作是立即生效的。
-- **触发条件**：任何“连接时才读”的配置项（`misc.forward_audio`、`misc.keep_screen_on`、`device.server_port`、`misc.restore_pointer_speed`）在运行中被修改并保存。
-- **根因**：Python 的 Router/Session 共享同一个 `Config` 对象，`config.save` 改的就是它；Rust 的 `SessionConfig` 是 `SessionBuilder::build` 时的拷贝，`service::api::config_save` 只改了 `Engine.config` 并落盘，会话永远看不到新值。音频开关读的是 `start_locked` 里的 `self.config.forward_audio`，所以“开开关 + 重连”等于什么都没做。
-- **修法**：`SessionCore.config` 换成 `Mutex<SessionConfig>`，新增 `apply_config(&Config)` 只覆盖连接期字段（serial / prefer_usb / server_port / keep_screen_on / forward_audio / restore_pointer_speed），保留 `auto_flush` / `watch_orientation` / 握手超时这些运行时与测试旋钮；`SessionPort::sync_config` 默认空实现、`TabletSession` 实现它；`config_save` 与 `devices.remove` 保存成功后调用 `sync_session_config()` 下推。
-- **如何验证 / 回归**：`cargo test tablet::session::tests::audio_switch_saved_while_connected_takes_effect_on_reconnect`（改配置→重连→scrcpy 命令行出现 `audio=true`）；`saved_config_reaches_the_session_snapshot` 守住运行时旋钮不被打回默认值。真机上开开关、重连、播放视频应有声。
-- **相关文件**：`padlend-core/src/tablet/session.rs`（`SessionCore::apply_config`、`TabletSession::update_config`、`impl SessionPort::sync_config`）、`padlend-core/src/service/api.rs`（`sync_session_config`）、`padlend-core/src/logic/router.rs`（`SessionPort::sync_config`）
-- **版本**：1.4.0 之后（Rust sidecar 上线后）
-- **再犯的代价**：“快照 vs 共享对象”的差异会在 Python→Rust 迁移里反复踩；症状是“设置不生效”，用户会怀疑平板、scrcpy 或 Windows 声卡，实际是配置根本没进会话。
+- **现象**：用户桌面出现 18 个 padlend-diagnostics-*.zip/.txt。
+- **根因**：desktop_dir() 优先 %USERPROFILE%\Desktop，每次导出生成一个新文件。
+- **修法**（提交 724b081）：Rust padlend-core/src/service/diagnostics.rs 与 Python core/diagnostics.py 的 desktop_dir() 改为优先下载目录，桌面只作兜底。
+- **再犯的代价**：用户桌面被应用产物污染，且这类文件看起来像用户自己的东西、不敢删。
