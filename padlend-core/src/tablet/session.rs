@@ -651,6 +651,21 @@ pub fn audio_sink_port_from_env() -> Option<u16> {
 }
 
 /// 判断 serial 是否像无线地址（与 DeviceEntry::is_wireless 同义）。
+/// 读设备的 Android API 等级（getprop ro.build.version.sdk）。
+///
+/// 读不到（模拟设备、命令超时）时返回 None：调用方保持原设置，不因为一次
+/// 查询失败就把音频关掉。
+fn android_api_level(adb: &Arc<dyn AdbApi>) -> Option<i32> {
+    let (code, text) = adb.shell_result(&["getprop", "ro.build.version.sdk"], 5.0);
+    if code != 0 {
+        return None;
+    }
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|line| line.parse::<i32>().ok())
+}
+
 fn looks_wireless(serial: &str) -> bool {
     serial.contains(':') || serial.contains("_adb-tls-connect") || serial.contains(".tcp")
 }
@@ -1478,14 +1493,55 @@ impl SessionCore {
         }
     }
 
+    /// 启动各阶段的取消检查点。
+    ///
+    /// devices.cancel / 断开 / 换设备都会先置 closing，阻塞在 adb 子进程或
+    /// 握手里的 start 只会在下一个检查点退出——所以要塞在每一个可能耗时的
+    /// 阶段之间，而不是只在 handshake 内部。
+    fn ensure_starting(&self, stage: &str) -> Result<(), SessionError> {
+        if self.closing.load(Ordering::SeqCst) {
+            return Err(SessionError::handshake(format!("启动已取消（{stage}）")));
+        }
+        Ok(())
+    }
+
     fn start_locked(&self) -> Result<DeviceFacts, SessionError> {
+        let started = Instant::now();
+        let mut stage_at = Instant::now();
+        let mut mark = |stage: &str| {
+            eprintln!(
+                "[tablet.session] 启动阶段 {stage} 完成（本段 {}ms，累计 {}ms）",
+                stage_at.elapsed().as_millis(),
+                started.elapsed().as_millis()
+            );
+            stage_at = Instant::now();
+        };
+        self.ensure_starting("准备")?;
         let facts = self.connect_candidate()?;
+        mark("选设备");
+        self.ensure_starting("选设备后")?;
         let config = self.config_snapshot();
-        let audio_active = config.forward_audio;
-        self.audio_active.store(audio_active, Ordering::SeqCst);
         let device = self
             .dev_adb_clone()
             .ok_or_else(|| SessionError::offline("尚未选定设备"))?;
+        // Android 11（API 30）以下没有系统音频回采，强行 audio=true 只会让
+        // 服务端起不来、握手白等一轮再回退（用户看到的就是"开声音转发就卡"）。
+        let audio_active = match config.forward_audio {
+            false => false,
+            true => match android_api_level(&device) {
+                Some(level) if level < 30 => {
+                    eprintln!(
+                        "[tablet.session] 系统 Android API {level} 不支持音频回采（需要 11/API 30），本次只开控制通道"
+                    );
+                    false
+                }
+                _ => true,
+            },
+        };
+        if audio_active != config.forward_audio {
+            eprintln!("[tablet.session] 平板系统版本过低，已跳过音频转发（只共享控制）");
+        }
+        self.audio_active.store(audio_active, Ordering::SeqCst);
         let server = Arc::new(ScrcpyServer::with_parts(
             device.clone(),
             Some(config.server_port),
@@ -1507,24 +1563,35 @@ impl SessionCore {
         // 先放好 facts：保存 pointer_speed 状态要用 serial。
         self.set_facts(Some(facts.clone()));
         self.normalize_pointer_speed(&device)?;
+        mark("指针速度");
+        self.ensure_starting("推 jar 前")?;
         server.push_if_needed()?;
+        mark("推 jar");
         let _ = server.kill(5.0);
         server.spawn()?;
         let _port = server.forward()?;
+        mark("启服务端+转发");
+        self.ensure_starting("握手前")?;
         if let Err(error) = self.connect_socket() {
             if !audio_active {
                 return Err(error);
             }
             eprintln!(
-                "[tablet.session] 音频通道不可用，回退为仅控制通道: {}",
+                "[tablet.session] 音频通道不可用，回退为仅控制通道（{}ms）: {}",
+                started.elapsed().as_millis(),
                 error.detail()
             );
+            mark("音频握手（失败）");
             self.restart_without_audio()?;
             self.connect_socket()?;
         }
+        mark(if audio_active { "音频+控制握手" } else { "控制握手" });
+        self.ensure_starting("建 UHID 前")?;
         self.create_uhid()?;
+        mark("UHID");
         self.start_receiver();
         self.keep_screen_on(&device);
+        mark("熄屏设置");
         eprintln!(
             "[tablet.session] {} serial={} size={}x{} orientation={} xscale={} pointer_speed={}",
             C::EVENT_TABLET_CONNECT,
@@ -1684,6 +1751,7 @@ impl SessionCore {
     }
 
     fn select_device(&self) -> Result<Arc<dyn AdbApi>, SessionError> {
+        self.ensure_starting("选默认设备")?;
         let base = self.adb.clone();
         base.version()?;
         let config = self.config_snapshot();
@@ -1766,6 +1834,9 @@ impl SessionCore {
         let serials = self.candidate_serials();
         let mut errors: Vec<SessionError> = Vec::new();
         for serial in &serials {
+            // 每个候选地址都要单独看取消标志：一台上限 8 个候选，每个候选
+            // 最坏要花 probe+connect 秒级，用户点了取消不能还往下试。
+            self.ensure_starting("候选探测")?;
             let selected = match self.select_candidate(serial) {
                 Ok(adb) => adb,
                 Err(error) => {
@@ -2921,6 +2992,8 @@ mod tests {
         md5: Option<String>,
         version_ok: bool,
         wait_error: Option<String>,
+        /// `getprop ro.build.version.sdk` 的应答（默认按 Android 14 上报）。
+        sdk: String,
     }
 
     #[derive(Debug, Clone)]
@@ -2972,6 +3045,7 @@ mod tests {
                     md5: None,
                     version_ok: true,
                     wait_error: None,
+                    sdk: "34\n".to_string(),
                 })),
                 serial: String::new(),
             }
@@ -2989,6 +3063,12 @@ mod tests {
         fn set_shell(&self, key: &str, value: &str) {
             if let Ok(mut guard) = self.state.lock() {
                 guard.shell_map.insert(key.to_string(), value.to_string());
+            }
+        }
+
+        fn set_sdk(&self, value: &str) {
+            if let Ok(mut guard) = self.state.lock() {
+                guard.sdk = value.to_string();
             }
         }
 
@@ -3087,7 +3167,13 @@ mod tests {
             guard.shell_ok_map.get(&key).copied().unwrap_or(true)
         }
 
-        fn shell_result(&self, _args: &[&str], _timeout: f64) -> (i32, String) {
+        fn shell_result(&self, args: &[&str], _timeout: f64) -> (i32, String) {
+            let key = args.join(" ");
+            let mut guard = self.snapshot();
+            guard.calls.push(format!("shell_result {key}"));
+            if key == "getprop ro.build.version.sdk" {
+                return (0, guard.sdk.clone());
+            }
             (0, "0\n".to_string())
         }
 
@@ -3867,6 +3953,37 @@ mod tests {
         // 回退会丢弃旧 server 并重新 spawn 一次。
         assert_eq!(harness.adb.snapshot().popen.len(), 2, "应当重启服务端");
         assert!(harness.session.is_started());
+        harness.session.disconnect();
+    }
+
+    #[test]
+    fn audio_is_skipped_on_android_below_eleven() {
+        let mut config = SessionConfig::default();
+        config.serial = "S1".to_string();
+        config.forward_audio = true;
+        let harness = harness_with(FakeFactory::new(0), config);
+        // Android 10 = API 29，没有系统音频回采，audio=true 只会让服务端起不来。
+        harness.adb.set_sdk("29\n");
+        harness.session.connect().expect("应当启动");
+        let command = harness
+            .adb
+            .snapshot()
+            .popen
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            command.contains("audio=false"),
+            "Android 10 应当只开控制通道：{command}"
+        );
+        assert!(
+            harness
+                .adb
+                .calls()
+                .iter()
+                .any(|call| call.contains("ro.build.version.sdk")),
+            "应当先查系统 API 级别"
+        );
         harness.session.disconnect();
     }
 

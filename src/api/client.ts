@@ -121,6 +121,7 @@ export const RPC = {
   devicesLocate: 'devices.locate',
   devicesConnect: 'devices.connect',
   devicesDisconnect: 'devices.disconnect',
+  devicesCancel: 'devices.cancel',
   devicesAdd: 'devices.add',
   devicesRemove: 'devices.remove',
   layoutDesktop: 'layout.desktop',

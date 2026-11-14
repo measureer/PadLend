@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use crate::service::api;
 use crate::service::engine::Engine;
 
-/// 25 个 RPC 方法名（顺序与 Python 分派表一致）。
-pub const METHODS: [&str; 25] = [
+/// 26 个 RPC 方法名（Python 的 25 个 + 1.6.0 新增的 devices.cancel）。
+pub const METHODS: [&str; 26] = [
     "app.bootstrap",
     "app.shutdown",
     "config.get",
@@ -19,6 +19,7 @@ pub const METHODS: [&str; 25] = [
     "devices.locate",
     "devices.connect",
     "devices.disconnect",
+    "devices.cancel",
     "devices.add",
     "devices.remove",
     "layout.desktop",
@@ -89,11 +90,11 @@ mod tests {
 
     #[test]
     fn method_table_matches_python_contract() {
-        assert_eq!(METHODS.len(), 25);
+        assert_eq!(METHODS.len(), 26);
         let mut sorted = METHODS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 25, "方法名不得重复");
+        assert_eq!(sorted.len(), 26, "方法名不得重复");
         for required in [
             "app.bootstrap",
             "app.shutdown",

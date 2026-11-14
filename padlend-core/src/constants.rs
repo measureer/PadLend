@@ -298,7 +298,7 @@ pub const RECONNECT_BACKOFF_S: [f64; 5] = [1.0, 2.0, 4.0, 8.0, 16.0];
 pub const CONSECUTIVE_WRITE_FAILURES: u32 = 3;
 
 /// 6.1.1 首连重试：40s 内每 2s 一次，然后指数退避。
-pub const INITIAL_RETRY_WINDOW_S: f64 = 40.0;
+pub const INITIAL_RETRY_WINDOW_S: f64 = 20.0;
 /// 首连重试间隔（秒）。
 pub const INITIAL_RETRY_INTERVAL_S: f64 = 2.0;
 

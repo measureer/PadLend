@@ -2,6 +2,49 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.6.0] — 2026-11-14
+
+### 修复
+
+- **连接期间整个界面不再卡死**：引擎的 RPC 循环（`padlend-core/src/rpc.rs`）过去在
+  stdin 线程里同步执行每个请求，`devices.connect` 这种要等设备出现的请求会把后面所有请求
+  （保存设置、移除设备、急停）都堵在队列里——表现就是「点了连接之后整页点什么都没反应，
+  去设置里关掉声音转发也不生效」。1.6.0 改为**每个请求一个线程**，慢请求打
+  `[rpc] devices.connect 耗时 12000ms（期间其它请求不受影响）`，界面其它按钮随时可用。
+- **连接可以取消**：设备页在连接中把「连接此设备」换成「取消连接」（新 RPC
+  `devices.cancel`）。取消后服务端立刻返回，会话在选设备、推 jar、握手、建 UHID 的每一步之间
+  检查取消标记，不会再出现「点了连接就锁死十几秒」。取消也可能发生在 `adb connect` 那 6 秒里，
+  这时会在真正拉起会话之前就收尾，不会出现「点了取消、后台又自己连上」。连接总超时从 45 秒收到
+  30 秒，并且每 8 秒在日志里报告一次进度（`仍在连接 <serial>（可点「取消连接」中止）`）。
+- **开启「转发平板声音」不再导致连不上**：Android 11（API 30）以下没有系统音频回采，
+  `audio=true` 时 scrcpy 服务端起不来，过去会白等 8 秒握手再回退。现在连接前先查
+  `ro.build.version.sdk`，低于 30 直接只开控制通道并记一条
+  `系统 Android API 29 不支持音频回采（需要 11/API 30），本次只开控制通道`；
+  同时音频握手失败仍保留原来的「回退为仅控制通道」路径。
+- **同一台平板换端口不再变成两台**：无线调试每开一次端口都会变，扫描会先为「客户端未知的新端口」
+  建一条临时记录，随后按硬件序列号改名时又因为端点已被占用而被拒绝，于是列表里一行在线、一行
+  已记住。1.6.0 在注册表里做了三件事：改名撞到「同主机 + 型号兼容」的记录就合并而不是拒绝；
+  在线端点出现时会把同主机、已下线、型号兼容的旧记录就地改成新端口（旧端口留作别名）；
+  启动读 `devices.json` 时自动合并历史遗留的重复条目并提示
+  `设备记录里有同一台平板的重复条目，已自动合并`。
+
+### 变更
+
+- 版本号 1.6.0：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、
+  `padlend-core/Cargo.toml`，前端默认状态与演示数据同步。
+- 初次重连的等待窗口（等设备出现）由 40 秒缩到 20 秒，配合可取消的连接减少「干等」。
+
+### 验证
+
+- `cargo test`：532 passed / 13 ignored。新增
+  `audio_is_skipped_on_android_below_eleven`、
+  `rename_endpoint_merges_the_record_holding_the_new_port`、
+  `adopt_live_endpoint_updates_the_old_record_in_place`、
+  `adopt_live_endpoint_leaves_a_still_online_sibling_alone`、
+  `merge_duplicates_folds_the_same_tablet_on_one_host`、
+  `merge_duplicates_keeps_different_hosts_apart`。
+- 前端 `vitest` 44 passed（新增「取消连接」用例），`tsc --noEmit` 通过。
+
 ## [1.5.0] — 2026-11-14
 
 ### 修复

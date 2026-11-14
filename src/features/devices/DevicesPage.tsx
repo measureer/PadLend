@@ -5,7 +5,7 @@ import type { DeviceItem } from '../../api/types';
 import { Icon } from '../../components/Icon';
 import { Banner, Button, Card, EmptyState, StatusPill } from '../../components/ui';
 import { LOCATED_LABELS, formatLastSeen, presentState } from '../../lib/format';
-import { connectDevice, disconnectDevice, forgetDevice, refreshDevices } from '../../lib/actions';
+import { cancelConnect, connectDevice, disconnectDevice, forgetDevice, refreshDevices } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
 
 const DeviceRow = memo(function DeviceRow({ device, active, onSelect }: {
@@ -83,15 +83,21 @@ export function DevicesPage() {
           desc="一台设备只占一行；双击可直接连接。「从列表移除」只删除记忆记录，不影响在线设备。"
           footer={
             <>
-              <Button
-                variant="primary"
-                icon="link"
-                loading={Boolean(busy.connect)}
-                onClick={() => void connectDevice(selected)}
-                disabled={!selected}
-              >
-                连接此设备
-              </Button>
+              {busy.connect ? (
+                // 连接可能卡在选设备/握手阶段十几秒，必须给用户一个出口。
+                <Button variant="danger" icon="close" onClick={() => void cancelConnect()}>
+                  取消连接
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  icon="link"
+                  onClick={() => void connectDevice(selected)}
+                  disabled={!selected}
+                >
+                  连接此设备
+                </Button>
+              )}
               <Button
                 icon="trash"
                 onClick={() => chosen && void forgetDevice(chosen.serial)}

@@ -22,11 +22,12 @@ vi.mock('../api/client', () => ({
     devicesScan: 'devices.scan',
     devicesLocate: 'devices.locate',
     devicesConnect: 'devices.connect',
+    devicesCancel: 'devices.cancel',
     configSave: 'config.save',
   },
 }));
 
-import { bootstrap, connectDevice, refreshDevices, saveConfig } from '../lib/actions';
+import { bootstrap, cancelConnect, connectDevice, refreshDevices, saveConfig } from '../lib/actions';
 
 function resetStore(): void {
   useAppStore.setState({
@@ -90,6 +91,18 @@ describe('动作层错误分支', () => {
       tone: 'err',
     });
     expect(state.logs[state.logs.length - 1].message).toContain('192.0.2.10:5555');
+  });
+
+  it('取消连接后给出提示，并把连接 busy 交给原请求收尾', async () => {
+    mocks.call.mockResolvedValueOnce({ ok: true });
+
+    await cancelConnect();
+
+    const state = useAppStore.getState();
+    expect(mocks.call).toHaveBeenCalledWith('devices.cancel');
+    expect(state.deviceError).toBe('连接已取消');
+    expect(state.toasts[state.toasts.length - 1]).toMatchObject({ text: '已取消连接' });
+    expect(state.logs[state.logs.length - 1].message).toBe('取消连接');
   });
 
   it('保存配置失败时返回 false，配置不变并显示错误横幅', async () => {

@@ -74,6 +74,24 @@ pub fn canonical_hardware_serial(hardware_serial: &str, endpoint: &str) -> Strin
     text.to_string()
 }
 
+/// 型号归一化：去掉空格/连字符/下划线并转小写。
+///
+/// 同一个平板在 mDNS 名字里是 "CGA W00"，在 `adb devices -l` 的 model 里是
+/// "CGA-W00"，不归一化就会被当成两台设备（2026-11-14 用户截图里的两行）。
+pub fn normalize_model(text: &str) -> String {
+    text.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+/// 两条记录的型号是否指向同一台设备：任意一侧为空则只按主机判断。
+fn model_compatible(left: &str, right: &str) -> bool {
+    let left = normalize_model(left);
+    let right = normalize_model(right);
+    left.is_empty() || right.is_empty() || left == right
+}
+
 /// 拆 `serial` → (host, port, transport)。transport 是 "usb" / "wifi"。
 pub fn split_endpoint(serial: &str) -> (String, u16, String) {
     let text = serial.trim();
@@ -468,6 +486,14 @@ impl Registry {
                 }
             }
         }
+        // 1.5.x 及更早版本会把"同一台平板换了无线端口"存成两条记录，读入时
+        // 顺手合并，用户升级后旧数据也能自愈（不需要手动删记录）。
+        if registry.merge_duplicates() > 0 {
+            registry
+                .issues
+                .push("设备记录里有同一台平板的重复条目，已自动合并".to_string());
+            registry.needs_rebuild = true;
+        }
         registry
     }
 
@@ -655,7 +681,19 @@ impl Registry {
                 let temporary = self.devices[cursor].hardware_serial.is_empty();
                 let same_mac = !mac.is_empty() && self.devices[cursor].macs.iter().any(|item| item == &mac);
                 let same_endpoint = self.devices[cursor].endpoint(&text).is_some();
-                if same_hw || (temporary && (same_mac || same_endpoint)) {
+                // 无线调试的端口每次打开都会变，端点比对永远对不上；只要临时记录
+                // 和这次连接在同一台主机、型号也不冲突，就当同一台设备合并。
+                let same_host = !hardware.is_empty()
+                    && is_wireless_serial(&text)
+                    && self.devices[cursor]
+                        .endpoints
+                        .iter()
+                        .any(|endpoint| {
+                            !endpoint.host.is_empty()
+                                && endpoint.host == split_endpoint(&text).0
+                                && model_compatible(&self.devices[cursor].model, model)
+                        });
+                if same_hw || (temporary && (same_mac || same_endpoint || same_host)) {
                     let other = self.devices.remove(cursor);
                     if let Some(record) = self.devices.get_mut(index) {
                         merge_record(record, other);
@@ -709,6 +747,11 @@ impl Registry {
     }
 
     /// 端点改名（无线地址变化时保留历史别名）。
+    ///
+    /// 目标端点已经挂在另一条记录上时不再直接放弃：只要两条记录可以证明是同一台
+    /// 设备（同硬件序列号，或其中一条还是没有身份的临时记录），就先合并再改名。
+    /// 否则"新端口先被建成临时记录、随后改名被拒绝"就会永久留下两条记录
+    /// （2026-11-14 用户截图里的 CGA W00 / CGA-W00）。
     pub fn rename_endpoint(
         &mut self,
         previous: &str,
@@ -721,17 +764,45 @@ impl Registry {
         if previous.is_empty() || target.is_empty() {
             return None;
         }
-        let index = self
+        let mut index = self
             .devices
             .iter()
             .position(|record| record.endpoint(&previous).is_some())?;
-        if self
+        if let Some(other) = self
             .devices
             .iter()
-            .enumerate()
-            .any(|(position, record)| position != index && record.endpoint(&target).is_some())
+            .position(|record| record.endpoint(&target).is_some())
         {
-            return None;
+            if other != index {
+                let mergeable = {
+                    let left = &self.devices[index];
+                    let right = &self.devices[other];
+                    let same_hw = !left.hardware_serial.is_empty()
+                        && left.hardware_serial.eq_ignore_ascii_case(&right.hardware_serial);
+                    // 同主机 + 型号不冲突才算同一台；只凭"有一条没有身份"就合并，
+                    // 会把同一网段里两台都没拿到硬件序列号的平板并成一条。
+                    let same_host = left.endpoints.iter().any(|left_endpoint| {
+                        right.endpoints.iter().any(|right_endpoint| {
+                            !left_endpoint.host.is_empty()
+                                && left_endpoint.host == right_endpoint.host
+                                && model_compatible(&left.model, &right.model)
+                        })
+                    });
+                    same_hw || same_host
+                };
+                if !mergeable {
+                    return None;
+                }
+                let other_record = self.devices.remove(other);
+                if other < index {
+                    index -= 1;
+                }
+                if let Some(record) = self.devices.get_mut(index) {
+                    merge_record(record, other_record);
+                } else {
+                    return None;
+                }
+            }
         }
         let stamp = clockfmt::iso_seconds();
         let record = self.devices.get_mut(index)?;
@@ -766,6 +837,105 @@ impl Registry {
         }
         record.last_seen = stamp;
         Some(record.id.clone())
+    }
+
+    /// 扫描/刷新时把"同一台平板的新无线端点"认回到已有记录上。
+    ///
+    /// 无线调试每开一次端口都会变，`adb devices` 立刻就能看到新地址，但注册表
+    /// 里还是旧地址——如果不管，界面上就是"在线的新端口"和"不在线的旧记录"
+    /// 两条（用户 2026-11-14 的截图）。这里按"同一主机 + 型号不冲突 + 旧端点
+    /// 此刻不在线"把新端点改名到旧记录上。
+    pub fn adopt_live_endpoint(
+        &mut self,
+        serial: &str,
+        model: &str,
+        live: &[String],
+    ) -> Option<String> {
+        let text = normalize_serial(serial);
+        if text.is_empty() || !is_wireless_serial(&text) {
+            return None;
+        }
+        let (host, _, _) = split_endpoint(&text);
+        if host.is_empty() {
+            return None;
+        }
+        let mut adopt: Option<String> = None;
+        for record in &self.devices {
+            if record.endpoint(&text).is_some() {
+                // 已经认识这个端点，不需要改名。
+                return None;
+            }
+            if !model_compatible(&record.model, model) {
+                continue;
+            }
+            for endpoint in &record.endpoints {
+                if endpoint.host != host || endpoint.serial == text {
+                    continue;
+                }
+                // 旧端点还在线说明是同主机的另一个连接，别动它。
+                if live.iter().any(|item| item == &endpoint.serial) {
+                    continue;
+                }
+                adopt.get_or_insert(endpoint.serial.clone());
+            }
+        }
+        let previous = adopt?;
+        self.rename_endpoint(&previous, &text, "", "scan")
+    }
+
+    /// 合并已经落盘的重复记录；返回合并条数。
+    ///
+    /// 判据只有两条，都要求"可以证明是同一台设备"：同 MAC，或同主机 + 型号
+    /// 不冲突。宁可不合并也不要把两台不同的平板并成一条。
+    pub fn merge_duplicates(&mut self) -> usize {
+        let mut merged = 0;
+        let mut cursor = 0;
+        while cursor < self.devices.len() {
+            let mut other = cursor + 1;
+            while other < self.devices.len() {
+                let same_mac = self.devices[cursor].macs.iter().any(|mac| {
+                    !mac.is_empty() && self.devices[other].macs.iter().any(|item| item == mac)
+                });
+                let same_hw = !self.devices[cursor].hardware_serial.is_empty()
+                    && self.devices[cursor]
+                        .hardware_serial
+                        .eq_ignore_ascii_case(&self.devices[other].hardware_serial);
+                let same_host = self.devices[cursor].endpoints.iter().any(|left| {
+                    !left.host.is_empty()
+                        && left.transport == "wifi"
+                        && self.devices[other].endpoints.iter().any(|right| {
+                            right.transport == "wifi"
+                                && right.host == left.host
+                                && model_compatible(&self.devices[cursor].model, &self.devices[other].model)
+                        })
+                });
+                if !(same_mac || same_hw || same_host) {
+                    other += 1;
+                    continue;
+                }
+                // 有硬件序列号的那条当主记录，身份更稳。
+                let (keep, drop_at) = if self.devices[other].hardware_serial.is_empty()
+                    && !self.devices[cursor].hardware_serial.is_empty()
+                {
+                    (cursor, other)
+                } else {
+                    (other, cursor)
+                };
+                let removed = self.devices.remove(drop_at);
+                let keep = if drop_at < keep { keep - 1 } else { keep };
+                if let Some(record) = self.devices.get_mut(keep) {
+                    merge_record(record, removed);
+                }
+                merged += 1;
+                cursor = 0;
+                other = 0;
+                break;
+            }
+            if other >= self.devices.len() {
+                cursor += 1;
+            }
+        }
+        merged
     }
 
     /// 删除某个端点；记录空了就整条删除。返回是否删掉。
@@ -1043,5 +1213,83 @@ mod tests {
         let record = registry.find_by_serial("ABC:5555").expect("导入记录");
         assert_eq!(record.endpoints[0].source, "legacy");
         assert_eq!(record.macs, vec!["88:a4:79:1a:2b:3c".to_string()]);
+    }
+
+    #[test]
+    fn rename_endpoint_merges_the_record_holding_the_new_port() {
+        let mut registry = Registry::new(temp_path("rename-merge"));
+        let id = registry
+            .upsert("10.210.247.159:42263", "R58M123", "CGA-W00", "", "", "connect")
+            .expect("应插入");
+        // 新端口先被扫描建成一条没有身份的临时记录。
+        registry.upsert("10.210.247.159:44667", "", "CGA W00", "", "", "scan");
+        assert_eq!(registry.devices.len(), 2);
+        let renamed = registry
+            .rename_endpoint("10.210.247.159:42263", "10.210.247.159:44667", "", "locate")
+            .expect("同主机应合并而不是拒绝");
+        assert_eq!(renamed, id);
+        assert_eq!(registry.devices.len(), 1);
+        let record = registry.find_by_id(&id).expect("记录存在");
+        assert_eq!(record.hardware_serial, "R58M123");
+        assert!(record
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.serial == "10.210.247.159:44667"));
+    }
+
+    #[test]
+    fn adopt_live_endpoint_updates_the_old_record_in_place() {
+        let mut registry = Registry::new(temp_path("adopt"));
+        let id = registry
+            .upsert("10.210.247.159:42263", "R58M123", "CGA-W00", "", "", "connect")
+            .expect("应插入");
+        let adopted = registry.adopt_live_endpoint("10.210.247.159:44667", "CGA W00", &[]);
+        assert_eq!(adopted.as_deref(), Some(id.as_str()));
+        assert_eq!(registry.devices.len(), 1);
+        let record = registry.find_by_id(&id).expect("记录存在");
+        assert!(record
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.serial == "10.210.247.159:44667"));
+        // 旧端口留在别名里，布局迁移还能用。
+        assert!(record.endpoints.iter().any(|endpoint| endpoint
+            .aliases
+            .iter()
+            .any(|alias| alias == "10.210.247.159:42263")));
+    }
+
+    #[test]
+    fn adopt_live_endpoint_leaves_a_still_online_sibling_alone() {
+        let mut registry = Registry::new(temp_path("adopt-online"));
+        registry.upsert("10.210.247.159:42263", "R58M123", "CGA-W00", "", "", "connect");
+        assert!(registry
+            .adopt_live_endpoint(
+                "10.210.247.159:44667",
+                "CGA W00",
+                &["10.210.247.159:42263".to_string()]
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn merge_duplicates_folds_the_same_tablet_on_one_host() {
+        let mut registry = Registry::new(temp_path("dedupe"));
+        registry.upsert("10.210.247.159:42263", "R58M123", "CGA-W00", "", "", "connect");
+        registry.upsert("10.210.247.159:44667", "", "CGA W00", "", "", "scan");
+        assert_eq!(registry.devices.len(), 2);
+        assert_eq!(registry.merge_duplicates(), 1);
+        assert_eq!(registry.devices.len(), 1);
+        let record = &registry.devices[0];
+        assert_eq!(record.hardware_serial, "R58M123");
+        assert_eq!(record.endpoints.len(), 2);
+    }
+
+    #[test]
+    fn merge_duplicates_keeps_different_hosts_apart() {
+        let mut registry = Registry::new(temp_path("dedupe-hosts"));
+        registry.upsert("10.0.0.7:5555", "", "CGA-W00", "", "", "scan");
+        registry.upsert("10.0.0.8:5555", "", "CGA-W00", "", "", "scan");
+        assert_eq!(registry.merge_duplicates(), 0);
+        assert_eq!(registry.devices.len(), 2);
     }
 }

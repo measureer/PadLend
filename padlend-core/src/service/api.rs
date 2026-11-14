@@ -18,7 +18,14 @@ use super::engine::Engine;
 use super::serializers as S;
 
 /// RPC 连接等待上限（Python deadline = 45.0 秒）。
-const CONNECT_TIMEOUT_S: f64 = 45.0;
+const CONNECT_TIMEOUT_S: f64 = 30.0;
+/// 点击连接时对无线地址做的一次 adb connect 超时。
+///
+/// 20s 只适合"添加设备"那种明确的新地址；界面点连接时地址通常已经在
+/// adb devices 里，真不可达也应该在几秒内给出结果，而不是让"连接中"空转。
+const CONNECT_ADB_TIMEOUT_S: f64 = 6.0;
+/// 连接过程中每隔多久写一条"仍在连接"日志（用户能看到进度）。
+const CONNECT_PROGRESS_S: f64 = 8.0;
 
 /// 分派一个方法；app.shutdown 由 methods 层提前拦截。
 pub fn call(engine: &Arc<Engine>, method: &str, params: &Value) -> Reply {
@@ -43,6 +50,7 @@ fn dispatch(engine: &Arc<Engine>, method: &str, params: &Value) -> Result<Value,
         "devices.add" => devices_add(engine, params),
         "devices.connect" => devices_connect(engine, params),
         "devices.disconnect" => Ok(devices_disconnect(engine)),
+        "devices.cancel" => Ok(devices_cancel(engine)),
         "devices.remove" => devices_remove(engine, params),
         // -- 布局 ---------------------------------------------------------
         "layout.desktop" => Ok(layout_desktop(engine)),
@@ -208,23 +216,44 @@ fn devices_connect(engine: &Arc<Engine>, params: &Value) -> Result<Value, String
     };
     // 先把目标写进引擎配置：会话的候选串来自 device_candidates()，不同步会出现
     // "点了新端口、会话仍连配置/注册表里的旧端口"（真机日志里的 44731）。
+    // 取代次要在触发连接之前：此刻之后任何一次 devices.cancel 都会让本轮
+    // 轮询立刻收尾（否则用户只能干等 CONNECT_TIMEOUT_S）。
+    let epoch = engine.connect_epoch();
     engine.set_requested_serial(&serial);
     engine.emit_log("DEVICE", format!("连接请求：{serial}"));
     if serial.contains(':') {
         if let Some(adb) = engine.adb_api() {
-            let _ = adb.connect(&serial, 20.0);
+            let _ = adb.connect(&serial, CONNECT_ADB_TIMEOUT_S);
         }
+    }
+    // adb connect 可能占了整整 CONNECT_ADB_TIMEOUT_S，期间用户已经点了「取消连接」；
+    // 这时再 connect_device 会把刚被 disconnect_device 挂起的会话重新拉起来。
+    if engine.connect_cancelled(epoch) {
+        engine.emit_log("DEVICE", "连接已取消（用户主动）");
+        return Ok(json!({ "ok": false, "cancelled": true, "message": "连接已取消" }));
     }
     router.connect_device(Some(serial.as_str()));
     engine.enable_facts();
     let deadline = Instant::now() + Duration::from_secs_f64(CONNECT_TIMEOUT_S);
     let mut found = None;
+    let mut last_progress = Instant::now();
     while Instant::now() < deadline {
+        if engine.connect_cancelled(epoch) {
+            // 取消可能发生在 connect_device 之后，会话已经在后台跑起来了：
+            // 再挂起一次，保证被取消的连接不会自己在后面连上。
+            router.disconnect_device();
+            engine.emit_log("DEVICE", "连接已取消（用户主动）");
+            return Ok(json!({ "ok": false, "cancelled": true, "message": "连接已取消" }));
+        }
         if let Some(facts) = router.facts() {
             if !facts.serial.trim().is_empty() {
                 found = Some(facts);
                 break;
             }
+        }
+        if last_progress.elapsed() >= Duration::from_secs_f64(CONNECT_PROGRESS_S) {
+            last_progress = Instant::now();
+            engine.emit_log("DEVICE", format!("仍在连接 {serial}（可点「取消连接」中止）"));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -251,11 +280,21 @@ fn devices_connect(engine: &Arc<Engine>, params: &Value) -> Result<Value, String
             Ok(json!({ "ok": true, "message": "" }))
         }
         None => {
-            let message = "连接超时：请确认 USB 调试已授权，且 adb 能看到设备";
+            let message = format!(
+                "连接超时（{CONNECT_TIMEOUT_S:.0}s）：请确认 USB 调试已授权，且 adb 能看到设备"
+            );
             engine.emit_log("DEVICE", format!("操作失败：{message}"));
             Ok(json!({ "ok": false, "message": message }))
         }
     }
+}
+
+/// 取消正在进行的首连（设备页"取消连接"按钮）。
+///
+/// 线程化 RPC 之后这条请求不会再被 devices.connect 挡住，所以用户随时能按。
+fn devices_cancel(engine: &Arc<Engine>) -> Value {
+    engine.cancel_connect();
+    json!({ "ok": true })
 }
 
 fn devices_disconnect(engine: &Arc<Engine>) -> Value {

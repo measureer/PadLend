@@ -128,6 +128,21 @@ export async function connectDevice(serial: string): Promise<void> {
   }
 }
 
+/**
+ * 中止进行中的连接。服务端的 devices.connect 轮询到取消标记后会立刻返回，
+ * 清 busy.connect 的是那个请求自己的 finally——这里不清，否则按钮会提前复原。
+ */
+export async function cancelConnect(): Promise<void> {
+  store().appendLogs([makeLog('DEVICE', '取消连接')]);
+  try {
+    await backend.call(RPC.devicesCancel);
+    store().setDeviceError('连接已取消');
+    store().pushToast('已取消连接');
+  } catch (error) {
+    store().pushToast((error as Error).message, 'err');
+  }
+}
+
 export async function disconnectDevice(): Promise<void> {
   store().setBusy('connect', true);
   store().appendLogs([makeLog('DEVICE', '断开当前设备')]);

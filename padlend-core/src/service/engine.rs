@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -155,6 +155,9 @@ pub struct Engine {
     relocate_at: Mutex<Option<Instant>>,
     /// 自动重定位：连续落空次数（连上或迁移成功后清零）。
     relocate_misses: AtomicU32,
+    /// 连接请求代次：用户点"取消连接"时 +1，正在轮询 facts 的 devices.connect
+    /// 立刻发现并返回"已取消"，不必干等 45s 超时。
+    connect_epoch: AtomicU64,
 }
 
 impl std::fmt::Debug for Engine {
@@ -278,6 +281,7 @@ impl Engine {
             facts_ready: AtomicBool::new(false),
             relocate_at: Mutex::new(None),
             relocate_misses: AtomicU32::new(0),
+        connect_epoch: AtomicU64::new(0),
         });
 
         engine.init_router(&cfg, engine.adb.clone())?;
@@ -1015,6 +1019,29 @@ impl Engine {
         lock(&self.config).device.serial = serial.to_string();
     }
 
+    /// 当前连接代次。devices.connect 开始时取一次，轮询中比对。
+    pub fn connect_epoch(&self) -> u64 {
+        self.connect_epoch.load(Ordering::SeqCst)
+    }
+
+    /// 取消正在进行的首连（用户点"取消连接"）。
+    ///
+    /// 只做两件事：把会话的取消标志置位（阻塞中的 start 会在下一个检查点
+    /// 退出），并让 devices.connect 的轮询立刻收尾。绝不动 devices.json——
+    /// 用户取消的是这一次连接，不是这台设备的记忆记录。
+    pub fn cancel_connect(&self) {
+        self.connect_epoch.fetch_add(1, Ordering::SeqCst);
+        if let Some(router) = self.router() {
+            router.disconnect_device();
+        }
+        self.emit_log("DEVICE", "连接已取消");
+    }
+
+    /// devices.connect 轮询用的取消判断：代次变了就算取消。
+    pub fn connect_cancelled(&self, epoch: u64) -> bool {
+        self.connect_epoch() != epoch
+    }
+
     pub fn device_candidates(&self) -> Vec<String> {
         let current = lock(&self.config).device.serial.trim().to_string();
         if current.is_empty() {
@@ -1190,16 +1217,43 @@ impl Engine {
         let mut devices: Vec<Value> = Vec::new();
         let mut seen_serials: Vec<String> = Vec::new();
         let mut seen_ids: Vec<String> = Vec::new();
+        // 本次扫描里真实在线（state=device）的端点；认领新端口时要排除它们，
+        // 免得把"同主机的另一个在线连接"当成换了端口的旧记录。
+        let live_serials: Vec<String> = entries
+            .iter()
+            .filter(|entry| entry.online())
+            .map(|entry| entry.serial.trim().to_string())
+            .filter(|serial| !serial.is_empty())
+            .collect();
 
         for entry in entries {
             let serial = entry.serial.trim().to_string();
             if serial.is_empty() || seen_serials.iter().any(|item| item == &serial) {
                 continue;
             }
-            let record = {
+            let mut record = {
                 let registry = lock(&self.registry);
                 registry.find_by_serial(&serial).cloned()
             };
+            // 无线调试换端口的常态：adbd 已经在新地址上线，注册表里还是旧地址。
+            // 直接认领到旧记录上（改名 + 清 failure），界面就只会剩一行。
+            if record.is_none() && entry.online() {
+                let adopted = {
+                    let mut registry = lock(&self.registry);
+                    registry.adopt_live_endpoint(&serial, &entry.model, &live_serials)
+                };
+                if adopted.is_some() {
+                    let _ = self.save_registry();
+                    self.emit_log(
+                        "DEVICE",
+                        format!("设备记录已更新：同一台平板的新无线地址 {serial}"),
+                    );
+                    record = {
+                        let registry = lock(&self.registry);
+                        registry.find_by_serial(&serial).cloned()
+                    };
+                }
+            }
             let mut dto = serializers::device_entry_dict(entry);
             let located_entry = record
                 .as_ref()
