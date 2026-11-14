@@ -588,4 +588,39 @@
 - **教训**：凡是「只有某条 RPC 才会打开的开关」，都要确认自动路径（supervisor / 定时器 / 回调）
   是不是也走那条 RPC。这一次的表现是「功能正常、界面骗人」，比功能坏掉更难被发现。
 
+## 15. 1.7.5 补录：托盘菜单的两个「点了没反应」（2026-11-15）
+
+### 15.1 「打开配置…」「打开日志目录…」被 capability 的空 scope 全拒
+
+- **现象**：托盘右键点「打开配置…」，什么都不打开，右下角提示「无法打开：undefined」。
+- **根因**：前端用的是 `@tauri-apps/plugin-opener` 的 `openPath()`，最终 invoke
+  `plugin:opener|open_path`。这个命令是 scope 敏感的：先按 capability 里该权限的 scope 过滤路径。
+  `src-tauri/capabilities/default.json` 里只写了字符串形式的 `opener:allow-open-path`，Tauri 的 ACL
+  清单对它的描述是 “Enables the open_path command without any pre-configured scope.” —— 空 scope
+  等于什么都不允许，所以任何路径都被拒。
+- **为什么提示是 undefined**：Rust 侧返回 `Err(String)`，Tauri 以**裸字符串** reject；前端
+  `catch (error) { (error as Error).message }` 对这种值取不到 `message`，于是显示 undefined。
+- **修法**：外壳自己加 `#[tauri::command] pub fn open_path(path: String)`（`src-tauri/src/commands.rs`），
+  内部直接调 `tauri_plugin_opener::open_path()`，不走 ACL；`src/api/client.ts` 改用这个命令，
+  并用 `normalizeError()` 把字符串包成 `Error`。capability 里那行无用的 `opener:allow-open-path` 一并删掉。
+- **接着踩的第二个坑**：改完命令后「打开配置…」还是没反应——这台机器上 `.yaml` 根本没有文件关联
+  （`cmd /c assoc .yaml` → File association not found）。更坑的是 ShellExecute 对这种情况
+  **返回成功却什么都不启动**：`Start-Process config.yaml` 无异常、无窗口、无进程，所以
+  「先试系统关联、失败再兜底」的写法永远不会触发兜底（第一版就是这么写的，日志里一条都没有）。
+  修法：`open_path` 直接按扩展名判断，文本类（yaml/yml/json/log/txt/ini/md/conf/csv）交给
+  `notepad.exe`，目录与其他文件才走系统关联。
+  验证问题时一定要区分「命令没跑到」「scope 拒了」「系统静默忽略」三层，不然会一直怀疑代码。
+- **教训**：Tauri 2 里凡是「scope 敏感」的插件命令（opener / fs / shell …），只写字符串权限名往往等于
+  **空 scope = 全拒**；要么在权限里配 `{ "identifier": ..., "allow": [{ "path": ... }] }`，要么在自己的
+  命令里调插件 Rust API。另外：`invoke` 的 reject 值不一定是 Error，统一 `normalizeError` 再取 message。
+
+### 15.2 窗口收在托盘时，托盘里开对话框的菜单项看不见效果
+
+- **现象**：点窗口 X 收进托盘后，右键托盘点「关于」「运行诊断…」「首次设置向导…」，屏幕没反应。
+- **根因**：这三项都是把 `openDialog(...)` 交给前端渲染成应用内 Modal，托盘事件里只 emit、没有把窗口
+  唤回前台；窗口隐藏时对话框照常渲染，但不可见。
+- **修法**：`src-tauri/src/tray.rs` 的 `on_menu_event` 在 emit 前判断 action，属于这三项就先
+  `window.show()` + `unminimize()` + `set_focus()`。
+- **教训**：托盘菜单里凡是「结果落在主窗口里」的项，点击时都要先把窗口唤回来，否则用户只能判断为坏了。
+
 

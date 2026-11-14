@@ -3,7 +3,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { openPath as tauriOpenPath } from '@tauri-apps/plugin-opener';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { MockBackend, type EventHandler } from './mock';
 
@@ -79,7 +78,15 @@ class TauriBackend implements Backend {
   }
 
   async openPath(path: string): Promise<void> {
-    await tauriOpenPath(path);
+    try {
+      // 走外壳自己的 open_path 命令：插件前端的 plugin:opener|open_path 受 capability
+      // 的 path scope 限制（清单里没给 scope，任何路径都拒），命令层没有这层约束。
+      await invoke('open_path', { path });
+    } catch (error) {
+      // Rust 命令返回 Err(String)，Tauri 直接以裸字符串 reject；不包一层
+      // Error 的话上层读 .message 会得到 undefined（1.7.5 前的「无法打开：undefined」）。
+      throw normalizeError(error);
+    }
   }
 
   async setCloseToTray(enabled: boolean): Promise<void> {

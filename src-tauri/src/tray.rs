@@ -72,6 +72,15 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 app.exit(0);
                 return;
             }
+            // 这些菜单项打开的是应用内的对话框：窗口收在托盘里时如果不先亮出来，
+            // 用户点了会觉得「没反应」（对话框确实渲染了，只是没人看得见）。
+            if matches!(action.as_str(), "about" | "wizard" | "run-diagnostics") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
             let _ = app.emit("tray:action", json!({ "action": action }));
         })
         .on_tray_icon_event(|tray, event| {

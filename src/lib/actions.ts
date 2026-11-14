@@ -257,9 +257,12 @@ export async function runDiagnostics(): Promise<void> {
   s.setDiagnostics({ collecting: true, status: '正在采集 …', progress: '' });
   try {
     const result = await backend.call<DiagnosticsResult>(RPC.diagnosticsRun);
+    // 引擎会把序列号脱敏成 "<serial>"，状态栏直接用按设备事实缓存里的真序列号，
+    // 读不到就只报「已脱敏」，别把脱敏占位符当成设备名显示出来。
+    const who = s.facts?.serial || (result.device.serial ? '序列号已脱敏' : '未检测到设备');
     s.setDiagnostics({
       collecting: false,
-      status: `采集完成 · ${result.device.serial || '未检测到设备'}`,
+      status: `采集完成 · ${who}`,
       text: result.text,
       progress: '',
     });

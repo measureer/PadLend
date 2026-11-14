@@ -37,6 +37,46 @@ pub fn set_tray_state(captured: bool, connected: bool, device: String, app: AppH
     tray::update(&app, captured, connected, &format!("PadLend · {suffix}"));
 }
 
+/// 用系统默认程序打开文件或目录（配置、日志目录、第三方许可）。
+///
+/// 1.7.5 起改由外壳直接调用插件 Rust API：前端走 `plugin:opener|open_path` 时会先过
+/// capability 的 path scope，而能力清单里只声明了 `opener:allow-open-path`（无 scope 条目，
+/// 见 Tauri 的 ACL："without any pre-configured scope"），于是任何路径都被拒，前端只收到
+/// 一个裸字符串错误，最终提示成「无法打开：undefined」——「打开配置…」「打开日志目录…」
+/// 两个托盘菜单项因此完全不可用。
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    let target = std::path::PathBuf::from(&path);
+    // Windows 默认不给 .yaml/.yml/.md 这类扩展名登记关联，ShellExecute **不报错**却也什么都
+    // 不启动（Start-Process config.yaml → 无异常、无窗口），所以「靠系统关联兜底」不可行。
+    // 配置、日志、第三方许可是我们自己的纯文本，直接交给记事本，行为可预期。
+    let is_text_file = target.is_file()
+        && target
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                matches!(
+                    e.to_ascii_lowercase().as_str(),
+                    "yaml" | "yml" | "json" | "log" | "txt" | "ini" | "md" | "conf" | "csv"
+                )
+            })
+            .unwrap_or(false);
+    if is_text_file {
+        std::process::Command::new("notepad.exe")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| {
+                crate::shell_log::write_line(&format!("用记事本打开 {path} 失败：{e}"));
+                format!("用记事本打开失败：{e}")
+            })?;
+        return Ok(());
+    }
+    tauri_plugin_opener::open_path(&target, None::<&str>).map_err(|e| {
+        crate::shell_log::write_line(&format!("打开 {path} 失败：{e}"));
+        e.to_string()
+    })
+}
+
 #[tauri::command]
 pub fn service_shutdown(bridge: State<'_, Arc<Bridge>>) {
     bridge.shutdown();

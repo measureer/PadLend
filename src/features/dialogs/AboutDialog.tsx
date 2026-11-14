@@ -32,8 +32,8 @@ export function AboutDialog() {
         </div>
       </div>
       <div className="about-list">
-        <div>界面：Tauri 2（Rust 外壳）+ React 19 + TypeScript；业务引擎仍由 Python 服务进程承载。</div>
-        <div>第三方：scrcpy（Apache-2.0）、Android platform-tools、PyYAML、psutil；许可证原文见 THIRD_PARTY_NOTICES.md。</div>
+        <div>界面：Tauri 2（Rust 外壳）+ React 19 + TypeScript；业务引擎是同包里独立的 Rust 进程 padlend-core。</div>
+        <div>第三方：scrcpy-server 5.0.1、Android platform-tools（adb）、WebView2 与一批 MIT/Apache-2.0 的 Rust / npm 依赖；完整清单与许可原文见 THIRD_PARTY_NOTICES.md。</div>
         <div>许可证：本程序按 Apache-2.0 发布，完整条款见随包 LICENSE。</div>
       </div>
       <div className="help-block" style={{ marginTop: 'var(--sp-5)' }}>

@@ -68,6 +68,7 @@ pub fn run() {
             commands::rpc,
             commands::set_close_to_tray,
             commands::set_tray_state,
+            commands::open_path,
             commands::service_shutdown,
             commands::quit_app,
             commands::app_info,

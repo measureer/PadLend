@@ -2,6 +2,33 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.7.5] — 2026-11-15
+
+### 修复
+
+- **托盘菜单「打开配置…」「打开日志目录…」完全无效**（提示「无法打开：undefined」）。前端走的是
+  插件的 `plugin:opener|open_path` 命令，它要先过 capability 里的 path scope；而能力清单只写了
+  `opener:allow-open-path`（Tauri ACL 里明确是 “without any pre-configured scope”），空 scope
+  等于拒绝一切路径。修法：外壳新增自己的 `open_path` 命令，直接调插件的 Rust API，绕开这层
+  scope；前端顺便把 Rust 的裸字符串错误包成 `Error`，不再冒出 undefined。
+- **绕开 scope 后「打开配置…」仍然打不开**：Windows 默认不给 `.yaml` 登记文件关联（`assoc .yaml`
+  查不到），而且 ShellExecute 对这种情况**不报错却什么都不启动**（`Start-Process config.yaml`
+  无异常、无窗口），所以"关联失败再兜底"这条路是死的。现在 `open_path` 对文本类扩展名
+  （yaml/yml/json/log/txt/ini/md/conf/csv）直接用 `notepad.exe` 打开，目录与其他文件仍交给系统关联。
+- **窗口收在托盘时，托盘的「关于」「运行诊断」「首次设置向导」点了像没反应**。这三个开的是应用内
+  对话框，窗口隐藏时对话框确实渲染了，但没人看得见。现在点击前先 `show` / `unminimize` /
+  `set_focus` 主窗口。
+- 「关于」里的组件说明还是 1.7.0 之前的：写着「业务引擎仍由 Python 服务进程承载」和 PyYAML / psutil。
+  改成 Rust 引擎 padlend-core，第三方按 THIRD_PARTY_NOTICES 的实际清单重写。
+- 诊断对话框状态栏会把引擎脱敏后的 `<serial>` 当设备名显示；现在优先用设备事实里的真序列号，
+  读不到就显示「序列号已脱敏」。
+
+### 验证
+
+- 前端 `vitest` **45 passed / 9 files**、`tsc --noEmit` 通过；`cargo check`（src-tauri）通过。
+- 真机：托盘「打开配置…」用记事本打开 config.yaml；「打开日志目录…」打开资源管理器；
+  窗口收进托盘后点「关于」，窗口自动弹出并显示对话框。
+
 ## [1.7.4] — 2026-11-15
 
 ### 新增
