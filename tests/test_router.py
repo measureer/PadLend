@@ -1197,3 +1197,56 @@ def test_tablet_can_enter_from_display1_left_near_the_corner() -> None:
         rig.router.on_raw(raw(-10, 0))
     assert rig.router.state is State.CAPTURED
     rig.router.stop()
+
+
+# ---------------------------------------------------------------------------
+# 连接竞态（真机 EasyTier 上暴露：auto_connect 与 devices.connect 互相 cancel）
+# ---------------------------------------------------------------------------
+def test_connect_device_reuses_an_in_flight_start_for_the_same_serial() -> None:
+    """同一台设备正在连时再次 connect_device：不能取消那次握手中的 start。"""
+    rig = make_rig()
+    rig.router.start()
+    try:
+        rig.config.device.serial = "S1"
+        rig.router._connect_in_progress = True
+        rig.session.stop_calls = 0
+        rig.session.cancel_calls = 0
+
+        rig.router.connect_device("S1")
+
+        assert rig.session.cancel_calls == 0
+        assert rig.session.stop_calls == 0
+    finally:
+        rig.router.stop()
+
+
+def test_connect_device_still_switches_when_another_serial_is_in_flight() -> None:
+    """目标设备不同时必须继续走"停旧会话、切新设备"的路径。"""
+    rig = make_rig()
+    rig.router.start()
+    try:
+        rig.config.device.serial = "S1"
+        rig.router._connect_in_progress = True
+        rig.session.stop_calls = 0
+
+        rig.router.connect_device("S2")
+
+        assert rig.session.stop_calls >= 1
+        assert rig.config.device.serial == "S2"
+    finally:
+        rig.router.stop()
+
+
+def test_write_failures_before_any_device_facts_do_not_fault() -> None:
+    """会话还没连上（facts 为空）时，写失败只是"还没起来"，不能累计成 FAULT。"""
+    rig = make_rig()
+    rig.router._facts = None
+    for _ in range(5):
+        rig.router._note_write_failure(RuntimeError("socket not ready"))
+    assert rig.router.state is not State.FAULT
+
+    # 对照：连上之后（facts 存在）同样的写失败必须按原逻辑进 FAULT。
+    rig.router._facts = default_facts()
+    for _ in range(3):
+        rig.router._note_write_failure(RuntimeError("socket broken"))
+    assert rig.router.state is State.FAULT

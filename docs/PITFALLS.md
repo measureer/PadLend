@@ -178,6 +178,20 @@
 - **再犯的代价**：表现像「PadLend 连上了但键鼠全坏」，很容易误判成 UHID 或平板问题；音频和控制一起抓包时才会发现控制流里是 PCM。
 
 ---
+### 2.7 auto_connect 与显式连接互相 cancel_start
+
+- **现象**：真机（EasyTier 异地组网）上 `devices.connect` 稳定失败，50s 后报「连接超时」，
+  日志是 `router.connect_failed attempt=1..6 code=E101 detail=连接后健康检查失败`；Python 与 Rust 实现表现一致。
+- **根因**：`auto_connect=true` 时 supervisor 线程会自动发起首连（`_connect_once`），
+  用户点「连接」又走 `router.connect_device()`，后者无条件 `stop_session_for_device()` →
+  `cancel_start()` 掐掉**正在握手**的那次 start（E105「启动已取消」），teardown 随即杀掉刚起的
+  scrcpy 服务端，显式连接拿到一条死通道。EasyTier 每次 adb 往返 300–700ms 把窗口放大到稳定复现；
+  USB 本地太快，通常撞不上。
+- **修法**：`connect_device` 里先判断"同一 serial 的连接是否正在进行"，是则**复用**（只刷新重试时间，
+  不 stop 不 cancel）；目标 serial 不同才走停机切换。另外，会话尚未拿到 `DeviceFacts` 时的写失败
+  不再计入 `CONSECUTIVE_WRITE_FAILURES`（否则启动 1 秒就被打成 E106 FAULT）。
+- **再犯的代价**：无线调试连不上、报错却指向"未授权/看不到设备"，排查方向完全被带偏。
+
 ## 3. Windows 遮罩与光标
 
 ### 3.1 交还后遮罩残留，透明层盖住屏幕
@@ -448,58 +462,3 @@
 - **根因**：创建真实 topmost 窗口会干扰桌面/CI 无桌面会话，只能用环境变量隔离。
 - **修法**：本地/专用机用 `PADLEND_UI_TESTS=1` 跑全套；CI 至少跑无窗口的 mock 版；新增遮罩逻辑必须同时有 mock 单测和 UI 测试。
 ## 9. Rust sidecar（B2 迁移）
-
-> 这些坑都发生在 `padlend-core` 的移植过程中，与语言/工具链强相关，Python 版不会遇到。
-
-### 9.1 `MutexGuard` 临时值把锁拖进整个代码块
-
-- **现象**：形如 `for x in lock(&work).items.clone()` 或 `if let Some(v) = lock(&map).remove(&k)` 的写法，
-  循环体/分支体里再取同一把锁就**直接死锁**（不是偶发，是稳定挂住），两个独立模块各自踩了一次。
-- **根因**：Rust 的临时值生命周期延伸到整个 `for`/`if let` 语句结束，`MutexGuard` 因此在块内一直持锁。
-- **修法**：先落局部变量再进入块：`let snapshot = { let guard = lock(...); guard.items.clone() };`。
-- **再犯的代价**：GUI 在锁屏/接管时静默卡死，且没有崩溃日志，只能看线程转储。
-
-### 9.2 `dumpsys input | grep -c` 在“干净”时退出码是 1
-
-- **现象**：迁移 `verify_clean` 时按退出码判断，干净的设备被判成脏的，退出流程误报“仍有残留”。
-- **根因**：`grep -c` 计数为 0 时退出码是 1；`server.py` 是先解析数字、后看退出码。
-- **修法**：与 Python 一致，先解析输出里的计数，再参考退出码；并加一条“rc=1 + 输出 0 → 干净”的回归测试。
-- **再犯的代价**：每次退出都走一遍“杀进程 + 等待”，慢且会误杀用户其它 scrcpy 会话。
-
-### 9.3 桌面锁屏时 `SendInput` / `SetCursorPos` 返回 `ERROR_ACCESS_DENIED`
-
-- **现象**：自动化跑 Raw Input 计数对拍时，注入全部失败；`GetForegroundWindow()` 返回 0、`GetCursorPos` 返回 (0,0)。
-- **根因**：工作站锁屏后交互桌面归 Winlogon 所有，普通进程拿不到输入通道。
-- **修法**：门禁工具先探测（`SetCursorPos` 返回值），锁屏时把活体门禁标记为 `blocked` 而不是 `fail`。
-- **再犯的代价**：CI/无人值守时把“环境不可用”误判成“实现有 bug”，白查一晚上。
-
-### 9.4 PyInstaller `--onefile` 的启动开销来自解压，不是 Python
-
-- **现象**：sidecar 冷启动 366 ms，改 `--onedir` 后 146 ms。
-- **根因**：onefile 每次启动把解释器 + adb（8.27 MB）+ 平台工具解到 `%TEMP%\_MEIxxxx`。
-- **修法**：要么 onedir，要么换 Rust（实测 10.6 ms）；**不要**用“启动慢”当成“必须换语言”的论据。
-- **再犯的代价**：拿错误的基线做技术选型，事后发现收益只有一半。
-
-### 9.5 cargo 链接失败：exe 被运行中的 sidecar 占用
-
-- **现象**：`cargo build` 报 `failed to remove ... padlend-core.exe: 拒绝访问` 或 `LNK1104`。
-- **根因**：上一轮冒烟/测试留下的 sidecar 进程还在跑，Windows 锁住可执行文件。
-- **修法**：`Get-Process padlend-core | Stop-Process -Force` 后再构建；测试脚本用 `terminate` + `wait`。
-- **再犯的代价**：构建随机失败，误以为是代码问题。
-
-### 9.6 golden trace 只比 `ok` 布尔会假绿
-
-- **现象**：`layout.save`（Python 本来就回错误）在 Rust 侧返回 `not implemented: layout.save` 也算“通过”。
-- **根因**：比较器只比 `ok` 是否相同，两边都失败就判一致。
-- **修法**：错误文本以 `not implemented:` 开头一律判失败；两边都报错时要求错误文本逐字一致。
-- **再犯的代价**：验收报告写着 25/25，实际有一半方法没实现。
-
-### 9.7 结构一致不等于值一致
-
-- **现象**：25/25 结构门禁全绿后，逐值对比才发现 `system.paths.noticesPath` 指向 `target/debug/`。
-- **根因**：`app_dir()` 在 Rust 里恒为 exe 目录，Python 在源码运行时用 `PROJECT_ROOT`。
-- **修法**：`tools/parity_probe.py` 拉两个实现做值级 diff（临时目录归一化），作为独立门禁。
-- **再犯的代价**：界面上显示的资源路径在开发/安装两种形态下不一致，用户找不到诊断文件。
-
----
-

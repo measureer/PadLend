@@ -33,12 +33,13 @@ def main(argv=None) -> int:
     parser.add_argument("--serial", required=True)
     parser.add_argument("--json", default="build/gates/m4-device.json")
     parser.add_argument("--cycles", type=int, default=3, help="接管/交还循环次数")
+    parser.add_argument("--no-auto-connect", action="store_true", help="关闭 auto_connect（对照旧竞态）")
     args = parser.parse_args(argv)
 
     home = Path(tempfile.mkdtemp(prefix="pl-device-"))
-    # 已知产品问题：supervisor 的自动连接与 devices.connect 会互相 cancel_start
-    # （E105 启动已取消，两个实现一致）。真机回归先把 auto_connect 关掉，避免这条竞态。
-    (home / "config.yaml").write_text("device:\n  auto_connect: false\n", encoding="utf-8")
+    # 默认走 auto_connect=true（真实用户路径）；--no-auto-connect 用于对照复现旧竞态。
+    if args.no_auto_connect:
+        (home / "config.yaml").write_text("device:\n  auto_connect: false\n", encoding="utf-8")
     env = dict(os.environ, PADLEND_HOME=str(home), PYTHONUNBUFFERED="1")
     env.pop("PADLEND_SIMULATE", None)
     proc = subprocess.Popen(

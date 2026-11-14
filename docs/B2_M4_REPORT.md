@@ -112,7 +112,20 @@ Python 原实现的行为完全相同（同样的 E105/E101 序列、同样的�
 
 **1000Hz 发送链路在 EasyTier 上实测成立**：`send_hz≈993`、`p95≈0.1–0.2ms`、`cpu_pct≈16.6`。
 
-### 7.3 建议修法（属产品代码，不在 B2 移植范围）
+### 7.3 已修复（2026-11-14）
+
+`core/router.py` 与 `padlend-core/src/logic/router.rs` 同步修改，两处：
+
+1. `connect_device()` 先判断"同一 serial 的连接是否正在进行"（`_connect_in_progress` / `connect_in_progress`）：
+   是则只刷新重试时间并返回，**不 stop、不 cancel_start**；目标 serial 不同才走停机切换。
+2. `_note_write_failure` / `note_write_failure`：会话还没有 `DeviceFacts` 时的写失败直接忽略
+   （不再 1 秒就把状态打成 E106 FAULT）。
+
+回归测试：Python `tests/test_router.py` 三个用例（同 serial 复用、不同 serial 仍切换、未连上时写失败不 FAULT），
+Rust `logic::router` 同款三个用例；两边全绿（Rust 521 passed / 13 ignored、Python 全绿）。
+`tools/device_regression.py` 默认改为 `auto_connect=true`（真实用户路径），`--no-auto-connect` 保留用于对照。
+
+### 7.4 原建议（保留作背景）
 
 1. `Router::connect_device` 在"同一 serial 的 start 正在进行"时**不要** `cancel_start`，直接等它完成或复用；
 2. 或让 `devices.connect` 先等 supervisor 的 in-flight 连接结束（同 serial 时返回其结果）；

@@ -1588,14 +1588,29 @@ impl Router {
 
     /// 用户从设备页选择一台设备并连接（可重复调用）。
     pub fn connect_device(&self, serial: Option<&str>) {
+        let requested = serial.map(str::to_string);
         let mut events: Vec<RouterEvent> = Vec::new();
         {
             let mut inner = self.lock_inner();
             if inner.stopped {
                 return;
             }
+            // 同一台设备的连接已经在进行（supervisor 自动首连 / 上一次点击）：
+            // 直接复用它，**不能**走下面的 stop_session_for_device()——那会
+            // cancel_start() 掉正在握手的会话，服务端随即被 teardown 杀掉，
+            // 显式连接最终拿到一条死通道（真机日志里的 E105「启动已取消」）。
+            let in_flight = lock_mutex(&self.requested_serial).clone();
+            if inner.connect_in_progress && in_flight.as_deref() == requested.as_deref() {
+                inner.device_suspended = false;
+                inner.reconnect_attempt = 0;
+                inner.next_reconnect_at = self.clock.now();
+                rdebug!(
+                    "router.device.connect serial={} (in-flight, reuse)",
+                    serial.unwrap_or("")
+                );
+                return;
+            }
             inner.device_suspended = false;
-            let requested = serial.map(str::to_string);
             {
                 let mut current = lock_mutex(&self.requested_serial);
                 if current.as_deref() != requested.as_deref() {
@@ -2914,6 +2929,11 @@ impl Router {
         {
             let mut inner = self.lock_inner();
             if inner.state == State::Fault {
+                return;
+            }
+            // 还没有设备信息 = 会话没连上：此刻的写失败只说明"还没起来"，
+            // 不该累计成链路故障（真机上启动 1 秒就被打成 E106）。
+            if inner.facts.is_none() {
                 return;
             }
             inner.write_failures += 1;
@@ -5327,6 +5347,73 @@ mod tests {
     }
 
     /// 切换设备：先 FAULT，supervisor 再连上新设备。
+    #[test]
+    fn connect_device_reuses_an_in_flight_start_for_the_same_serial() {
+        let rig = make_rig(test_config());
+        *lock_mutex(&rig.router.requested_serial) = Some("S1".to_string());
+        {
+            let mut inner = rig.router.lock_inner();
+            inner.connect_in_progress = true;
+        }
+        let stop_before = rig.session.count(&rig.session.stop_calls);
+        let cancel_before = rig.session.count(&rig.session.cancel_calls);
+
+        rig.router.connect_device(Some("S1"));
+
+        assert_eq!(
+            rig.session.count(&rig.session.stop_calls),
+            stop_before,
+            "同一台设备的 in-flight start 不能被 stop 掉"
+        );
+        assert_eq!(
+            rig.session.count(&rig.session.cancel_calls),
+            cancel_before,
+            "同一台设备的 in-flight start 不能被 cancel_start 掉"
+        );
+    }
+
+    #[test]
+    fn connect_device_still_switches_when_another_serial_is_in_flight() {
+        let rig = make_rig(test_config());
+        *lock_mutex(&rig.router.requested_serial) = Some("S1".to_string());
+        {
+            let mut inner = rig.router.lock_inner();
+            inner.connect_in_progress = true;
+        }
+        let stop_before = rig.session.count(&rig.session.stop_calls);
+
+        rig.router.connect_device(Some("S2"));
+
+        assert!(
+            rig.session.count(&rig.session.stop_calls) > stop_before,
+            "切换设备必须停掉旧会话"
+        );
+        assert_eq!(
+            lock_mutex(&rig.router.requested_serial).as_deref(),
+            Some("S2")
+        );
+    }
+
+    #[test]
+    fn write_failures_before_any_device_facts_do_not_fault() {
+        let rig = make_rig(test_config());
+        {
+            let mut inner = rig.router.lock_inner();
+            inner.facts = None;
+        }
+        for _ in 0..5 {
+            rig.router.note_write_failure(&RouterError::new(
+                ErrorCode::SocketBroken,
+                "socket not ready",
+            ));
+        }
+        assert_ne!(
+            rig.router.state(),
+            State::Fault,
+            "会话未连上时写失败不能把状态打成 FAULT"
+        );
+    }
+
     #[test]
     fn connect_device_faults_then_recovers() {
         let rig = make_rig(test_config());

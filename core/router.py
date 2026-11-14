@@ -356,10 +356,21 @@ class Router:
         with self._lock:
             if self._stopped:
                 return
-            self._device_suspended = False
             current = str(getattr(self._cfg.device, "serial", "") or "")
-            if current != (serial or ""):
-                self._cfg.device.serial = serial or ""
+            target = serial or ""
+            # 同一台设备的连接已经在进行（supervisor 自动首连 / 上一次点击）：
+            # 直接复用它，**不能**走下面的 _stop_session_for_device()——那会
+            # cancel_start() 掉正在握手的会话，服务端随即被 teardown 杀掉，
+            # 显式连接最终拿到一条死通道（真机日志里的 E105「启动已取消」）。
+            if self._connect_in_progress and current == target:
+                self._device_suspended = False
+                self._reconnect_attempt = 0
+                self._next_reconnect_at = self._clock()
+                log.info("router.device.connect serial=%s (in-flight, reuse)", target)
+                return
+            self._device_suspended = False
+            if current != target:
+                self._cfg.device.serial = target
             self._reconnect_attempt = 0
             self._next_reconnect_at = self._clock()
             try:
@@ -1350,6 +1361,10 @@ class Router:
     def _note_write_failure(self, exc: Exception) -> None:
         with self._lock:
             if self._state is State.FAULT:
+                return
+            # 还没有任何设备信息 = 会话还没连上：此时的写失败只说明"还没起来"，
+            # 不是链路故障，不能累计到 FAULT 阈值（真机上 1.09s 就被打成 E106）。
+            if self._facts is None:
                 return
             self._write_failures += 1
             failures = self._write_failures
