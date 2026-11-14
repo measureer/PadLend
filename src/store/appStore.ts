@@ -92,7 +92,7 @@ export const MAX_LOGS = 2000;
 
 export const useAppStore = create<AppStore>()((set) => ({
   hydrated: false,
-  version: '1.4.0',
+  version: '1.5.0',
   config: defaultConfig(),
   configIssues: [],
   configPath: '',
@@ -119,7 +119,7 @@ export const useAppStore = create<AppStore>()((set) => ({
   toasts: [],
   configBanner: null,
   diagnostics: { text: '', status: '尚未采集', progress: '', collecting: false },
-  paths: { configPath: '', logDir: '', noticesPath: '', version: '1.4.0', license: 'Apache-2.0', appName: 'PadLend' },
+  paths: { configPath: '', logDir: '', noticesPath: '', version: '1.5.0', license: 'Apache-2.0', appName: 'PadLend' },
 
   hydrate: (data) =>
     set({

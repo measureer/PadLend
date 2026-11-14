@@ -11,10 +11,10 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -41,6 +41,10 @@ pub type EmitFn = Arc<dyn Fn(&str, Value) + Send + Sync>;
 pub const LOG_CAPACITY: usize = 1000;
 /// `snapshot()` 携带的日志条数（Python `[-200:]`）。
 pub const SNAPSHOT_LOGS: usize = 200;
+/// 无线端点自动重定位的节拍：连不上时每 10 秒小步探一次局域网。
+const AUTO_RELOCATE_INTERVAL: Duration = Duration::from_secs(10);
+/// 连续落空多少次后给一次可操作的提示（只发一次，避免刷屏）。
+const AUTO_RELOCATE_HINTS: u32 = 3;
 
 /// 一条日志。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +151,10 @@ pub struct Engine {
     started: AtomicBool,
     /// 首次 devices.connect 前不镜像事实（保持 bootstrap 的 facts=null）。
     facts_ready: AtomicBool,
+    /// 自动重定位：上次探测时刻（连上后清空，重新断开才再计时）。
+    relocate_at: Mutex<Option<Instant>>,
+    /// 自动重定位：连续落空次数（连上或迁移成功后清零）。
+    relocate_misses: AtomicU32,
 }
 
 impl std::fmt::Debug for Engine {
@@ -268,6 +276,8 @@ impl Engine {
             watcher: Mutex::new(None),
             started: AtomicBool::new(false),
             facts_ready: AtomicBool::new(false),
+            relocate_at: Mutex::new(None),
+            relocate_misses: AtomicU32::new(0),
         });
 
         engine.init_router(&cfg, engine.adb.clone())?;
@@ -558,6 +568,9 @@ impl Engine {
                     }
                     if let Some(engine) = weak.upgrade() {
                         engine.poll_facts_once();
+                        // 无线调试的端口每次重开都会变：连不上时顺手在局域网里找一下，
+                        // 别让会话一直重试已经失效的旧地址。
+                        engine.maybe_auto_relocate();
                     }
                 }
             });
@@ -1323,34 +1336,56 @@ impl Engine {
         if self.simulate {
             return self.located_snapshot();
         }
-        let targets: Vec<(String, String, String)> = {
-            let registry = lock(&self.registry);
-            let mut targets: Vec<(String, String, String)> = Vec::new();
-            for record in &registry.devices {
-                for endpoint in &record.endpoints {
-                    if endpoint.transport != "wifi" {
-                        continue;
-                    }
-                    targets.push((
-                        endpoint.serial.clone(),
-                        record.macs.first().cloned().unwrap_or_default(),
-                        record.hardware_serial.clone(),
-                    ));
-                    if targets.len() >= registry::MAX_ENDPOINTS {
-                        break;
-                    }
+        let (online, moved) = self.relocate_wireless(2.0, 1.0);
+        self.publish_devices(&[], "");
+        for (old, new) in &moved {
+            self.emit_log("DEVICE", format!("无线地址已更新：{old} → {new}"));
+        }
+        self.emit_log("DEVICE", format!("局域网查找：{online} 台在线"));
+        self.located_snapshot()
+    }
+
+    /// 注册表里的无线端点（最多 `MAX_ENDPOINTS` 条）：(地址, MAC, 硬件序列号)。
+    fn wireless_targets(&self) -> Vec<(String, String, String)> {
+        let registry = lock(&self.registry);
+        let mut targets: Vec<(String, String, String)> = Vec::new();
+        for record in &registry.devices {
+            for endpoint in &record.endpoints {
+                if endpoint.transport != "wifi" {
+                    continue;
+                }
+                targets.push((
+                    endpoint.serial.clone(),
+                    record.macs.first().cloned().unwrap_or_default(),
+                    record.hardware_serial.clone(),
+                ));
+                if targets.len() >= registry::MAX_ENDPOINTS {
+                    return targets;
                 }
             }
-            targets
-        };
+        }
+        targets
+    }
+
+    /// 在局域网里重定位无线端点；返回（在线数，迁移列表 old → new）。
+    fn relocate_wireless(
+        &self,
+        query_timeout: f64,
+        locate_timeout: f64,
+    ) -> (usize, Vec<(String, String)>) {
+        let targets = self.wireless_targets();
+        if targets.is_empty() {
+            return (0, Vec::new());
+        }
         let Some(adb) = self.adb.as_ref() else {
-            return self.located_snapshot();
+            return (0, Vec::new());
         };
         let services = {
             let query = || adb.mdns_services();
-            locator::discovered_mdns(Some(&query), 2.0)
+            locator::discovered_mdns(Some(&query), query_timeout)
         };
-        let mut online = 0;
+        let mut online = 0usize;
+        let mut moved: Vec<(String, String)> = Vec::new();
         for (serial, mac, hardware) in targets {
             let lookup = || services.clone();
             let arp = || locator::arp_table();
@@ -1361,35 +1396,89 @@ impl Engine {
                 None,
                 Some(&lookup),
                 Some(&arp),
-                1.0,
+                locate_timeout,
             );
             if located.online() {
                 online += 1;
             }
-            if located.reachable() {
-                if located.status == Some(locator::LocateStatus::Moved) && !located.address.is_empty()
-                {
-                    let mut registry = lock(&self.registry);
-                    let _ = registry.rename_endpoint(&serial, &located.address, &located.mac, "locate");
-                    let _ = registry.save();
-                    let mut config = lock(&self.config);
-                    if config.device.serial == serial {
-                        config.device.serial = located.address.clone();
-                        drop(config);
-                        let _ = self.save_config();
-                        let value = self.config_dict().unwrap_or(Value::Null);
-                        self.emit(
-                            "config",
-                            json!({ "config": value, "issues": Value::Array(Vec::new()) }),
-                        );
-                    }
+            if located.reachable()
+                && located.status == Some(locator::LocateStatus::Moved)
+                && !located.address.is_empty()
+            {
+                let mut registry = lock(&self.registry);
+                let _ = registry.rename_endpoint(&serial, &located.address, &located.mac, "locate");
+                let _ = registry.save();
+                let mut config = lock(&self.config);
+                if config.device.serial == serial {
+                    config.device.serial = located.address.clone();
+                    drop(config);
+                    let _ = self.save_config();
+                    let value = self.config_dict().unwrap_or(Value::Null);
+                    self.emit(
+                        "config",
+                        json!({ "config": value, "issues": Value::Array(Vec::new()) }),
+                    );
                 }
+                moved.push((serial.clone(), located.address.clone()));
             }
             self.set_located(&serial, serializers::located_dict(&located));
         }
-        self.publish_devices(&[], "");
-        self.emit_log("DEVICE", format!("局域网查找：{online} 台在线"));
-        self.located_snapshot()
+        (online, moved)
+    }
+
+    /// 自动重定位节拍：watcher 每 500ms 调一次，方法内部自己限速。
+    ///
+    /// 无线调试的地址（`host:port`）每次在平板上重新打开都会变，而注册表里只有上一次
+    /// 用过的地址；会话于是永远重试一个已经死掉的端口。这里在"断线 + 无线端点"时每
+    /// 10 秒探一次 mDNS/ARP，把迁移后的地址写回配置，下一轮重连就能接上。
+    fn maybe_auto_relocate(&self) {
+        if self.simulate {
+            return;
+        }
+        if lock(&self.facts).is_some() {
+            self.relocate_misses.store(0, Ordering::SeqCst);
+            *lock(&self.relocate_at) = None;
+            return;
+        }
+        {
+            let last = lock(&self.relocate_at);
+            if let Some(at) = *last {
+                if at.elapsed() < AUTO_RELOCATE_INTERVAL {
+                    return;
+                }
+            }
+        }
+        let config = self.config_clone();
+        if !config.device.auto_connect {
+            return;
+        }
+        let serial = config.device.serial.trim().to_string();
+        if !is_wireless_serial(&serial) {
+            return;
+        }
+        *lock(&self.relocate_at) = Some(Instant::now());
+        let (online, moved) = self.relocate_wireless(1.2, 1.0);
+        if !moved.is_empty() {
+            self.relocate_misses.store(0, Ordering::SeqCst);
+            self.publish_devices(&[], "");
+            for (old, new) in &moved {
+                self.emit_log("DEVICE", format!("平板换了地址：{old} → {new}（已自动更新）"));
+            }
+            return;
+        }
+        let misses = self.relocate_misses.fetch_add(1, Ordering::SeqCst) + 1;
+        if online > 0 {
+            // 局域网里还有别的端点在线：继续按注册表重试，不打扰用户。
+            return;
+        }
+        if misses == AUTO_RELOCATE_HINTS {
+            self.emit_log(
+                "DEVICE",
+                format!(
+                    "连不上平板：{serial} 无响应，局域网里也没有它的 mDNS 广播。请确认平板已开机、和电脑处于同一网络并已开启无线调试；走 USB 时需在平板上允许调试。"
+                ),
+            );
+        }
     }
 
     /// 停止轮询线程、停 Router、释放遮罩（幂等）。
@@ -1488,6 +1577,18 @@ pub fn simulated_adb_output(args: &[&str]) -> String {
     String::new()
 }
 
+/// 无线端点判定：`host:port`、adb 的 `_adb-tls-connect._tcp` 名字，或裸 IP。
+fn is_wireless_serial(serial: &str) -> bool {
+    let serial = serial.trim();
+    if serial.is_empty() {
+        return false;
+    }
+    if serial.contains(':') || serial.contains("_adb-tls") {
+        return true;
+    }
+    serial.parse::<std::net::IpAddr>().is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1525,6 +1626,26 @@ mod tests {
         assert!(lock(&engine.hotkeys).is_none(), "simulate 下不应注册热键");
         engine.shutdown();
         assert!(lock(&engine.keyboard).is_none(), "shutdown 应可重复调用");
+    }
+
+    #[test]
+    fn wireless_serial_detection_matches_adb_endpoints() {
+        assert!(is_wireless_serial("10.144.144.5:34739"));
+        assert!(is_wireless_serial("adb-AM4NBB5C23001691-xyz._adb-tls-connect._tcp"));
+        assert!(is_wireless_serial("192.168.1.20"));
+        assert!(is_wireless_serial(" 10.0.0.2:5555 "));
+        assert!(!is_wireless_serial("AM4NBB5C23001691"));
+        assert!(!is_wireless_serial(""));
+    }
+
+    #[test]
+    fn auto_relocate_is_a_noop_in_simulate_mode() {
+        // simulate 下不碰 adb、也不该产生重定位状态（后台线程每 500ms 会调一次）。
+        let (engine, _events) = test_engine("relocate");
+        engine.maybe_auto_relocate();
+        assert!(engine.located_snapshot().is_empty());
+        assert!(lock(&engine.relocate_at).is_none());
+        engine.shutdown();
     }
 
     #[test]

@@ -468,3 +468,25 @@
 - **根因**：desktop_dir() 优先 %USERPROFILE%\Desktop，每次导出生成一个新文件。
 - **修法**（提交 724b081）：Rust padlend-core/src/service/diagnostics.rs 与 Python core/diagnostics.py 的 desktop_dir() 改为优先下载目录，桌面只作兜底。
 - **再犯的代价**：用户桌面被应用产物污染，且这类文件看起来像用户自己的东西、不敢删。
+
+### 10.4 无线端点过期后没人重定位：一直重试死端口
+
+- **现象**：平板重开无线调试（或换网络、在虚拟局域网里换了地址）后，日志每 30 秒一条
+  `... TCP 端口不可达（已跳过，避免等待 adb connect 超时） (E101)` +
+  `router.connect_failed` + `tablet.reconnect ... result=fail`；界面只说「连接失败」，
+  看不出是地址过期还是平板没开。用户会把「连不上」当成新版本坏了。
+- **根因**：`Engine::locate_devices()`（padlend-core/src/service/engine.rs）只在 RPC
+  `devices.locate`（padlend-core/src/service/api.rs 的 devices_locate，界面「查找设备」）里被调用；
+  `device_candidates()` 只读 devices.json 的端点，`spawn_watcher` 也只轮询 facts。会话于是
+  永远重试注册表里那个已经不存在的 `IP:端口`，没有任何自救路径。
+- **修法**（1.5.0）：抽出 `wireless_targets()` + `relocate_wireless()`；watcher 每 500 ms 顺带调
+  `maybe_auto_relocate()`——仅当「未连接 + device.auto_connect + 当前 serial 是无线端点」时，
+  每 10 秒做一次 1.2 秒静默 mDNS/ARP 查找，迁移成功就写回 devices.json 与 config 并 emit
+  `config`（日志 `平板换了地址：旧 → 新（已自动更新）`）；连续 3 次落空只发一条可操作提示
+  （`连不上平板：… 无响应，局域网里也没有它的 mDNS 广播…`）。
+- **如何验证**：`adb mdns services` 能看到平板新端口时，断开后 10 秒内日志出现「平板换了地址」，
+  随后 `tablet.reconnect ... result=ok`；把平板彻底下线，约 30 秒后出现那条提示（只出现一次）。
+- **注意**：mDNS 只在一层物理网络里有效。本机用 EasyTier / ZeroTier / Tailscale 这类虚拟局域网时，
+  平板地址由虚拟网分配、mDNS 组播不会转发，定位找不到属于正常；先确认平板真在虚拟网里
+  （例如 `easytier-cli peer` 要有平板的虚拟 IP）。
+- **再犯的代价**：「平板离线」被误判成「新版本连不上」，用户反复重装、白排查一轮打包。

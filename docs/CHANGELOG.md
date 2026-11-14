@@ -2,6 +2,35 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.5.0] — 2026-11-14
+
+### 修复
+
+- **无线端点过期后不再一直重试死地址**：`Engine::locate_devices()` 过去只由 RPC
+  `devices.locate`（界面上的「查找设备」）触发，`device_candidates()` 又只读
+  `devices.json`，所以平板换 IP/端口（重开无线调试、换网络）之后，会话会永远重试旧地址，
+  每 30 秒刷一条 `TCP 端口不可达（已跳过，避免等待 adb connect 超时） (E101)`。
+  1.5.0 把定位逻辑抽成 `wireless_targets()` + `relocate_wireless()`，由 `spawn_watcher`
+  每 500 ms 顺带调用 `maybe_auto_relocate()`：仅当「未连接 + `device.auto_connect` +
+  当前地址是无线端点」时，每 10 秒做一次 1.2 秒的静默 mDNS/ARP 查找；找到迁移后的地址就
+  写回 `devices.json` 与配置（日志 `平板换了地址：旧 → 新（已自动更新）`），下一轮重连
+  直接使用新地址。
+- **连不上时给出可操作的提示**：连续 3 次定位落空只记一条
+  `连不上平板：<地址> 无响应，局域网里也没有它的 mDNS 广播…`，不再让用户把「平板离线」
+  误判成「新版本坏了」。
+
+### 变更
+
+- 版本号 1.5.0：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、
+  `padlend-core/Cargo.toml`，前端默认状态与演示数据同步。
+
+### 验证
+
+- `cargo test`：新增 `wireless_serial_detection_matches_adb_endpoints`、
+  `auto_relocate_is_a_noop_in_simulate_mode`，全套通过。
+- 本机实测（`adb devices` 为空、EasyTier 虚拟网里没有平板）：服务日志在约 30 秒后
+  出现「连不上平板…」提示，说明「平板不在线」能被明确看到。
+
 ## [1.4.0] — 2026-11-14
 
 ### 新增

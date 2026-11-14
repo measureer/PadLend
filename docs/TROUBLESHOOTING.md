@@ -84,6 +84,26 @@ adb kill-server && adb start-server
 - 换数据线/换 USB 口（必须是数据线，不是充电线）；
 - 无线 adb：确认与 PC 同一网段，见下节。
 
+#### 日志一直重复「TCP 端口不可达」（E101）
+
+1.5.0 起引擎会自己重找地址：未连接、`device.auto_connect` 为真、且当前地址是 `host:port` 时，
+每 10 秒静默查一次局域网（mDNS + ARP，约 1.2 秒），找到新端口就写回 `devices.json` 并更新配置，
+日志出现 `平板换了地址：旧 → 新（已自动更新）`，下一轮重连直接用新地址。
+
+连续 3 次找不到只会记一条 `连不上平板：… 无响应，局域网里也没有它的 mDNS 广播…`。看到它就说明
+平板此刻确实不在网上，按顺序排查：
+
+```bash
+adb devices -l        # USB：必须有一行 ... device
+adb mdns services     # 无线：应能看到 _adb-tls-connect._tcp
+```
+
+- 平板是否被别处占着（另一台电脑连着，或平板开着「USB 网络共享」）；
+- 无线调试是否还开着——Android 每次重开无线调试都会换端口，重启平板后尤其常见；
+- 用虚拟局域网（EasyTier / ZeroTier / Tailscale）时，看虚拟网自己的节点表，例如
+  `easytier-cli peer` 里要能看到平板的虚拟 IP；mDNS 组播不过虚拟网，定位找不到属于正常。
+- 平板重启后如果要重新配对，先在平板上「使用配对码配对设备」，再在 PadLend 里填新的 `IP:端口`。
+
 #### 无线调试已开，但 PadLend 设备列表为空
 
 ```bash
