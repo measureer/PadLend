@@ -204,8 +204,11 @@ def parse_uhid_open(text: str) -> bool:
 
 
 def desktop_dir() -> Path:
-    """优先桌面目录，其次用户主目录。"""
-    candidates = [Path.home() / "Desktop", Path.home() / "桌面"]
+    """诊断包默认导出目录：优先「下载」，其次桌面，最后用户主目录。
+
+    桌面是用户自己的地盘，诊断包每次一个文件会很快堆满（真机反馈 2026-11-14）。
+    """
+    candidates = [Path.home() / "Downloads", Path.home() / "Desktop", Path.home() / "桌面"]
     for candidate in candidates:
         if candidate.is_dir():
             return candidate

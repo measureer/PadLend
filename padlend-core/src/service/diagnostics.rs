@@ -414,7 +414,12 @@ pub fn static_summary() -> String {
 
 /// 桌面目录（Windows：`%USERPROFILE%\Desktop`；取不到时退回临时目录）。
 pub fn desktop_dir() -> PathBuf {
+    // 默认导出到「下载」而不是桌面：桌面是用户自己的地盘，诊断包每次一坨很难受。
     if let Ok(home) = std::env::var("USERPROFILE") {
+        let downloads = PathBuf::from(home).join("Downloads");
+        if downloads.is_dir() {
+            return downloads;
+        }
         let desktop = PathBuf::from(home).join("Desktop");
         if desktop.is_dir() {
             return desktop;
