@@ -46,6 +46,14 @@ pub struct StatsSnapshot {
 
 const CLASS_NAME: &str = "PadLendRawInput";
 
+/// 服务模式的事件回调：每个解码后的鼠标包都交给它。
+///
+/// 用全局槽而不是窗口用户数据，是为了不动既有的 GWLP_USERDATA 统计绑定；
+/// 进程内只会有一个 Raw Input 源（与 Python 的单实例假设一致）。
+static HANDLER: std::sync::Mutex<
+    Option<std::sync::Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync>>,
+> = std::sync::Mutex::new(None);
+
 /// 一个已注册的 Raw Input 源；drop 时会向消息线程投递 `WM_CLOSE` 并 join。
 pub struct RawInputSource {
     stats: Arc<Stats>,
@@ -56,6 +64,17 @@ pub struct RawInputSource {
 
 impl RawInputSource {
     /// 在专用线程上建窗 + 注册 + 泵消息。
+    /// 带回调启动：除计数外，把每个解码后的鼠标包交给 handler（服务模式用）。
+    pub fn start_with(
+        handler: std::sync::Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync>,
+    ) -> Result<Self, String> {
+        {
+            let mut slot = HANDLER.lock().unwrap_or_else(|err| err.into_inner());
+            *slot = Some(handler);
+        }
+        Self::start()
+    }
+
     pub fn start() -> Result<Self, String> {
         let stats = Arc::new(Stats::default());
         let stopped = Arc::new(AtomicBool::new(false));
@@ -187,6 +206,25 @@ fn on_raw_input(hwnd: HWND, lparam: LPARAM) {
     let Some(packet) = crate::decode::decode_raw_input(bytes) else {
         return;
     };
+
+    // 先喂给服务层回调（锁要立刻释放，回调里会进 router 的锁）。
+    let handler = {
+        let slot = HANDLER.lock().unwrap_or_else(|err| err.into_inner());
+        slot.clone()
+    };
+    if let Some(handler) = handler {
+        static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !FIRST.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!(
+                "[rawinput] 首个事件 dx={} dy={} buttons={:#04x} abs={}",
+                packet.x,
+                packet.y,
+                packet.button_flags,
+                packet.is_absolute()
+            );
+        }
+        handler(packet);
+    }
 
     stats.events.fetch_add(1, Ordering::Relaxed);
     if packet.x != 0 || packet.y != 0 {

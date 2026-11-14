@@ -1837,6 +1837,16 @@ impl Router {
 
     /// RawInput 线程入口；绝不向调用方抛异常。
     pub fn on_raw(&self, ev: &RawDelta) {
+        // 诊断：每 500 个原始事件打一行，用来判断"接管后平板指针不动"是不是
+        // 因为 PC 侧根本没收到 Raw Input（RDP/钩子/注册失败都会是这种表现）。
+        static RAW_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seen = RAW_SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if seen % 500 == 0 {
+            eprintln!(
+                "[router] raw.seen n={seen} dx={} dy={} buttons={:#04x} wheel={} absolute={}",
+                ev.dx, ev.dy, ev.buttons, ev.wheel, ev.absolute
+            );
+        }
         let mut events: Vec<RouterEvent> = Vec::new();
         let outcome = {
             let mut inner = self.lock_inner();

@@ -108,6 +108,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// 业务引擎。
+/// 只启动一次 Raw Input（进程内单例）。
+static RAW_INPUT_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub struct Engine {
     simulate: bool,
     no_hooks: bool,
@@ -329,6 +332,78 @@ impl Engine {
         self.router
             .set(router)
             .map_err(|_| crate::service::ServiceError::Init("Router 已经初始化过".to_string()))?;
+
+        // 服务模式必须自己启动 Raw Input。Python 的 Runtime 会起它，Rust 版最初漏了这一步：
+        // 接管能成功（入口脉冲靠会话直接发），但 PC 侧鼠标位移永远进不到 Router，
+        // 表现就是"平板指针出现在入口边、然后一动不动"。
+        if RAW_INPUT_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        if let Some(router) = self.router().cloned() {
+            let desktop = Arc::clone(&self.desktop);
+            let buttons = Arc::new(std::sync::Mutex::new(0i32));
+            let last_abs = Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::<u64, (i32, i32)>::new(),
+            ));
+            let handler: Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync> =
+                Arc::new(move |packet| {
+                    let mut state = buttons.lock().unwrap_or_else(|err| err.into_inner());
+                    for bit in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100] {
+                        if packet.button_flags & bit != 0 {
+                            if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                                *state |= i32::from(mask);
+                            }
+                        }
+                    }
+                    for bit in [0x0002u16, 0x0008, 0x0020, 0x0080, 0x0200] {
+                        if packet.button_flags & bit != 0 {
+                            if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                                *state &= !i32::from(mask);
+                            }
+                        }
+                    }
+                    let (dx, dy) = if packet.is_absolute() {
+                        let rect = desktop.bounding_box();
+                        let width = i64::from(rect.right - rect.left).max(1);
+                        let height = i64::from(rect.bottom - rect.top).max(1);
+                        let x = rect.left + (i64::from(packet.x) * width / 65_535) as i32;
+                        let y = rect.top + (i64::from(packet.y) * height / 65_535) as i32;
+                        let mut last = last_abs.lock().unwrap_or_else(|err| err.into_inner());
+                        match last.insert(packet.device, (x, y)) {
+                            Some((px, py)) => (x - px, y - py),
+                            None => (0, 0),
+                        }
+                    } else {
+                        (packet.x, packet.y)
+                    };
+                    drop(state);
+                    let wheel = if packet.has_wheel() {
+                        i32::from(packet.button_data as i16)
+                    } else {
+                        0
+                    };
+                    if dx == 0 && dy == 0 && wheel == 0 && !packet.has_button_change() {
+                        return;
+                    }
+                    let delta = crate::logic::events::RawDelta {
+                        dx,
+                        dy,
+                        buttons: *buttons.lock().unwrap_or_else(|err| err.into_inner()),
+                        wheel,
+                        absolute: packet.is_absolute(),
+                        ts: 0.0,
+                    };
+                    router.on_raw(&delta);
+                });
+            match crate::win::rawinput::RawInputSource::start_with(handler) {
+                // 源必须活到进程结束：忘掉句柄比"drop 掉立刻停止采集"更符合这里的需求。
+                Ok(source) => {
+                    eprintln!("[engine] Raw Input 已启动（服务模式）");
+                    std::mem::forget(source)
+                }
+                Err(err) => eprintln!("[engine] Raw Input 启动失败：{err}"),
+            }
+        }
         Ok(())
     }
 

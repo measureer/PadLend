@@ -416,11 +416,12 @@ pub fn static_summary() -> String {
 pub fn desktop_dir() -> PathBuf {
     // 默认导出到「下载」而不是桌面：桌面是用户自己的地盘，诊断包每次一坨很难受。
     if let Ok(home) = std::env::var("USERPROFILE") {
-        let downloads = PathBuf::from(home).join("Downloads");
+        let home = PathBuf::from(home);
+        let downloads = home.join("Downloads");
         if downloads.is_dir() {
             return downloads;
         }
-        let desktop = PathBuf::from(home).join("Desktop");
+        let desktop = home.join("Desktop");
         if desktop.is_dir() {
             return desktop;
         }
@@ -673,3 +674,4 @@ mod tests {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
 }
+
