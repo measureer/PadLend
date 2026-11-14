@@ -195,6 +195,9 @@ fn devices_connect(engine: &Arc<Engine>, params: &Value) -> Result<Value, String
     let Some(router) = engine.router().cloned() else {
         return Err("引擎未启动".to_string());
     };
+    // 先把目标写进引擎配置：会话的候选串来自 device_candidates()，不同步会出现
+    // "点了新端口、会话仍连配置/注册表里的旧端口"（真机日志里的 44731）。
+    engine.set_requested_serial(&serial);
     engine.emit_log("DEVICE", format!("连接请求：{serial}"));
     if serial.contains(':') {
         if let Some(adb) = engine.adb_api() {

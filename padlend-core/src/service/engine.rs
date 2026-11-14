@@ -830,6 +830,15 @@ impl Engine {
     }
 
     /// 设备连接候选地址（当前设备的主端点优先）。
+    /// 记住"用户这次点的是哪台设备"。
+    ///
+    /// `Router` 里的 `Config` 是只读副本，`connect_device` 只更新它自己的
+    /// `requested_serial`；会话的候选列表来自本函数的 `self.config`，
+    /// 不同步就会出现"点 44581、会话还在连 44731"的情况。
+    pub fn set_requested_serial(&self, serial: &str) {
+        lock(&self.config).device.serial = serial.to_string();
+    }
+
     pub fn device_candidates(&self) -> Vec<String> {
         let current = lock(&self.config).device.serial.trim().to_string();
         if current.is_empty() {

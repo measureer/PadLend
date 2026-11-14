@@ -95,7 +95,9 @@ export function DevicesPage() {
               <Button
                 icon="trash"
                 onClick={() => chosen && void forgetDevice(chosen.serial)}
-                disabled={!chosen?.remembered}
+                // 在线且已被记住的设备拿到的行是 scan 结果（remembered=false），
+                // 但它带着注册表 id；只用 remembered 判断会让按钮永久灰掉。
+                disabled={!chosen || (!chosen.remembered && !chosen.id)}
               >
                 从列表移除
               </Button>

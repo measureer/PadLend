@@ -31,11 +31,22 @@ impl Bridge {
     pub fn start(app: AppHandle, audio_port: u16) -> Result<Arc<Self>, String> {
         let (program, args, cwd) = resolve_service();
         let mut command = Command::new(&program);
+        // 业务服务的 stderr 是唯一的诊断入口（Rust sidecar 用它打日志），
+        // 不能丢进 null：落到 %LOCALAPPDATA%\PadLend\service.log，用户可直接回传。
+        let log_path = env::var("LOCALAPPDATA")
+            .map(|base| PathBuf::from(base).join("PadLend").join("service.log"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("padlend-service.log"));
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let stderr = std::fs::File::create(&log_path)
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null());
         command
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
             // 父进程看门狗：外壳崩溃后 sidecar 必须自行 teardown 退出，

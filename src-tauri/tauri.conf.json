@@ -44,6 +44,7 @@
     ],
     "resources": {
       "../vendor/scrcpy-server-v5.0.1.jar": "vendor/scrcpy-server-v5.0.1.jar",
+      "../vendor/adb/platform-tools": "vendor/adb/platform-tools",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../LICENSES/Apache-2.0.txt": "LICENSES/Apache-2.0.txt",
       "../LICENSES/BSD-3-Clause-psutil.txt": "LICENSES/BSD-3-Clause-psutil.txt",
