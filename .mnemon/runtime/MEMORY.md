@@ -23,3 +23,5 @@ PadLend 构建环境（2026-11-14 在本机 C:\Users\measu 装好）：Rust 1.10
 PadLend 版本号陷阱：padlend/__init__.py 的 __version__ 停在 1.4.0（1.5.0/1.6.0 都没跟改），而 package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、padlend-core/Cargo.toml 都是 1.6.0。安装包版本取 tauri.conf.json（所以是 1.6.0），但 tools/release.py 用 padlend.__version__ 命名 zip、release.yml 又校验 tag == padlend.__version__，所以打 v1.6.0 tag 之前必须先把 __init__.py 改成 1.6.0。另外 dist/ 里还留着 1.1.1 的旧产物，release.py 的 make_sha256 会把 dist 里所有文件都算进去，发版前要清理。
 §
 PadLend 的 .ps1 脚本必须存成 UTF-8 带 BOM：Windows PowerShell 5.1 按系统 ANSI 代码页读无 BOM 脚本，中文注释会被拆成乱码并吃掉后面的括号，报 `Missing expression after ','` 之类的语法错（pwsh 7 没事）。用工具/编辑器改完 .ps1 后 BOM 会丢，要补：`[IO.File]::WriteAllText($p,$c,(New-Object System.Text.UTF8Encoding($true)))`。另外 `Join-Path [Environment]::GetFolderPath(...) "x"` 必须给方法调用加括号。
+§
+PadLend scrcpy 握手陷阱（1.7.1 修，详见 docs/PITFALLS.md 2.8）：scrcpy 5.0.1 的 dummy 字节只发给**第一个** accept 的 socket——audio=true 时音频通道带 dummy、控制通道一个字节都没有；服务端 cleanup=true 被杀时自删 /data/local/tmp/scrcpy-server-manual.jar，任何重启服务端的路径都必须先 push_if_needed()，否则 ClassNotFound 秒退、握手全被关闭直到 CONNECT_TIMEOUT_S=30。

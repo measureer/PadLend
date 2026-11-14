@@ -1,6 +1,6 @@
 [package]
 name = "padlend-desktop"
-version = "1.7.1"
+version = "1.7.2"
 description = "PadLend - share keyboard and mouse with an Android tablet"
 authors = ["PadLend contributors"]
 edition = "2021"
@@ -23,6 +23,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }
 # 1.4.0：可选音频转发；只在用户开启 misc.forward_audio 时真正播放。
 cpal = "0.15"
+# 1.7.2：GUI 进程没有控制台，外壳日志要自己带本地时间戳。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [features]
 default = ["custom-protocol"]

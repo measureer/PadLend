@@ -301,6 +301,9 @@ fn devices_disconnect(engine: &Arc<Engine>) -> Value {
     if let Some(router) = engine.router() {
         router.disconnect_device();
     }
+    // 1.7.2：会话 teardown 不会关 adb 连接，这里补一刀，否则平板一直挂在
+    // adb devices 里（用户会以为「点断开」并没有断开无线调试）。
+    engine.release_adb_connections();
     engine.emit_log("DEVICE", "已断开");
     json!({ "ok": true })
 }

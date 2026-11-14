@@ -1049,6 +1049,8 @@ mod tests {
         assert!(command.contains("9.9.9"), "command={command}");
         assert!(command.contains("audio=true"), "command={command}");
         assert!(command.contains("tunnel_forward=true"), "command={command}");
+        // 音频必须是裸 PCM，否则服务端默认走 Ogg Opus，播放器当 PCM 播就是爆音。
+        assert!(command.contains("audio_codec=raw"), "command={command}");
     }
 
     #[test]

@@ -506,3 +506,67 @@
 - **修法**：按版本过滤 `("PadLend_" + $Version + "_*-setup.exe")` 并校验文件名含当前版本；
   `dist/` 里旧的 `PadLend-*` 在打包前清掉，避免被 `make_sha256` 一起算进
   `SHA256SUMS.txt`（1.1.x 遗留产物就是这么混进去的）。
+
+## 13. 1.7.2 补录：音频链路与 adb 连接（2026-11-15）
+
+### 13.1 Windows 上 accept() 出来的 socket 继承 listener 的非阻塞标志
+
+- **现象**：开启「转发平板声音」后平板确实静音了（scrcpy 采音时会把设备调成静音），
+  但电脑完全没声音。引擎日志只有一句
+  `[tablet.audio] 音频播放器写入失败，后续音频将丢弃: 远程主机强迫关闭了一个现有的连接。 (os error 10054)`，
+  每次会话「已转发」的字节数只有几百字节。
+- **根因**：外壳的 `AudioServer` 为了能定时检查停止标志，把监听套接字设成了非阻塞
+  （`listener.set_nonblocking(true)`）。Windows 上 `accept()` 返回的连接会**继承**这个
+  非阻塞标志，于是播放线程里的 `tcp.read()` 立刻返回
+  `WSAEWOULDBLOCK (os error 10035)`，`play_connection` 直接返回错误并丢掉连接；
+  引擎下一次 `write_all` 就收到 `10054`。1.4.0 起音频一次都没播出去过，只是以前没人
+  同时开着音频和控制通道验证。
+- **修法**：连接一进来先 `tcp.set_nonblocking(false)`，再用读超时控制等待；
+  读循环另外把 `WouldBlock` 当「等 2ms 再读」而不是致命错误。
+- **如何验证 / 回归**：`shell.log` 里应看到「收到头部 → 输出设备 → 播放已开始」，
+  且引擎的 `[tablet.audio]` 不再出现「播放器写入失败」；`cargo test` 不受影响。
+
+### 13.2 `adb connect` 的链路不随会话 teardown 关闭
+
+- **现象**：点「断开连接」甚至退出 PadLend 之后，`adb devices` 里平板还在，
+  看起来「无线调试根本没断开」。
+- **根因**：`adb connect host:port` 建立的连接属于 adb server，会话 teardown 只做了
+  `pkill` 服务端与 `adb forward --remove`，从来没有 `adb disconnect`。
+- **修法**：新增 `padlend-core/src/tablet/adb_links.rs`，`Adb::connect()` 成功时登记
+  `host:port`（`already connected` 不登记，表示链路是别人建的），`Adb::disconnect()`
+  时注销；`devices.disconnect` 与 `Engine::shutdown()` 调
+  `Engine::release_adb_connections()` 逐条 `adb disconnect`（3 秒超时，失败只记日志）。
+- **如何验证 / 回归**：断开/退出后 `adb devices` 不再列出该端点；用户手动
+  `adb connect` 的端点不会被 PadLend 断开。
+
+### 13.3 GUI 进程里的 eprintln 等于扔进虚空
+
+- **现象**：排查上面两条时，引擎侧服务日志齐全，外壳侧一行都没有——播放器为什么退出、
+  选的哪个输出设备、是不是没有音频设备，全都无从判断。
+- **根因**：Tauri 外壳是 `windows_subsystem = "windows"` 的窗口进程，没有控制台，
+  `eprintln!` 写进空句柄，谁也看不到。
+- **修法**：新增 `src-tauri/src/shell_log.rs`，外壳日志写到
+  `%LOCALAPPDATA%\PadLend\shell.log`（与引擎的 `service.log` 同目录，超过 1 MiB
+  轮转成 `shell.log.1`），并在启动时安装 panic hook。以后外壳侧的问题先看这个文件。
+- **如何验证 / 回归**：启动应用后 `shell.log` 至少有一行「===== PadLend x.y.z 外壳启动 =====」。
+
+### 13.4 scrcpy 5.0.1 的音频默认是 opus，不是裸 PCM
+
+- **现象**：13.1 修完，电脑确实出声了，但全是爆音/杂音（像麦克风炸麦）。
+- **根因**：scrcpy 5.0.1 服务端音频默认 codec 是 **opus**；PadLend 的服务端命令行只传了
+  `raw_stream=true`，那是视频侧的旧开关，5.0.1 已经不认它。于是音频 socket 上是一条
+  Ogg Opus 流（旁路抓包首 16 字节为 `50 4C 41 55 80 BB 00 00 02 00 00 00 10 00 00 00`
+  接 `4F 70 75 73 48 65 61 64` = `OpusHead`），被播放器当 48 kHz/2ch/16bit 裸 PCM 播。
+  数据量也能看出来：12 秒只有 156 KB（约 104 kbps，正是 opus 码率），而裸 PCM 应是
+  48000×2×2×12 ≈ 2.3 MB。
+- **修法**：`constants::scrcpy_server_args()` 在 `audio=true` 时追加 `audio_codec=raw`，
+  服务端改走 AudioRecord 裸流分支、不写 codec 头。修后同样 12 秒收到 1.9 MB，
+  首字节直接是采样。
+- **如何验证 / 回归**：`server.rs` 的 `command_uses_configured_port_version_and_audio`
+  断言命令行含 `audio_codec=raw`；`constants.rs` 的 `scrcpy_server_args_matches_python`
+  断言带音频时比不带音频多这一个参数。想复现字节级检查时，用
+  `PADLEND_AUDIO_PORT=<端口>` 起引擎、脚本在那个端口收字节，看开头是不是 `OpusHead`。
+- **顺带记一笔**：`raw_stream` 保留着没删——它对 5.0.1 无害（未知/视频选项被忽略），
+  删掉也不会让音频变 raw；音频侧只认 `audio_codec`。
+
+

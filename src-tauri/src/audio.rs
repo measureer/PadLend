@@ -6,6 +6,10 @@
 //!
 //! 音频是可选能力：设备打不开、sink 断开都不应该影响控制通道，所以
 //! 这里所有失败都只是结束当前连接，不向 Tauri 主流程传播。
+//!
+//! 1.7.2：每一步都写 `shell.log`（GUI 进程没有控制台，eprintln 看不到）。
+//! 之前「平板静音了但电脑没声音」的现场只有引擎侧一句「播放器把连接关了」，
+//! 播放器自己的退出原因完全丢失，只能靠这层日志定位。
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
@@ -44,6 +48,7 @@ impl AudioServer {
         listener
             .set_nonblocking(true)
             .map_err(|e| format!("设置音频端口非阻塞失败：{e}"))?;
+        crate::shell_log!("[audio] 接收器已监听 127.0.0.1:{port}（引擎用 PADLEND_AUDIO_PORT 连过来）");
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let handle = thread::Builder::new()
@@ -51,18 +56,21 @@ impl AudioServer {
             .spawn(move || {
                 while !thread_stop.load(Ordering::Relaxed) {
                     match listener.accept() {
-                        Ok((stream, _)) => {
-                            thread::spawn(move || {
-                                if let Err(e) = play_connection(stream) {
-                                    eprintln!("音频播放结束：{e}");
-                                }
+                        Ok((stream, peer)) => {
+                            let peer = peer.to_string();
+                            crate::shell_log!("[audio] 引擎已连上接收器（{peer}），开始读 PLAU 头");
+                            thread::spawn(move || match play_connection(stream) {
+                                Ok(played) => crate::shell_log!(
+                                    "[audio] 本次转发结束：{played} 字节 PCM，连接正常关闭"
+                                ),
+                                Err(e) => crate::shell_log!("[audio] 本次转发失败：{e}"),
                             });
                         }
                         Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(40));
                         }
                         Err(e) => {
-                            eprintln!("音频 accept 失败：{e}");
+                            crate::shell_log!("[audio] 接收器 accept 失败：{e}");
                             thread::sleep(Duration::from_millis(200));
                         }
                     }
@@ -93,18 +101,29 @@ impl Drop for AudioServer {
     }
 }
 
-fn play_connection(mut tcp: TcpStream) -> Result<(), String> {
+fn play_connection(mut tcp: TcpStream) -> Result<u64, String> {
+    // Windows 上 accept() 出来的 socket 会继承监听套接字的非阻塞标志：
+    // AudioServer 为了能定时检查 stop 用的是非阻塞 listener，于是每条音频连接
+    // 都是非阻塞的，第一次 read 立刻返回 WSAEWOULDBLOCK(10035)，播放线程当场
+    // 退出——这正是 1.4.0~1.7.1「平板静音了但电脑没声音」的根因。
+    // 播放连接必须是阻塞的（下面用读超时控制等待）。
+    tcp.set_nonblocking(false)
+        .map_err(|e| format!("切换音频连接为阻塞模式失败：{e}"))?;
     tcp.set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| format!("设置音频读超时失败：{e}"))?;
     let mut header = [0u8; HEADER_LEN];
     tcp.read_exact(&mut header)
         .map_err(|e| format!("读取音频头失败：{e}"))?;
     if &header[0..4] != MAGIC {
-        return Err("音频头 magic 不符".to_string());
+        return Err(format!(
+            "音频头 magic 不符：{:?}（期望 PLAU）",
+            &header[0..4]
+        ));
     }
     let rate = u32::from_le_bytes(header[4..8].try_into().unwrap());
     let channels = u32::from_le_bytes(header[8..12].try_into().unwrap());
     let bits = u32::from_le_bytes(header[12..16].try_into().unwrap());
+    crate::shell_log!("[audio] 收到头部：{rate} Hz / {channels} ch / {bits} bit");
     if rate != SAMPLE_RATE || channels != CHANNELS || bits != BITS {
         return Err(format!(
             "不支持的音频格式：{rate} Hz / {channels} ch / {bits} bit"
@@ -117,34 +136,60 @@ fn play_connection(mut tcp: TcpStream) -> Result<(), String> {
     let device = host
         .default_output_device()
         .ok_or_else(|| "没有可用的音频输出设备".to_string())?;
+    let device_name = device.name().unwrap_or_else(|_| "未知设备".to_string());
     let supported = device
         .default_output_config()
-        .map_err(|e| format!("读取默认音频格式失败：{e}"))?;
+        .map_err(|e| format!("读取默认音频格式失败（设备 {device_name}）：{e}"))?;
     let sample_format = supported.sample_format();
     let config: StreamConfig = supported.config();
     let device_channels = config.channels as usize;
     let step = SAMPLE_RATE as f64 / config.sample_rate.0.max(1) as f64;
+    crate::shell_log!(
+        "[audio] 输出设备：{device_name} / {sample_format:?} / {} ch / {} Hz",
+        config.channels,
+        config.sample_rate.0
+    );
     let buffer = Arc::new(Mutex::new(PcmBuffer::new(step)));
 
     let output = match sample_format {
         SampleFormat::F32 => build_stream::<f32>(&device, &config, &buffer, device_channels),
         SampleFormat::I16 => build_stream::<i16>(&device, &config, &buffer, device_channels),
         SampleFormat::U16 => build_stream::<u16>(&device, &config, &buffer, device_channels),
+        SampleFormat::I8 => build_stream::<i8>(&device, &config, &buffer, device_channels),
+        SampleFormat::I32 => build_stream::<i32>(&device, &config, &buffer, device_channels),
+        SampleFormat::I64 => build_stream::<i64>(&device, &config, &buffer, device_channels),
+        SampleFormat::U8 => build_stream::<u8>(&device, &config, &buffer, device_channels),
+        SampleFormat::U32 => build_stream::<u32>(&device, &config, &buffer, device_channels),
+        SampleFormat::U64 => build_stream::<u64>(&device, &config, &buffer, device_channels),
+        SampleFormat::F64 => build_stream::<f64>(&device, &config, &buffer, device_channels),
+        // SampleFormat 是 non_exhaustive：以后 cpal 加新格式时落到这里降级报错。
         other => Err(format!("不支持的输出采样格式：{other:?}")),
-    }?;
+    }
+    .map_err(|e| format!("创建音频输出流失败（设备 {device_name} / {sample_format:?}）：{e}"))?;
     output
         .play()
-        .map_err(|e| format!("启动音频输出失败：{e}"))?;
+        .map_err(|e| format!("启动音频输出失败（设备 {device_name}）：{e}"))?;
+    crate::shell_log!("[audio] 播放已开始（设备 {device_name}）");
 
     let mut pending: Vec<u8> = Vec::new();
     let mut chunk = [0u8; READ_SIZE];
+    let mut received: u64 = 0;
     loop {
         let n = match tcp.read(&mut chunk) {
-            Ok(0) => break,
+            Ok(0) => {
+                crate::shell_log!("[audio] 引擎关闭了接收器连接（已收 {received} 字节）");
+                break;
+            }
             Ok(n) => n,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(e) => return Err(format!("读取音频流失败：{e}")),
+            // 兜底：万一 socket 又被谁改回非阻塞，短暂等待后继续，别丢整条连接。
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            Err(e) => return Err(format!("读取音频流失败（已收 {received} 字节）：{e}")),
         };
+        received += n as u64;
         pending.extend_from_slice(&chunk[..n]);
         let usable = pending.len() - pending.len() % 4;
         if usable > 0 {
@@ -154,7 +199,7 @@ fn play_connection(mut tcp: TcpStream) -> Result<(), String> {
             pending.drain(..usable);
         }
     }
-    Ok(())
+    Ok(received)
 }
 
 fn build_stream<T>(
@@ -195,7 +240,7 @@ where
                     }
                 }
             },
-            |err| eprintln!("音频输出错误：{err}"),
+            |err| crate::shell_log!("[audio] 输出回调报错：{err}"),
             None,
         )
         .map_err(|e| format!("创建音频输出流失败：{e}"))

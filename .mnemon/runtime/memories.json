@@ -91,6 +91,13 @@
       "updated_at": "2026-11-14T16:15:29.876Z",
       "target": "memory",
       "importance": "normal"
+    },
+    {
+      "content": "PadLend scrcpy 握手陷阱（1.7.1 修，详见 docs/PITFALLS.md 2.8）：scrcpy 5.0.1 的 dummy 字节只发给**第一个** accept 的 socket——audio=true 时音频通道带 dummy、控制通道一个字节都没有；服务端 cleanup=true 被杀时自删 /data/local/tmp/scrcpy-server-manual.jar，任何重启服务端的路径都必须先 push_if_needed()，否则 ClassNotFound 秒退、握手全被关闭直到 CONNECT_TIMEOUT_S=30。",
+      "created_at": "2026-11-14T16:59:46.069Z",
+      "updated_at": "2026-11-14T16:59:46.069Z",
+      "target": "memory",
+      "importance": "normal"
     }
   ]
 }

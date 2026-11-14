@@ -2,6 +2,49 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [1.7.2] — 2026-11-15
+
+### 修复
+
+- **开启「转发平板声音」后平板静音了、电脑却一点声音都没有**。`AudioServer` 的监听
+  套接字为了能定时检查停止标志设成了非阻塞，而 Windows 上 `accept()` 出来的连接会**继承**
+  这个标志；播放线程第一次 `read` 立刻拿到 `WSAEWOULDBLOCK(10035)` 就退出，引擎侧只看到
+  「播放器把连接关了」。也就是说 1.4.0 起这条音频链路**一次都没真正播出去过**，只是被
+  「平板侧已静音」掩盖了。现在连接建立后先 `set_nonblocking(false)`，读循环再补一层
+  `WouldBlock` 兜底。
+- **上一条修完，声音通了但全是爆音/杂音**。scrcpy 5.0.1 服务端的音频**默认 codec 是
+  opus**，命令行里的 `raw_stream=true` 是视频侧的旧开关、5.0.1 已忽略，于是音频 socket
+  上传的是一整条 Ogg Opus 流（实测首字节 `4F 70 75 73 48 65 61 64` = `OpusHead`），
+  播放器把它当 48 kHz/2ch/16bit 裸 PCM 播，出来就是连续爆音。现在开音频时命令行补
+  `audio_codec=raw`，服务端改走 AudioRecord 裸流分支；同样 12 秒采集从 156 KB 变成 1.9 MB，
+  与 48000×2ch×16bit 的理论量一致。
+- **点「断开连接」或退出程序不会断开与平板的无线调试**。`adb connect host:port` 建起的
+  链路不在会话 teardown 的清理范围里（那里只 pkill 服务端、`adb forward --remove`），
+  平板会一直留在 `adb devices` 里。新增 `tablet::adb_links` 登记「PadLend 自己建立的
+  无线连接」，`devices.disconnect` 与 `Engine::shutdown()` 时逐条 `adb disconnect`；
+  用户自己在终端 `adb connect` 的链路不登记，不会被顺手掐掉。
+
+### 新增
+
+- **外壳日志 `%LOCALAPPDATA%\PadLend\shell.log`**：Tauri 外壳是窗口子系统进程，没有
+  控制台，`eprintln!` 写出去没人看得到——上面那条音频问题因此在日志里只留了一半
+  （引擎说「播放器把连接关了」，播放器为什么退出却查不到）。现在外壳启动、音频接收器
+  端口、输出设备与采样格式、播放失败原因、panic 位置都落盘；超过 1 MiB 轮转成
+  `shell.log.1`，与引擎的 `service.log` 同目录，用户回传一份即可。
+- 音频输出补齐 `I8/I32/I64/U8/U32/U64/F64` 采样格式（原来只认 `F32/I16/U16`，遇到
+  只报 `I32` 的声卡会直接失败）。
+
+### 验证
+
+- `cargo test --manifest-path padlend-core/Cargo.toml`：**541 passed / 13 ignored**
+  （新增 `tablet::adb_links` 的两条用例）。
+- 前端 `vitest`：**44 passed / 9 files**；`tsc --noEmit` + `vite build` 通过。
+- 真机 HONOR CGA-W00（Android 17）：开音频连接后 `shell.log` 依次出现
+  「收到头部：48000 Hz / 2 ch / 16 bit → 输出设备：扬声器 (Realtek(R) Audio) / F32 /
+  2 ch / 48000 Hz → 播放已开始」，引擎侧不再出现「播放器写入失败」；旁路抓音频 socket
+  字节确认已是裸 PCM（12 秒 1.9 MB，首字节不再有 `OpusHead`）。
+- 断开连接与退出程序后 `adb devices` 不再列出该无线端点。
+
 ## [1.7.1] — 2026-11-15
 
 ### 修复

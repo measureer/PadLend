@@ -1,6 +1,7 @@
 //! 连接层（对应 Python 的 tablet/）。
 
 pub mod adb;
+pub mod adb_links;
 pub mod audio;
 pub mod cursor;
 pub mod keymap;

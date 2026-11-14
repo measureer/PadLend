@@ -1,36 +1,57 @@
-# PadLend 1.7.1
+# PadLend 1.7.2
 
-修掉 1.7.0 里「开『转发平板声音』就连不上」的问题。改动只在引擎的平板会话层，外壳、配置格式和 RPC 契约都没变。
+修掉三件「看着像没生效」的真问题：开着「转发平板声音」但电脑没声音；修完没声音之后声音又变成一串爆音；点了「断开连接」、甚至退出程序，平板还留在 `adb devices` 里。另外给外壳加了日志，以后这类问题不用再猜。
 
 ## 修了什么
 
-从 1.7.0 开始，勾上「转发平板声音」再连接，界面会一直停在「连接中」，约 30 秒后报连接超时。日志里的表现是：音频通道握手正常（重试几次后「音频通道已建立」），控制通道却连续「对端在 dummy 字节前关闭」，随后自动「回退为仅控制通道」，回退之后仍然是几十次同样的失败。根因是两个 bug 叠在一起：
+### 1. 平板静音了，电脑却没有声音
 
-1. **dummy 字节只发给第一条连接**。scrcpy 5.0.1 的 `send_dummy_byte` 只对**第一个** accept 的 socket 生效；开音频时服务端先接音频、再接控制，而引擎让两条通道都去等这个 dummy，控制通道白等满 8 秒 `handshake_retry_timeout` 后被判成「音频通道不可用」。
-2. **回退重启没有重新推送 jar**。服务端以 `cleanup=true` 启动，被 kill 时会把 `/data/local/tmp/scrcpy-server-manual.jar` 删掉；而回退路径重启服务端前漏了 `push_if_needed()`，新服务端因 ClassNotFound 立即退出，后面的每次握手都被立刻关闭，一路耗到 `CONNECT_TIMEOUT_S=30` 才失败。
+开启「转发平板声音」后，scrcpy 会把平板自己的播放静音（音频被采走了），但电脑这边一点声音都没有。引擎日志只有一句「音频播放器写入失败：远程主机强迫关闭了一个现有的连接」，每次会话真正转发的字节数只有几百字节。
 
-修法：握手层按「只有该通道确实是第一条连接时才读 dummy」处理（开音频时音频读、控制不读；关音频时单通道仍读）；回退重启前先 `push_if_needed()`，用 `adb md5` 确认远端 jar 还在。这样即使音频通道将来再次出问题，也只是静音回退，不会拖死整次连接。
+根因在外壳：为了让音频接收线程能定时检查退出标志，监听套接字被设成了非阻塞；而 Windows 上 `accept()` 出来的连接会**继承**这个标志，于是播放线程第一次读就拿到 `WSAEWOULDBLOCK(10035)` 并退出，连接刚建立就断了。**从 1.4.0 起这条音频链路其实一次都没真正播出去过**，只是过去总被「平板静音了」这一半现象掩盖。
+
+修法：连接建立后先把 socket 改回阻塞模式，再用读超时控制等待；读循环另外把偶发的 `WouldBlock` 当「稍等再读」而不是致命错误。
+
+### 2. 声音通了，但电脑里全是爆音/杂音
+
+上一条修完，音频确实播出来了，但听感是一串爆豆似的噪音。抓下引擎写给播放器的字节一看，`PLAU` 头部后面跟着的是 `4F 70 75 73 48 65 61 64`——ASCII `OpusHead`，也就是一整条 **Ogg Opus** 流。
+
+scrcpy 5.0.1 的服务端音频**默认 codec 是 opus**，PadLend 只传了 `raw_stream=true`（那是视频侧的旧开关，5.0.1 已经忽略），于是把 48 kHz/2ch/16bit 的 opus 压缩包当成裸 PCM 直接播——自然是连续的爆音。
+
+修法：服务端命令行在开音频时补 `audio_codec=raw`，让服务端走 AudioRecord 裸流分支、不写 codec 头。同样的 12 秒采集，修复前收到 156 KB（约等于 opus 码率），修复后 1.9 MB（48000×2ch×16bit 应有的量），首字节不再是 `OpusHead` 而是纯采样。
+
+### 3. 断开连接 / 退出程序没有断开无线调试
+
+`adb connect host:port` 建立的链路属于 adb server，而会话 teardown 只做了 pkill 服务端和 `adb forward --remove`，从来没执行 `adb disconnect`——所以平板会一直挂在 `adb devices` 里。
+
+修法：新增 `tablet::adb_links` 登记「PadLend 自己建立的无线连接」；点「断开连接」与退出程序时逐条 `adb disconnect`。你在终端里自己 `adb connect` 的链路不会被登记，也不会被顺手掐掉。
+
+## 新增
+
+- **外壳日志** `%LOCALAPPDATA%\PadLend\shell.log`：Tauri 外壳是窗口程序，没有控制台，以前的 `eprintln!` 等于扔进虚空（上面那个音频问题因此在日志里只留了一半）。现在启动、音频接收器端口、输出设备与采样格式、播放失败原因、panic 位置都会落盘；超过 1 MiB 自动轮转成 `shell.log.1`。回传问题时把 `service.log` 和 `shell.log` 一起发来即可。
+- 音频输出补齐 `I8/I32/I64/U8/U32/U64/F64` 采样格式（原来只认 `F32/I16/U16`，遇到只报 `I32` 的声卡会直接失败）。
 
 ## 升级提示
 
-- 覆盖安装或解压覆盖即可；`config.yaml`、`devices.json` 的格式没有变化，配置保留。
-- 如果你之前是靠「关掉转发平板声音」来规避这个问题的，升级后可以重新打开。
+- 覆盖安装或解压覆盖即可；`config.yaml`、`devices.json` 格式没有变化。
+- 声音默认走系统默认输出设备；如果还是没声音，先看 `%LOCALAPPDATA%\PadLend\shell.log` 里有没有「播放已开始」和输出设备名。
 - 未签名发布，SmartScreen 仍可能提示「未知发布者」。
 
 ## 验证
 
-- 引擎：`cargo test` **539 passed / 13 ignored**（新增「开音频时控制通道不等 dummy」用例，回退用例补了「重启前必须重新推送 jar」的断言）。
+- 引擎：`cargo test` **541 passed / 13 ignored**（新增 `tablet::adb_links` 两条用例）。
 - 前端：`vitest` **44 passed / 9 files**，`tsc --noEmit` + `vite build` 通过。
-- 真机 HONOR CGA-W00（Android 17）：开启「转发平板声音」连接成功，日志顺序为「音频通道已建立 → 控制通道已建立 → UHID 已创建」，`tablet.connect` 2.2 秒返回 3200×2136。
+- 真机 HONOR CGA-W00（Android 17）：开音频连接后 `shell.log` 为「收到头部 → 输出设备：扬声器 (Realtek(R) Audio) / F32 / 2 ch / 48000 Hz → 播放已开始」，引擎侧不再出现「播放器写入失败」；抓包确认音频 socket 上已是裸 PCM（12 秒 1.9 MB），不再是 Ogg Opus。
+- 断开连接与退出程序后，`adb devices` 不再列出该无线端点。
 
 ## 下载
 
-- `PadLend-1.7.1-setup.exe` — NSIS 安装器，安装到当前用户目录，不需要管理员权限
-- `PadLend-1.7.1-win64.zip` — 免安装包，解压后运行 `PadLend.exe`
+- `PadLend-1.7.2-setup.exe` — NSIS 安装器，安装到当前用户目录，不需要管理员权限
+- `PadLend-1.7.2-win64.zip` — 免安装包，解压后运行 `PadLend.exe`
 - `SHA256SUMS.txt` — 下载后建议核对
 
 ```powershell
-Get-FileHash .\PadLend-1.7.1-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-1.7.2-win64.zip -Algorithm SHA256
 ```
 
 ## 环境要求

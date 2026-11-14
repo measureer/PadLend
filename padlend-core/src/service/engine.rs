@@ -46,6 +46,9 @@ const AUTO_RELOCATE_INTERVAL: Duration = Duration::from_secs(10);
 /// 连续落空多少次后给一次可操作的提示（只发一次，避免刷屏）。
 const AUTO_RELOCATE_HINTS: u32 = 3;
 
+/// `adb disconnect` 的超时（秒）。断开/退出是同步路径，宁可放过也不能卡住。
+const ADB_DISCONNECT_TIMEOUT_S: f64 = 3.0;
+
 /// 一条日志。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEntry {
@@ -1535,6 +1538,29 @@ impl Engine {
         }
     }
 
+    /// 断开 PadLend 自己建立的无线 adb 连接（1.7.2）。
+    ///
+    /// 会话 teardown 只会 pkill 服务端、`adb forward --remove`，adbd 那条 TCP
+    /// 连接仍留在 adb server 里，平板会一直出现在 `adb devices`。这里把
+    /// `adb connect` 时登记过的地址逐条 `adb disconnect`，只动 PadLend 建的。
+    pub fn release_adb_connections(&self) {
+        let owned = crate::tablet::adb_links::take_all();
+        if owned.is_empty() {
+            return;
+        }
+        let Some(adb) = self.adb_api() else {
+            return;
+        };
+        for serial in owned {
+            let text = adb.disconnect(Some(serial.as_str()), ADB_DISCONNECT_TIMEOUT_S);
+            let text = text.trim();
+            eprintln!(
+                "[engine] 断开无线调试连接 {serial}：{}",
+                if text.is_empty() { "（adb 无输出）" } else { text }
+            );
+        }
+    }
+
     /// 停止轮询线程、停 Router、释放遮罩（幂等）。
     pub fn shutdown(&self) {
         if !self.started.swap(false, Ordering::SeqCst) {
@@ -1555,6 +1581,8 @@ impl Engine {
         if let Some(router) = self.router.get() {
             router.stop();
         }
+        // 最后再关 adb 链路：会话 teardown 已经 pkill 掉服务端、移掉 forward。
+        self.release_adb_connections();
         self.mask_release();
     }
 

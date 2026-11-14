@@ -230,14 +230,19 @@ pub const SERVER_PORT_RANGE: Range<u16> = 1234..1245;
 
 /// 服务端启动参数（6.1.2 实测可用，勿改参数名）。
 ///
-/// `audio = true` 时服务端按 audio → control 的顺序 accept 两个 socket；
-/// `raw_stream=true` 保证音频 socket 上是裸 PCM（无 codec 头）。
+/// `audio = true` 时服务端按 audio → control 的顺序 accept 两个 socket。
+/// 音频 socket 上必须是裸 PCM：scrcpy 5.0.1 的**默认音频 codec 是 opus**，
+/// 只传 `raw_stream=true`（那是视频侧的旧开关，5.0.1 已忽略）拿到的是一段
+/// `OggS…OpusHead` 的 Ogg Opus 流，播放器把它当 48 kHz/2ch/16bit PCM 播就是
+/// 连续爆音（1.7.2 实测：字节头 4f 70 75 73 48 65 61 64 = "OpusHead"）。
+/// 因此 audio 打开时必须同时传 `audio_codec=raw`（服务端才会走 AudioRecord
+/// 裸流分支、不写 codec 头）。
 ///
 /// `port` 与 Python 版一样**不参与参数**（`tunnel_forward=true` 时端口由
 /// adb forward 侧决定）；保留该参数只为让调用点与 Python 一一对应。
 pub fn scrcpy_server_args(port: u16, audio: bool) -> Vec<String> {
     let _ = port;
-    vec![
+    let mut args = vec![
         format!("CLASSPATH={SCRCPY_REMOTE_JAR}"),
         "app_process".to_string(),
         "/".to_string(),
@@ -251,7 +256,12 @@ pub fn scrcpy_server_args(port: u16, audio: bool) -> Vec<String> {
         "raw_stream=true".to_string(),
         "send_dummy_byte=true".to_string(),
         "max_size=4096".to_string(),
-    ]
+    ];
+    if audio {
+        // 见函数注释：不显式指定就会被服务端编成 Ogg Opus。
+        args.push("audio_codec=raw".to_string());
+    }
+    args
 }
 
 /// 握手字节：scrcpy 5.0.1 在 `tunnel_forward` 且只开 control 通道时，
@@ -546,7 +556,12 @@ mod tests {
         assert_eq!(scrcpy_server_args(DEFAULT_SERVER_PORT, false), expected_without_audio);
         let with_audio = scrcpy_server_args(DEFAULT_SERVER_PORT, true);
         assert_eq!(with_audio[7], "audio=true");
-        assert_eq!(with_audio.len(), expected_without_audio.len());
+        // scrcpy 5.0.1 的默认音频 codec 是 opus，必须显式要 raw PCM。
+        assert_eq!(
+            with_audio.last().map(String::as_str),
+            Some("audio_codec=raw")
+        );
+        assert_eq!(with_audio.len(), expected_without_audio.len() + 1);
         // Python 版从不使用 port 参数（端口由 adb forward 决定），这里也保持一致。
         assert_eq!(
             scrcpy_server_args(1244, false),

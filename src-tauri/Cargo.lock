@@ -2767,8 +2767,9 @@ dependencies = [
 
 [[package]]
 name = "padlend-desktop"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
+ "chrono",
  "cpal",
  "serde",
  "serde_json",

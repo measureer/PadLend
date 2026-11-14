@@ -8,6 +8,7 @@
 mod audio;
 mod bridge;
 mod commands;
+mod shell_log;
 mod tray;
 
 use serde_json::json;
@@ -17,6 +18,15 @@ use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 窗口程序没有控制台：先接上文件日志，后面所有 eprintln 才有地方可查。
+    shell_log::init(env!("CARGO_PKG_VERSION"));
+    // release 是 panic = "abort"，但 Hook 仍会先跑：把 panic 位置写进日志，
+    // 避免 GUI 进程静默消失后什么都查不到。
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        shell_log::write_line(&format!("PANIC {info}"));
+        previous_hook(info);
+    }));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -39,7 +49,7 @@ pub fn run() {
                     port
                 }
                 Err(e) => {
-                    eprintln!("audio unavailable: {e}");
+                    shell_log::write_line(&format!("音频接收器启动失败（本次不会有声音）：{e}"));
                     0
                 }
             };
@@ -50,7 +60,7 @@ pub fn run() {
             app.manage(Arc::new(AtomicBool::new(false)));
             if let Err(e) = tray::install(&handle) {
                 // 托盘注册失败不该让整个应用起不来（旧版也是降级为顶栏菜单）。
-                eprintln!("tray unavailable: {e}");
+                shell_log::write_line(&format!("托盘注册失败：{e}"));
             }
             Ok(())
         })

@@ -1368,6 +1368,11 @@ impl Adb {
                 "连接 {target} 失败：{text}（确认平板与电脑在同一 Wi-Fi、且已开启无线调试）"
             )));
         }
+        // 1.7.2：这条链路是 PadLend 建的，断开/退出时必须由 PadLend 关掉，
+        // 否则平板会一直挂在 adb devices 里（用户以为「无线调试没断开」）。
+        if !lowered.contains("already connected") {
+            crate::tablet::adb_links::mark(&target);
+        }
         Ok(text)
     }
 
@@ -1403,12 +1408,19 @@ impl Adb {
         if !target.is_empty() {
             args.push(&target);
         }
-        match self.run(&args, timeout, AdbErrorCode::DeviceOffline, false) {
+        let text = match self.run(&args, timeout, AdbErrorCode::DeviceOffline, false) {
             Ok(output) => format!("{}{}", output.stdout_text(), output.stderr_text())
                 .trim()
                 .to_string(),
             Err(_) => String::new(),
+        };
+        // 无论 adb 是否报错，这条连接都不该再算「由 PadLend 持有」。
+        if target.is_empty() {
+            crate::tablet::adb_links::take_all();
+        } else {
+            crate::tablet::adb_links::unmark(&target);
         }
+        text
     }
 
     /// adb kill-server：只杀 PadLend 自己拉起的 server。
