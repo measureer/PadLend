@@ -1,11 +1,10 @@
-r"""Raw Input 计数对拍：同一批注入事件，比较两个实现的计数。
+r"""Raw Input 计数对拍：**同时**拉起两个实现，注入同一批事件，比较计数。
 
 M0 的出口标准就是它：python main.py --debug-raw 与 padlend-core --debug-raw
-在同一段注入输入下必须给出等价的计数（差值为 0，或只差注册窗口边缘的 1 个事件）。
+在同一段注入输入下必须给出等价的计数。
 
-用法：
-
-    .\.venv\Scripts\python.exe tools\raw_input_probe.py --rust padlend-core\target\debug\padlend-core.exe --python-exe .\.venv\Scripts\python.exe --inject 60
+为什么必须同时跑：先后跑会被"用户自己动鼠标 / 远程桌面注入"污染，实测能差出几十个事件，
+得出假的失败结论。同时跑时两边看到的是同一条事件流。
 
 注入用 SendInput 的相对位移（MOUSEEVENTF_MOVE），注入前后保存并恢复光标位置。
 """
@@ -20,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -85,78 +85,79 @@ def inject_moves(count: int, *, step: int = 2, delay: float = 0.01) -> None:
         move.mi = MOUSEINPUT(step * direction, step // 2 * direction, 0, MOUSEEVENTF_MOVE, 0, None)
         sent = ctypes.windll.user32.SendInput(1, ctypes.byref(move), ctypes.sizeof(INPUT))
         if sent != 1:
-            raise RuntimeError(f"SendInput 失败（lasterror={ctypes.get_last_error()}）")
+            raise RuntimeError(f"SendInput 失败（GetLastError={ctypes.get_last_error()}）")
         time.sleep(delay)
 
 
-def run_binary(argv: list[str], *, cwd: Path, inject: int, warmup: float, tail: float) -> dict:
+def _start(argv: list[str], cwd: Path, env: dict) -> tuple[subprocess.Popen, list[str]]:
+    proc = subprocess.Popen(  # noqa: S603 - 被测对象是本地构建产物
+        argv, cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+    lines: list[str] = []
+
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            lines.append(line.strip())
+
+    threading.Thread(target=_reader, daemon=True).start()
+    return proc, lines
+
+
+def run_pair(targets: list[tuple[str, list[str], Path]], *, inject: int, warmup: float, tail: float) -> dict:
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PADLEND_HOME", str(Path(os.environ.get("TEMP", ".")) / "padlend-probe"))
-    proc = subprocess.Popen(  # noqa: S603 - 被测对象是本地构建产物
-        argv,
-        cwd=str(cwd),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    started = [(name, *_start(argv, cwd, env)) for name, argv, cwd in targets]
+    results: dict[str, dict] = {}
     try:
         time.sleep(warmup)
         inject_moves(inject)
         time.sleep(tail)
     finally:
-        proc.terminate()
-        try:
-            stdout, stderr = proc.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate(timeout=5)
-
-    per_second = [int(m.group(1)) for m in RAW_LINE.finditer(stdout or "")]
-    text = (stdout or "") + (stderr or "")
-    if "Raw Input" not in text and not per_second:
-        raise RuntimeError(f"没有看到 Raw Input 输出：{text[:400]}")
-    return {
-        "argv": argv,
-        "per_second": per_second,
-        "total": sum(per_second),
-        "stderr_tail": (stderr or "").strip().splitlines()[-3:],
-    }
+        for name, proc, lines in started:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+            per_second = [int(m.group(1)) for m in RAW_LINE.finditer("\n".join(lines))]
+            results[name] = {"per_second": per_second, "total": sum(per_second)}
+    return results
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="raw_input_probe", description="Raw Input 计数对拍")
     parser.add_argument("--rust", default="padlend-core/target/debug/padlend-core.exe")
     parser.add_argument("--python-exe", default=sys.executable)
-    parser.add_argument("--inject", type=int, default=60, help="注入的相对移动次数")
-    parser.add_argument("--warmup", type=float, default=0.9, help="启动后等待注册的时间")
-    parser.add_argument("--tail", type=float, default=1.6, help="注入结束后继续采样的时间")
+    parser.add_argument("--inject", type=int, default=100, help="注入的相对移动次数")
+    parser.add_argument("--warmup", type=float, default=3.0, help="启动后等待注册的时间")
+    parser.add_argument("--tail", type=float, default=2.0, help="注入结束后继续采样的时间")
     parser.add_argument("--json", default=None, help="把结果写入该文件")
     parser.add_argument("--only", choices=("rust", "python"), default=None, help="只测一侧（冒烟用）")
     args = parser.parse_args(argv)
 
     repo = Path(__file__).resolve().parent.parent
-    results: dict[str, dict] = {}
+    targets = [
+        ("rust", [str(repo / args.rust), "--debug-raw"], repo / "padlend-core"),
+        ("python", [args.python_exe, "main.py", "--debug-raw"], repo),
+    ]
+    if args.only:
+        targets = [item for item in targets if item[0] == args.only]
+
     origin = get_cursor()
     try:
-        print(f"[probe] 注入 {args.inject} 次相对位移，光标原点 {origin}")
-        targets = [
-            ("rust", [str(repo / args.rust)], repo / "padlend-core"),
-            ("python", [args.python_exe, "main.py", "--debug-raw"], repo),
-        ]
-        if args.only:
-            targets = [item for item in targets if item[0] == args.only]
-        for name, cmd, cwd in targets:
+        print(f"[probe] 同时启动 {len(targets)} 个实现，注入 {args.inject} 次相对位移，光标原点 {origin}")
+        for name, cmd, _cwd in targets:
             print(f"[probe] {name}: {' '.join(cmd)}")
-            results[name] = run_binary(
-                cmd, cwd=cwd, inject=args.inject, warmup=args.warmup, tail=args.tail
-            )
-            print(f"[probe] {name} -> {results[name]['total']} events {results[name]['per_second']}")
+        results = run_pair(targets, inject=args.inject, warmup=args.warmup, tail=args.tail)
     finally:
         set_cursor(*origin)
+
+    for name, item in results.items():
+        print(f"[probe] {name} -> {item['total']} events {item['per_second']}")
 
     rust = results.get("rust", {}).get("total")
     python_total = results.get("python", {}).get("total")

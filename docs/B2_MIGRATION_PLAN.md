@@ -66,12 +66,11 @@
 | 项 | 状态 |
 |---|---|
 | 阶段 0 | 完成（`B2_STAGE_0_REPORT.md`） |
-| M0 | 部分完成：G1 无头 18/18 绿；**活体计数对拍被锁屏阻塞** |
+| M0 | **完成**：G1 无头 18/18；**活体计数对拍 PASS**（同时启动两实现注入 100 次，rust=100 / python=100 / delta=0） |
 | M1 | 完成（`B2_M1_REPORT.md`） |
-| M2 | 完成（`B2_M2_REPORT.md`）；13 个 `#[ignore]` 活体用例待解锁 |
-| M3 | 完成（`B2_M3_REPORT.md`）：状态机 5/5 场景回放 |
-| M4 | 完成（`B2_M4_REPORT.md`）；真机连接/接管/交还待平板 |
-| M5 | **门禁全绿**（`B2_M5_REPORT.md`）：524 测试、491 pytest、G2 回放、G3 25/25；打包已进 `externalBin` |
-| 提交 | `bb33e4a` → `80cc63c` → `ede1fa2` → `aec645a` → `f7c57a9` → `ba79b55` |
-| 待人工 | 解锁桌面跑活体门禁与 `#[ignore]` 用例；真机回归 |
-| 已关闭的缺口 | zip 诊断包、本地时间戳、MAC 采集、真实 CPU/内存指标 |
+| M2 | **完成**：7 个 Win32 模块；13 个 `#[ignore]` 活体用例全部通过，`GetClipCursor` 无泄漏 |
+| M3 | 完成（`B2_M3_REPORT.md`） |
+| M4 | 移植完成；**真机回归受阻**：平板已通过 EasyTier 连上（adb pair/connect 成功），但 `devices.connect` 在 Rust 与 Python 两侧同样失败（E101），已排除移植回归，详见 `B2_M4_REPORT.md` §6 |
+| M5 | 门禁全绿（`B2_M5_REPORT.md`）：524 测试、491 pytest、G2 回放、G3 25/25、parity 0 差异、打包 externalBin |
+| 提交 | `bb33e4a` → `80cc63c` → `ede1fa2` → `aec645a` → `f7c57a9` → `ba79b55` → `ddef42a` → `b1b28c7` → `1d5796a` |
+| 待办 | 定位真机 connect 失败（产品既有行为，非移植）；决定是否修 `HANDSHAKE_RETRY` 或先试 USB |
