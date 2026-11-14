@@ -73,4 +73,4 @@
 | M4 | **完成** | 真机 connect 6.7–9.8s、接管×3、交还×3、send_hz≈993、p95≈0.1–0.2ms |
 | M5 | **完成** | G3 25/25、parity 0 差异、externalBin 打包、A/B 数据 |
 | 提交 | — | `bb33e4a` `80cc63c` `ede1fa2` `aec645a` `f7c57a9` `ba79b55` `ddef42a` `b1b28c7` `1d5796a` `673d54d` `1bb5fa3` |
-| 连接竞态 | **已修复** | `connect_device` 复用同 serial 的 in-flight start；未连上时的写失败不再计 FAULT。两侧各有 3 个回归测试；真机复验待平板重新开启无线调试 |
+| 连接竞态 | **已修复并真机复验** | 复用同 serial（含空串自动首连）的 in-flight start；未连上时的写失败不计 FAULT。真机 auto_connect=true：connect 3.6s、接管/交还×3、send_hz≈990 |

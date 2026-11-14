@@ -1599,8 +1599,15 @@ impl Router {
             // 直接复用它，**不能**走下面的 stop_session_for_device()——那会
             // cancel_start() 掉正在握手的会话，服务端随即被 teardown 杀掉，
             // 显式连接最终拿到一条死通道（真机日志里的 E105「启动已取消」）。
+            // 进行中的目标为空 = supervisor 的自动首连（配置文件里还没有 serial），
+            // 它连的就是当前唯一/上次的设备；此时同样必须复用，否则又去掐它的握手。
             let in_flight = lock_mutex(&self.requested_serial).clone();
-            if inner.connect_in_progress && in_flight.as_deref() == requested.as_deref() {
+            let same_or_auto = match in_flight.as_deref() {
+                None | Some("") => true,
+                Some(other) => Some(other) == requested.as_deref(),
+            };
+            if inner.connect_in_progress && same_or_auto {
+                *lock_mutex(&self.requested_serial) = requested.clone();
                 inner.device_suspended = false;
                 inner.reconnect_attempt = 0;
                 inner.next_reconnect_at = self.clock.now();

@@ -362,10 +362,14 @@ class Router:
             # 直接复用它，**不能**走下面的 _stop_session_for_device()——那会
             # cancel_start() 掉正在握手的会话，服务端随即被 teardown 杀掉，
             # 显式连接最终拿到一条死通道（真机日志里的 E105「启动已取消」）。
-            if self._connect_in_progress and current == target:
+            # current 为空 = supervisor 的自动首连（配置里还没有 serial）：
+            # 它连的就是当前唯一/上次设备，此时也要复用，否则又去掐它的握手。
+            if self._connect_in_progress and (current == "" or current == target):
                 self._device_suspended = False
                 self._reconnect_attempt = 0
                 self._next_reconnect_at = self._clock()
+                if target:
+                    self._cfg.device.serial = target
                 log.info("router.device.connect serial=%s (in-flight, reuse)", target)
                 return
             self._device_suspended = False

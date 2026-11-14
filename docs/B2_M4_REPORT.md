@@ -122,8 +122,21 @@ Python 原实现的行为完全相同（同样的 E105/E101 序列、同样的�
    （不再 1 秒就把状态打成 E106 FAULT）。
 
 回归测试：Python `tests/test_router.py` 三个用例（同 serial 复用、不同 serial 仍切换、未连上时写失败不 FAULT），
-Rust `logic::router` 同款三个用例；两边全绿（Rust 521 passed / 13 ignored、Python 全绿）。
+Rust `logic::router` 同款三个用例；两边全绿（Rust 521 passed / 13 ignored、Python 491 全绿、golden trace 25/25）。
 `tools/device_regression.py` 默认改为 `auto_connect=true`（真实用户路径），`--no-auto-connect` 保留用于对照。
+
+**第一次修复没修好**：复跑仍报 E105。日志显示进行中的连接目标是空串（配置里还没写 serial 的自动首连），
+而显式连接的目标是具体 serial，两者"不相等"于是又被当成切换设备。补丁随后放宽为：
+**进行中目标为空（自动首连）或与目标相同 → 一律复用**，并把目标 serial 写回配置。
+
+**真机复验（auto_connect=true，端口 10.144.144.5:34739）**：
+
+| 项 | 结果 |
+|---|---|
+| `devices.connect` | **ok，3.6s**（修复前 48s 超时） |
+| 接管 / 交还 ×3 | 全 ok，`send_hz = 993 / 983 / 988`，`p95 = 0.1` |
+| 状态迁移 | connect→idle、capture→captured(manual=true)、release→idle（1s 内） |
+| 退出 | 遮罩与 ClipCursor 释放正常 |
 
 ### 7.4 原建议（保留作背景）
 
