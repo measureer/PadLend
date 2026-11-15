@@ -144,6 +144,10 @@ const NULL_SETTING: &str = "null";
 const FACTORY_POINTER_SPEED: i32 = -3;
 /// 熄屏超时调大到 5 小时（毫秒）。
 const SCREEN_TIMEOUT_KEEP_MS: i64 = 5 * 60 * 60 * 1000;
+/// 2.0.4：adb 心跳间隔（秒）。后台线程跑，路由线程只读结果。
+const LINK_PROBE_INTERVAL_S: f64 = 2.0;
+/// 2.0.4：adb 心跳单次超时（秒）。只跑一条 shell 内建命令，2.5s 足够。
+const LINK_PROBE_TIMEOUT_S: f64 = 2.5;
 /// 朝向轮询周期（秒）。
 ///
 /// 2.0.2：1.0 → 2.0。旋转是低频事件，而每次轮询都要走一趟 adb；把间距拉长、
@@ -822,6 +826,10 @@ impl SessionBuilder {
             orientation_stop: Mutex::new(None),
             flusher: Mutex::new(None),
             flusher_stop: Arc::new(AtomicBool::new(false)),
+            link_ok: AtomicBool::new(true),
+            pointer_ok: AtomicBool::new(true),
+            link: Mutex::new(None),
+            link_stop: Mutex::new(None),
             pointer_original: Mutex::new(None),
             screen_original: Mutex::new(None),
             self_ref: std::sync::OnceLock::new(),
@@ -1099,12 +1107,41 @@ impl SessionPort for TabletSession {
         Some(self.core.reconnect(None).map_err(|error| error.to_router()))
     }
 
+    /// pointer_speed 复查（2.0.4：只读后台线程的最近结果）。
+    ///
+    /// 真正的 adb 读写挪到了 `link_loop` 后台线程。路由线程每 10s 调一次这里，
+    /// 如果在这一层直接跑 `adb shell settings get`，平板 system_server 一忙就会
+    /// 卡满 5s 超时 —— 那段时间路由线程不 drain 队列，平板上的指针直接冻住。
+    /// 2.0.3 真机实测：注入 600 次移动，平板 /dev/input 侧收到 0 个事件。
     fn ensure_pointer_speed(&self) -> Option<Result<(), RouterError>> {
-        Some(match self.core.ensure_pointer_speed() {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(RouterError::device_offline("pointer_speed 复查失败")),
-            Err(error) => Err(error.to_router()),
-        })
+        if self.core.dev_adb_clone().is_none() {
+            return None;
+        }
+        if self.core.pointer_ok.load(Ordering::SeqCst) {
+            Some(Ok(()))
+        } else {
+            Some(Err(RouterError::device_offline(
+                "pointer_speed 复查未通过（后台线程重试中）",
+            )))
+        }
+    }
+
+    /// 链路探针（2.0.3）：同样只读缓存值，真正的 adb 探测在 `link_loop` 里。
+    ///
+    /// 不能用 ensure_pointer_speed 代劳——那个把「值不是 0」和「adb 超时」
+    /// 都折成 Ok(false)，拿它当心跳会把用户手动改过的 pointer_speed 误判成断线。
+    fn link_probe(&self) -> Option<Result<(), RouterError>> {
+        if self.core.dev_adb_clone().is_none() {
+            // 还没 start：没链路可探，按健康处理，别把启动期算成掉线。
+            return Some(Ok(()));
+        }
+        if self.core.link_ok.load(Ordering::SeqCst) {
+            Some(Ok(()))
+        } else {
+            Some(Err(RouterError::device_offline(
+                "adb 链路探针失败（后台心跳超时）",
+            )))
+        }
     }
 
     fn set_pointer_speed(&self, _speed: i32) -> Option<Result<(), RouterError>> {
@@ -1223,6 +1260,12 @@ struct SessionCore {
     orientation_stop: Mutex<Option<Arc<AtomicBool>>>,
     flusher: Mutex<Option<JoinHandle<()>>>,
     flusher_stop: Arc<AtomicBool>,
+    /// 2.0.4：最近一次 adb 心跳是否通（true=通）。路由线程只读这个值。
+    link_ok: AtomicBool,
+    /// 2.0.4：最近一次 pointer_speed 复查是否通过。
+    pointer_ok: AtomicBool,
+    link: Mutex<Option<JoinHandle<()>>>,
+    link_stop: Mutex<Option<Arc<AtomicBool>>>,
     // 待还原的原值
     pointer_original: Mutex<Option<i32>>,
     screen_original: Mutex<Option<i64>>,
@@ -1532,6 +1575,7 @@ impl SessionCore {
                 self.failures.store(0, Ordering::SeqCst);
                 self.start_flusher();
                 self.start_orientation_watch();
+                self.start_link_watch();
                 Ok(facts)
             }
             Err(error) => {
@@ -1695,6 +1739,7 @@ impl SessionCore {
         // 先置取消标志再拿锁：卡在 40s 首连等待里的 start() 会很快看到。
         self.closing.store(true, Ordering::SeqCst);
         self.stop_orientation_watch();
+        self.stop_link_watch();
         let _guard = self.lock_lifecycle();
         if !(self.started.load(Ordering::SeqCst)
             || self.current_socket().is_some()
@@ -2797,6 +2842,80 @@ impl SessionCore {
             if handle.thread().id() != thread::current().id() {
                 join_thread(handle, Duration::from_secs(2));
             }
+        }
+    }
+
+    // -- adb 心跳 ----------------------------------------------------------
+
+    /// 启动 adb 心跳线程（2.0.4）。
+    ///
+    /// 路由线程原先每 10s 直接跑一次 `adb shell settings get system pointer_speed`。
+    /// 平板的 system_server 一忙（实测 5s 超时、`settings get` 偶尔要 17s），路由线程
+    /// 就被卡住，那段时间不 drain 发送队列 —— 平板上的指针冻住再跳一段。把 adb IO
+    /// 全部挪到这里，路由线程只读 `link_ok` / `pointer_ok`。
+    fn start_link_watch(&self) {
+        if self.link.lock().map(|guard| guard.is_some()).unwrap_or(false) {
+            return;
+        }
+        let Some(device) = self.dev_adb_clone() else {
+            return;
+        };
+        let Some(shared) = self.shared() else {
+            return;
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        if let Ok(mut guard) = self.link_stop.lock() {
+            *guard = Some(stop.clone());
+        }
+        let spawn = thread::Builder::new()
+            .name("padlend-adb-link".to_string())
+            .spawn(move || shared.link_loop(device, stop));
+        match spawn {
+            Ok(handle) => {
+                if let Ok(mut guard) = self.link.lock() {
+                    *guard = Some(handle);
+                }
+            }
+            Err(error) => eprintln!("[tablet.session] adb 心跳线程启动失败: {error}"),
+        }
+    }
+
+    fn stop_link_watch(&self) {
+        let stop = self.link_stop.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(stop) = &stop {
+            stop.store(true, Ordering::SeqCst);
+        }
+        let handle = self.link.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(handle) = handle {
+            if handle.thread().id() != thread::current().id() {
+                join_thread(handle, Duration::from_secs(2));
+            }
+        }
+    }
+
+    /// adb 心跳线程：一条 `echo` 探活，另外每 10s 复查一次 pointer_speed。
+    fn link_loop(&self, device: Arc<dyn AdbApi>, stop: Arc<AtomicBool>) {
+        let mut last_pointer = Instant::now() - Duration::from_secs(60);
+        while !stop.load(Ordering::SeqCst) {
+            if self.sleep_interruptible(LINK_PROBE_INTERVAL_S, &stop) {
+                break;
+            }
+            if self.closing.load(Ordering::SeqCst) {
+                continue;
+            }
+            let ok = device
+                .shell(&["echo", "link-probe"], LINK_PROBE_TIMEOUT_S)
+                .is_ok();
+            self.link_ok.store(ok, Ordering::SeqCst);
+            if !ok {
+                continue;
+            }
+            if last_pointer.elapsed().as_secs_f64() < C::POINTER_SPEED_POLL_S {
+                continue;
+            }
+            last_pointer = Instant::now();
+            let restored = self.ensure_pointer_speed().unwrap_or(false);
+            self.pointer_ok.store(restored, Ordering::SeqCst);
         }
     }
 

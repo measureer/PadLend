@@ -362,6 +362,14 @@ pub trait SessionPort: Send + Sync + fmt::Debug {
         None
     }
 
+    /// 链路探针：adb 还通不通；None = 不支持（按健康处理）。
+    ///
+    /// 控制通道是 adb forward 出来的本地 socket，平板掉线时它不会报错，
+    /// 所以心跳只能落在 adb 上。默认不实现，模拟设备/测试照旧。
+    fn link_probe(&self) -> Option<Result<(), RouterError>> {
+        None
+    }
+
     /// 设置 pointer_speed；None = 不支持。
     fn set_pointer_speed(&self, _speed: i32) -> Option<Result<(), RouterError>> {
         None
@@ -1024,6 +1032,9 @@ struct Inner {
     device_suspended: bool,
     /// 上次 pointer_speed 复查时刻。
     last_pointer_poll: Option<f64>,
+    /// 连续 adb 复查失败次数（2.0.3：adb 链路断掉时控制通道不会报错，
+    /// 只能靠周期性的 adb 调用失败来判断平板已经不在了）。
+    adb_link_failures: u32,
     /// 上次显示器签名。
     desktop_sig: Option<Vec<(i64, Rect)>>,
 
@@ -1089,6 +1100,7 @@ impl Inner {
             connect_in_progress: false,
             device_suspended: false,
             last_pointer_poll: None,
+            adb_link_failures: 0,
             desktop_sig: None,
             keymap_loaded: keymap.is_some(),
             keymap,
@@ -3280,7 +3292,7 @@ impl Router {
                     self.check_health(&mut inner, &mut events);
                     rotation_facts = self.check_rotation(&mut inner, &mut events);
                     self.check_desktop(&mut inner, &mut events);
-                    self.poll_pointer_speed(&mut inner, current);
+                    self.poll_pointer_speed(&mut inner, &mut events, current);
                     if inner.state == State::Returning && current >= inner.return_deadline {
                         self.change_state(&mut inner, &mut events, State::Idle, "debounce");
                     }
@@ -3591,14 +3603,49 @@ impl Router {
     }
 
     /// 每 10s 复查一次 pointer_speed（对应 Python _poll_pointer_speed_locked）。
-    fn poll_pointer_speed(&self, inner: &mut Inner, now: f64) {
+    ///
+    /// 2.0.4：这里**不再做任何 adb IO**。`link_probe` / `ensure_pointer_speed`
+    /// 对真实会话只返回后台线程缓存的最近结果；以前每 10s 在这里同步跑
+    /// `adb shell settings get`，碰上平板 system_server 忙就卡满 5s 超时，
+    /// 路由线程在这段时间里不 drain 队列，平板上指针冻住、松手后再跳一段。
+    ///
+    /// 2.0.3：这次复查同时充当 **adb 链路心跳**。控制通道是 adb forward 出来的
+    /// 本地 socket，平板的无线调试断掉时这条本地连接不会报错（对端是 adb server，
+    /// 它照样 ACK），于是 health() 一直 healthy、状态一直「已连接」，但按键和鼠标
+    /// 全被吞掉。只有 adb 调用本身会超时，所以拿它当探针：连续 3 次（约 30s）
+    /// 失败就 FAULT，交还键盘鼠标，让界面如实显示断线。
+    fn poll_pointer_speed(&self, inner: &mut Inner, events: &mut Vec<RouterEvent>, now: f64) {
         if let Some(last) = inner.last_pointer_poll {
             if now - last < C::POINTER_SPEED_POLL_S {
                 return;
             }
         }
         inner.last_pointer_poll = Some(now);
-        self.restore_pointer_speed(inner);
+        // 先做一次廉价链路探针：只要 adb 还通就继续做 pointer_speed 复查，
+        // 不通就别再发一条注定超时的命令，直接累计失败次数。
+        let mut probe_ok = true;
+        if let Some(result) = self.session.link_probe() {
+            if let Err(err) = result {
+                probe_ok = false;
+                eprintln!("[router] session.link_probe 失败 err={err}");
+            }
+        }
+        if probe_ok {
+            self.restore_pointer_speed(inner);
+            inner.adb_link_failures = 0;
+            return;
+        }
+        inner.adb_link_failures += 1;
+        if inner.adb_link_failures >= C::CONSECUTIVE_WRITE_FAILURES {
+            let failures = inner.adb_link_failures;
+            inner.adb_link_failures = 0;
+            self.fault(
+                inner,
+                events,
+                ErrorCode::SocketBroken,
+                &format!("adb 链路连续 {failures} 次无响应（平板可能已掉线）"),
+            );
+        }
     }
 
     /// 恢复 pointer_speed（对应 Python _restore_pointer_speed）。
@@ -3606,7 +3653,13 @@ impl Router {
         if let Some(result) = self.session.ensure_pointer_speed() {
             match result {
                 Ok(()) => return,
-                Err(err) => eprintln!("[router] session.ensure_pointer_speed 失败 err={err}"),
+                Err(err) => {
+                    // 2.0.4：会话已经报告失败（后台心跳线程那边没复查通过），这里
+                    // 别再补一条注定超时的 adb 写命令 —— 这条 fallback 原来跑在路由
+                    // 线程上，会再多堵 5s，正是「平板上指针卡一下」的一部分。
+                    eprintln!("[router] session.ensure_pointer_speed 失败 err={err}");
+                    return;
+                }
             }
         }
         if let Some(facts) = inner.facts.as_ref() {
@@ -4212,6 +4265,8 @@ mod tests {
         facts_callback: Mutex<Option<Arc<dyn Fn(DeviceFacts) + Send + Sync>>>,
         clipboard_callback: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>>,
         lock_probe: Mutex<Option<Weak<Router>>>,
+        /// 链路探针是否通过（默认 true；false 模拟 adb 掉线）。
+        link_ok: Mutex<bool>,
     }
 
     impl FakeSession {
@@ -4222,6 +4277,7 @@ mod tests {
             *lock_mutex(&session.alive) = true;
             *lock_mutex(&session.socket_ok) = true;
             session.has_facts.store(true, Ordering::SeqCst);
+            *lock_mutex(&session.link_ok) = true;
             session
         }
 
@@ -4260,6 +4316,11 @@ mod tests {
         fn set_health(&self, alive: bool, socket_ok: bool) {
             *lock_mutex(&self.alive) = alive;
             *lock_mutex(&self.socket_ok) = socket_ok;
+        }
+
+        /// 模拟 adb 链路探针结果（false = 掉线）。
+        fn set_link_ok(&self, ok: bool) {
+            *lock_mutex(&self.link_ok) = ok;
         }
 
         /// 计数器快照。
@@ -4357,6 +4418,17 @@ mod tests {
         fn ensure_pointer_speed(&self) -> Option<Result<(), RouterError>> {
             self.ensure_pointer_speed_calls.fetch_add(1, Ordering::SeqCst);
             Some(Ok(()))
+        }
+
+        fn link_probe(&self) -> Option<Result<(), RouterError>> {
+            if *lock_mutex(&self.link_ok) {
+                Some(Ok(()))
+            } else {
+                Some(Err(RouterError::new(
+                    ErrorCode::SocketBroken,
+                    "模拟 adb 链路失败",
+                )))
+            }
         }
 
         fn set_pointer_speed(&self, speed: i32) -> Option<Result<(), RouterError>> {
@@ -5757,6 +5829,29 @@ mod tests {
         assert!(rig.session.count(&rig.session.reconnect_calls) >= 1);
         assert!(rig.router.estimator().is_some());
         assert!(rig.router.facts().is_some());
+    }
+
+    /// 2.0.3：adb 链路断掉但会话自检仍然健康时（控制通道是 adb forward 出来的
+    /// 本地 socket，不会报错），三次链路探针失败也必须降级——否则界面一直
+    /// 显示「已连接」，键鼠却全被吞掉。
+    #[test]
+    fn adb_link_death_faults_even_when_socket_looks_fine() {
+        let rig = make_rig(test_config());
+        rig.session.set_link_ok(false);
+        for round in 1..=2 {
+            rig.clock.advance_ms(10_100);
+            rig.tick();
+            assert_eq!(rig.router.state(), State::Idle, "第 {round} 次探针失败不降级");
+        }
+        rig.clock.advance_ms(10_100);
+        rig.tick();
+        assert_eq!(rig.router.state(), State::Fault, "第 3 次探针失败必须降级");
+
+        rig.session.set_link_ok(true);
+        rig.clock.advance_ms(1010);
+        rig.tick();
+        assert_eq!(rig.router.state(), State::Idle, "链路恢复后自动重连回 IDLE");
+        assert!(rig.session.count(&rig.session.reconnect_calls) >= 1);
     }
 
     /// 首连失败 → FAULT，退避到点后 supervisor 自动连上。

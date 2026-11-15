@@ -1722,7 +1722,10 @@ impl Engine {
         if self.simulate {
             return;
         }
-        if lock(&self.facts).is_some() {
+        // 2.0.3：只看 facts 不够——adb 链路断掉时控制通道是本地 socket，
+        // 会话不会报错，facts 一直留着，重定位就永远不会触发（无线调试换了
+        // 端口之后，自动重连只能一直撞旧地址）。所以 FAULT 也算断线。
+        if lock(&self.facts).is_some() && self.state() != "fault" {
             self.relocate_misses.store(0, Ordering::SeqCst);
             *lock(&self.relocate_at) = None;
             return;

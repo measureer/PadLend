@@ -979,3 +979,116 @@
 - 测抖动必须**同时测注入侧**。少了这一步，就会把 PC 自己的 sleep 精度（~15ms）当成平板的卡顿。
 - `/dev/input/eventN` 每次重连都会变，且鼠标/键盘常是相邻编号 —— 每次都要重新查 Path，别抄上一轮的值。
 
+---
+
+## 25. 2.0.3 补录：adb 掉了，界面却一直「已连接」
+
+### 25.1 现象
+
+平板上的键盘突然完全没反应（鼠标其实也一样），但 PadLend 窗口一直显示「已连接 / 已接管」，
+电脑这边按 Ctrl+Alt+S 交还也没用 —— 因为**低级键盘钩子还在吞键**，按下的键既没到平板，
+也没到 Windows。重启平板上的无线调试（端口从 35071 → 41675 → 44193 变过三次）之后必须手动改
+config 才能再连上，自动重连一直撞旧端口。
+
+### 25.2 触发条件
+
+- 平板侧无线调试断过（重开无线调试、平板断网/重启、走开一会儿）→ adb 链路没了，控制通道是
+  adb forward 出来的**本地** socket，对端是本机 adb server，本地这条 TCP 不发 FIN/RST。
+- 此时 [tablet.session] pointer_speed 复查失败: adb 超时 5s 之类的日志每 10s 刷一条，但
+  HealthReport::is_healthy() 只看 alive && socket_ok —— 两样都还是 true。
+
+### 25.3 根因
+
+- **健康判据选错了对象**：socket_ok 反映的是「本地 socket 没报错」，而 adb forward 的本质是
+  「本地 socket ↔ adb server ↔ 平板」。中间那一跳断了，本地这一跳照样能写（写进 adb server 的
+  缓冲区），所以 socket 层面的健康永远是 healthy。
+- **重定位被 facts 挡住**：Engine::maybe_auto_relocate() 的早退条件是 lock(&self.facts).is_some()，
+  掉线时 Router 的 inner.facts 不会被清，engine 镜像一直是 Some —— mDNS 重定位一次都不会跑，
+  也就不可能发现「同一台平板换了端口」。
+
+### 25.4 修法
+
+- SessionPort::link_probe()（默认为空实现）：TabletSession 实现成跑一条最小 adb 命令
+  adb shell echo link-probe，只看通不通。**不能拿 ensure_pointer_speed() 代劳** —— 它把
+  「值不是 0」和「adb 超时」都折成 Ok(false)，拿它当心跳会把用户手动改过的 pointer_speed
+  误判成断线。
+- Router::poll_pointer_speed()（每 10s）先跑探针：失败累计到
+  C::CONSECUTIVE_WRITE_FAILURES(3) 次 —— 约 30 秒 —— 就 fault(SocketBroken, "adb 链路连续 N 次无响应")。
+  fault() 会 release_mask + 补发键盘全松 + 状态转 FAULT，键盘钩子随之停止吞键。
+- Engine::maybe_auto_relocate() 的早退条件补上 && self.state() != "fault"：故障态即断线，
+  重定位照跑，1–2 秒内把 config 里的地址换成 mDNS 查到的新端口，随后的 supervisor 重连直接命中。
+
+### 25.5 如何验证 / 回归
+
+- 单测 adb_link_death_faults_even_when_socket_looks_fine（router）：会话自检健康、只有探针失败时，
+  前两次不降级、第三次 FAULT、链路恢复后自动重连回 IDLE。
+- 真机：连着平板时执行 adb disconnect <ip:port> → 约 30 秒后 UI 转故障、键盘立刻能用 →
+  数秒后自动重连回「已连接」。回归时重点看三点：① 故障转换时间（≤35s）② 键盘是否立刻可用
+  ③ 恢复后 config.yaml 里的 serial 是否已换成新端口。
+
+### 25.6 教训
+
+- **凡是「代理出来的链路」，健康检查必须打穿到最远端**。本地 socket 的 ESTABLISHED、
+  甚至一次成功的 write，都不能证明对端还在。
+- 后台心跳要选**最便宜**的那条命令：echo 不碰 system_server；用 dumpsys 当心跳会重演第 24 节的卡顿。
+- 自动恢复的每一步都要问一句「哪个条件会让它永远不触发」。facts.is_some() 看着无害，
+  却把「断线重定位」整条路径锁死了。
+
+---
+
+## 26. 2.0.4 补录：平板上指针每十秒卡一下（路由线程上的 adb 调用）
+
+### 26.1 现象
+
+在平板上用鼠标，用着用着指针会突然卡住一两秒到好几秒，然后一下跳到新的位置；键盘敲字
+也会跟着卡。界面上一直显示「已连接」。
+
+### 26.2 触发条件
+
+平板本身的 system_server 比较忙的时候（这台 HONOR CGA-W00 实测 load average 14+，
+`settings get` 单次偶尔要 17.5 秒）。
+
+### 26.3 根因
+
+路由线程每 10 秒做一次 pointer_speed 复查，**同步**跑 `adb shell settings get system
+pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `adb shell` 的超时是 5 秒，
+平板上这条命令一慢就整条卡满。日志里成对出现的就是两次 5 秒：
+
+```
+[tablet.session] pointer_speed 复查失败: adb 超时 5s: shell settings get system pointer_speed
+[router] session.ensure_pointer_speed 失败 err=E101: pointer_speed 复查失败
+```
+
+这段时间路由线程既不 drain 发送队列也不处理新报文 —— 平板上看到的就「指针冻住」。
+2.0.3 真机验证：注入 600 次 10ms 间隔的移动，平板 `/dev/input/event12` 收到 **0** 个事件，
+而路由日志的 `raw.seen` 计数正常增长（说明钩子收到了，只是没发出去）。
+
+### 26.4 修法
+
+- `TabletSession` 新增后台线程 `padlend-adb-link`（`start_link_watch` / `link_loop`）：
+  每 2 秒跑一条 `echo link-probe` 当心跳（不碰 system_server），每 10 秒做一次
+  pointer_speed 复查；结果写进 `link_ok` / `pointer_ok` 两个原子量。
+- `SessionPort::link_probe()` / `ensure_pointer_speed()` 对真实会话改成**只读缓存**，
+  任何情况下都不在路由线程上做 adb IO。
+- `Router::restore_pointer_speed()` 在会话报错时直接返回，不再补 `set_pointer_speed`
+  的那条 fallback 写命令（它原来也在路由线程上、也会卡 5 秒）。
+
+### 26.5 如何验证
+
+- 引擎单测全绿（568 passed）。
+- 真机：注入 400 次移动 → 平板 `/dev/input/event12` 收到 387 个报文（p99 23.9ms、最坏 84ms
+  一次）；日志里不再出现
+  成对的 5s 超时。
+- 回归时重点看：任意 30 秒窗口内 `[router] session.ensure_pointer_speed 失败` 与
+  `raw.seen` 的间隔 —— 只要两者在同一时间段交替出现，就说明 adb 调用又跑回路由线程了。
+
+### 26.6 教训
+
+- **输入路径上不能有任何可能阻塞的外部调用**，adb 这种「另一台机器 + 系统服务」的
+  调用尤其不行：它的超时是秒级，而输入路径的预算是毫秒级。
+- 周期性维护任务（复查、探活、还原）一律放后台线程，前台只读结果。
+- 排查「卡一下」要先问「这一下有多长」：5 秒级的冻结不会是抖动，一定是阻塞在某个
+  有超时的调用上。
+
+
+
