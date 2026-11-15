@@ -56,15 +56,26 @@
 
 - 删除零接线的 `win/cursor_watch.rs`（850 行）与 `win/desktop.rs` 里只被测试调用的
   `entry_point` / `exit_position`（生产唯一实现是 `logic::geometry`）；删除遮罩内的假 atexit 壳。
+- 删除 `tablet/cursor.rs`（360 行，与 `logic/router.rs` 的估计器重复）、
+  `clockfmt::from_unix_utc`、`Engine` 的 5 个零调用访问器、`Registry::ids`、
+  7 个未使用的 `EVENT_*`、不可达的 `Reply::Shutdown` 分支与死 fixture
+  `tests/fixtures/rpc_golden/simulate.ndjson`；遮罩诊断不再输出 Python repr。
+- 配置补丁不再把 `null` 变成字符串 `"None"`（字符串字段清空，布尔值用 `true`/`false`）；
+  相关回归测试改名，不再以已删除的 Python 实现作为测试基准。
 - `.gitignore` 补充 `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.ruff_cache/`，
-  并移除已跟踪的 pyc；删除与 `128x128@2x.png` 同字节的重复图标。
+  并移除已跟踪的 pyc；`.mnemon/` 本地产物不再入库；删除与 `128x128@2x.png` 同字节的重复图标。
+- 前端与外壳收尾：删除未使用的 `@tauri-apps/plugin-opener` JS 依赖、`serde` 直接依赖、
+  `app_info` 命令、3 个未用的 window ACL、死 CSS 类与 token、`vite` 里已删的
+  `service/` watch 以及 `segmentOffset` 的死参数；Tauri CSP 从 `null` 收紧为
+  仅允许本地脚本/样式、IPC 与打包资源。
 - 12 份过期迁移/可行性/验收文档移入 `docs/archive/`；README、TROUBLESHOOTING、DESIGN、
   TAURI_MIGRATION 的版本、依赖、日志与诊断说明改为当前实现。
 
 ### 验证
 
-- 引擎 `cargo test`：575 passed / 13 ignored / 0 failed（新增兜底、panic 护栏、朝向唤醒、
-  UTF-8、布局删除、Raw Input、键盘钩子生命周期、adb devices 分隔符等回归用例）。
+- 引擎 `cargo test`：562 passed / 13 ignored / 0 failed。清理阶段删除了死模块自带的
+  13 个测试，因此计数从 575 回到 562；其余兜底、panic 护栏、朝向唤醒、UTF-8、布局删除、
+  Raw Input、键盘钩子生命周期、adb devices 分隔符等回归用例仍全绿。
 - 外壳 `cargo test`：1 passed / 1 ignored / 0 failed；`cargo check` 干净。
 - 前端 `vitest run`：16 files / 90 tests passed；`tsc --noEmit` 干净；`vite build` 成功。
 - 真机（Huawei CGA-W00，无线调试 `192.168.68.129:40639`）：`devices.scan` 识别为

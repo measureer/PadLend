@@ -2771,7 +2771,6 @@ version = "2.1.0"
 dependencies = [
  "chrono",
  "cpal",
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",

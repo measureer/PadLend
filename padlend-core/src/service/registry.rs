@@ -591,11 +591,6 @@ impl Registry {
         out
     }
 
-    /// 所有记录的 id（调试/诊断用）。
-    pub fn ids(&self) -> Vec<String> {
-        self.devices.iter().map(|record| record.id.clone()).collect()
-    }
-
     /// 插入或合并一次连接（对应 Python `upsert`）；返回记录 id。
     pub fn upsert(
         &mut self,

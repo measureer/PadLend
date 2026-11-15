@@ -783,7 +783,6 @@ mod tests {
         match reply {
             Reply::Ok(value) => value,
             Reply::Error(message) => panic!("期望成功，得到错误：{message}"),
-            Reply::Shutdown(value) => value,
         }
     }
 

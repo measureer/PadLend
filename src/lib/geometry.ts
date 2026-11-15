@@ -46,7 +46,7 @@ export function pointSegmentDistance(segment: Segment, monitor: Monitor, x: numb
 }
 
 /** 光标在段上的投影点 → 0..1 相对落点。 */
-export function segmentOffset(segment: Segment, _monitor: Monitor, x: number, y: number): number {
+export function segmentOffset(segment: Segment, x: number, y: number): number {
   const along = isVertical(segment.edge) ? y : x;
   return clamp01((along - segment.spanStart) / Math.max(segment.length, 1));
 }

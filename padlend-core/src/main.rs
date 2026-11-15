@@ -92,10 +92,9 @@ fn main() -> ExitCode {
         };
     }
 
-    // 与 Python main.py 一致：--simulate 或 PADLEND_SIMULATE 为真即模拟。
+    // --simulate 或 PADLEND_SIMULATE 为真即模拟。
     // **默认必须是真实设备**——生产与调试行为不能靠构建类型分叉，否则本地调试时
-    // 一切"正常"而发布版连的是真平板。门禁与演示由 tools/rpc_trace.py 显式设
-    // PADLEND_SIMULATE=1。
+    // 一切"正常"而发布版连的是真平板。门禁与演示显式设 PADLEND_SIMULATE=1。
     let simulate = args.simulate || simulate_requested();
     match rpc::serve(rpc::ServeOptions {
         simulate,

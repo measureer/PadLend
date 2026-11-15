@@ -8,7 +8,7 @@ import { Icon } from '../../components/Icon';
 import { Button, Card } from '../../components/ui';
 import { backend } from '../../api/client';
 import { checkUpdates, openPath, openUrl } from '../../lib/actions';
-import { humanSize, RELEASES_PAGE } from '../../lib/updates';
+import { formatReleaseDate, humanSize, RELEASES_PAGE } from '../../lib/updates';
 import { useAppStore } from '../../store/appStore';
 
 const REPO_URL = 'https://github.com/measureer/PadLend';
@@ -22,12 +22,6 @@ async function copyRepo(): Promise<void> {
   } catch (error) {
     s.pushToast(`无法复制：${(error as Error).message}`, 'err');
   }
-}
-
-function formatDate(text: string): string {
-  if (!text) return '';
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString('zh-CN');
 }
 
 export function AboutPage() {
@@ -82,7 +76,7 @@ export function AboutPage() {
                 <>
                   <div>发现新版本：<strong>v{result.latest}</strong>{result.release.name ? `（${result.release.name}）` : ''}</div>
                   <div className="muted">
-                    发布于 {formatDate(result.release.publishedAt) || '时间未知'}
+                    发布于 {formatReleaseDate(result.release.publishedAt) || '时间未知'}
                     {installer ? ` · ${installer.name}${installer.size ? ` · ${humanSize(installer.size)}` : ''}` : ' · 该发布没有可直接下载的安装包'}
                   </div>
                 </>

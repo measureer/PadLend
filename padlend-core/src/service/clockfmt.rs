@@ -19,23 +19,6 @@ pub struct Stamp {
     pub millis: i64,
 }
 
-/// 1970-01-01 起的天数 → 公历 (year, month, day)（Howard Hinnant 算法）。
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month, day)
-}
-
 impl Stamp {
     /// 当前本地时间。
     pub fn now() -> Self {
@@ -48,22 +31,6 @@ impl Stamp {
             minute: st.wMinute as i64,
             second: st.wSecond as i64,
             millis: st.wMilliseconds as i64,
-        }
-    }
-
-    /// 由 Unix 秒（按 UTC 解释）构造；仅用于测试与时区无关的换算验证。
-    pub fn from_unix_utc(seconds: i64, millis: i64) -> Self {
-        let days = seconds.div_euclid(86_400);
-        let rem = seconds.rem_euclid(86_400);
-        let (year, month, day) = civil_from_days(days);
-        Self {
-            year,
-            month,
-            day,
-            hour: rem / 3_600,
-            minute: (rem % 3_600) / 60,
-            second: rem % 60,
-            millis,
         }
     }
 
@@ -105,14 +72,6 @@ pub fn iso_seconds() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn civil_from_days_matches_known_dates() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(19_000), (2022, 1, 8));
-        // 2026-11-14 由任务环境给定。
-        assert_eq!(civil_from_days(20_771), (2026, 11, 14));
-    }
 
     #[test]
     fn time_of_day_has_millisecond_precision() {

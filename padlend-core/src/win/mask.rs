@@ -1001,8 +1001,7 @@ impl CursorMask {
     /// 一行现场状态：`visible` / `clip` / 遮罩窗口数 / 每个遮罩的 topmost 状态。
     ///
     /// 接管期（尤其是点击前后）写进日志，用来判断"电脑上又冒出鼠标"是遮罩被拆了、
-    /// 锁被系统回收了，还是别的进程把光标显示回来了。文本格式与 Python 的 f-string
-    /// 完全一致（`True`/`False`/`None` 与 `Rect(left=..)` 都是 Python repr）。
+    /// 锁被系统回收了，还是别的进程把光标显示回来了。未知状态统一写 `unknown`。
     pub fn diagnose(&self) -> String {
         let visible = self.shared.api.cursor_visible().ok().flatten();
         let clip = self.shared.api.clip_rect().ok().flatten();
@@ -1010,10 +1009,10 @@ impl CursorMask {
         let active = self.active();
         format!(
             "visible={} clip={} windows={} topmost={} active={}",
-            py_opt_bool(visible),
-            py_opt_rect(clip),
+            fmt_opt_bool(visible),
+            fmt_opt_rect(clip),
             windows,
-            py_topmost_list(&self.topmost_state()),
+            fmt_topmost_list(&self.topmost_state()),
             active
         )
     }
@@ -1594,8 +1593,8 @@ fn log_repair(shared: &Shared, visible: Option<bool>) {
     drop(public);
     eprintln!(
         "[mask] mask.repair topmost={} visible={} active={}",
-        py_topmost_list(&topmost),
-        py_opt_bool(visible),
+        fmt_topmost_list(&topmost),
+        fmt_opt_bool(visible),
         active
     );
 }
@@ -1609,29 +1608,29 @@ fn topmost_state(shared: &Shared) -> Vec<Option<bool>> {
 }
 
 // ---------------------------------------------------------------------------
-// Python repr 兼容的小工具（诊断文本要能直接和 Python 日志 diff）
+// 诊断文本里的小工具：未知状态写 unknown，避免和布尔值混淆
 // ---------------------------------------------------------------------------
 
-fn py_opt_bool(value: Option<bool>) -> &'static str {
+fn fmt_opt_bool(value: Option<bool>) -> &'static str {
     match value {
-        Some(true) => "True",
-        Some(false) => "False",
-        None => "None",
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unknown",
     }
 }
 
-fn py_opt_rect(value: Option<Rect>) -> String {
+fn fmt_opt_rect(value: Option<Rect>) -> String {
     match value {
-        None => "None".to_string(),
+        None => "unknown".to_string(),
         Some(rect) => format!(
-            "Rect(left={}, top={}, right={}, bottom={})",
+            "({}, {}, {}, {})",
             rect.left, rect.top, rect.right, rect.bottom
         ),
     }
 }
 
-fn py_topmost_list(values: &[Option<bool>]) -> String {
-    let inner: Vec<&str> = values.iter().map(|value| py_opt_bool(*value)).collect();
+fn fmt_topmost_list(values: &[Option<bool>]) -> String {
+    let inner: Vec<&str> = values.iter().map(|value| fmt_opt_bool(*value)).collect();
     format!("[{}]", inner.join(", "))
 }
 
@@ -2284,7 +2283,7 @@ mod tests {
         mask.show(None).unwrap();
 
         assert!(
-            mask.diagnose().contains("topmost=[True]"),
+            mask.diagnose().contains("topmost=[true]"),
             "{}",
             mask.diagnose()
         );

@@ -167,13 +167,13 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
       const segment = resolveCorner(chosen.segment, other.segment, delta, corner);
       chosen = scored.find((item) => item.segment === segment) ?? chosen;
     }
-    const { segment, monitor } = chosen;
+    const { segment } = chosen;
     return {
       monitorHandle: segment.monitorHandle,
       edge: segment.edge,
       spanStart: segment.spanStart,
       spanEnd: segment.spanEnd,
-      offset: segmentOffset(segment, monitor, sceneX, sceneY),
+      offset: segmentOffset(segment, sceneX, sceneY),
       align: current.align,
       cornerPriority: corner,
     };

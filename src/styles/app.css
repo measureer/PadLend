@@ -56,7 +56,7 @@
 }
 .win-btn.close:hover {
   background: var(--capturing);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 /* ---------------------------------------------------------------- 顶栏 */
@@ -83,10 +83,10 @@
   background: linear-gradient(135deg, var(--brand-from), var(--brand-to));
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--accent-contrast);
   font-weight: 700;
   font-size: 20px;
-  box-shadow: 0 6px 18px rgba(91, 140, 255, 0.32);
+  box-shadow: 0 6px 18px var(--accent-glow);
 }
 .brand-name {
   font-size: var(--fs-16);
@@ -351,8 +351,8 @@
 .btn.primary {
   background: linear-gradient(135deg, var(--brand-from), var(--brand-to));
   border-color: transparent;
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(91, 140, 255, 0.26);
+  color: var(--accent-contrast);
+  box-shadow: 0 4px 14px var(--accent-glow-soft);
 }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 35%, var(--border)); background: transparent; }
@@ -373,7 +373,6 @@
 .field-label { font-size: var(--fs-13); font-weight: 550; }
 .field-hint { font-size: var(--fs-11); color: var(--text-3); line-height: 1.5; }
 .field-control { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
-.field-value { min-width: 62px; text-align: right; font-size: var(--fs-12); color: var(--text-2); }
 .slider-input { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .number-field { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .field-number { width: 68px; padding: 3px 7px; text-align: right; font-size: var(--fs-12); }
@@ -390,8 +389,7 @@
 .calib-status.err { color: var(--err); }
 .calib-hint { font-size: var(--fs-12); color: var(--text-3); }
 .input,
-.select,
-.hotkey-input {
+.select {
   width: 100%;
   height: var(--h-control);
   padding: 0 var(--sp-3);
@@ -402,12 +400,12 @@
   outline: none;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
-.input:focus, .select:focus, .hotkey-input:focus {
+.input:focus, .select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .input::placeholder { color: var(--text-3); }
-.input.invalid, .hotkey-input.invalid { border-color: var(--err); }
+.input.invalid { border-color: var(--err); }
 .select { min-width: 130px; appearance: none; padding-right: var(--sp-8); background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%); background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
 .toggle {
   position: relative;
@@ -432,10 +430,10 @@
   transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .toggle[aria-checked='true'] { background: var(--accent); border-color: var(--accent); }
-.toggle[aria-checked='true']::after { transform: translateX(16px); background: #fff; }
+.toggle[aria-checked='true']::after { transform: translateX(16px); background: var(--accent-contrast); }
 .slider { flex: 1; min-width: 90px; accent-color: var(--accent); height: 20px; cursor: pointer; }
 
-.pill, .badge {
+.badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -516,7 +514,7 @@
   display: grid;
   place-items: center;
   padding: var(--sp-6);
-  background: rgba(4, 8, 15, 0.55);
+  background: var(--scrim);
   backdrop-filter: blur(5px);
   animation: fade-in var(--dur) var(--ease);
 }
@@ -673,7 +671,6 @@
 .canvas-monitor-meta { fill: var(--text-3); font-size: 88px; }
 .canvas-edge { stroke: var(--border-strong); stroke-width: 14; stroke-dasharray: 44 48; opacity: 0.55; }
 .canvas-edge.exterior { stroke: var(--capturing); opacity: 0.75; }
-.canvas-edge.highlighted { stroke-width: 26; opacity: 1; }
 .canvas-edge.attached { stroke: var(--accent); stroke-width: 30; opacity: 1; }
 .canvas-tablet { fill: color-mix(in srgb, var(--accent) 18%, var(--bg-surface)); stroke: var(--accent); stroke-width: 14; }
 .canvas-tablet-label { fill: var(--text); font-size: 140px; font-weight: 600; text-anchor: middle; }
@@ -740,7 +737,6 @@
   .header { gap: var(--sp-3); padding: 0 var(--sp-4); }
   .brand-sub { display: none; }
   .field-row { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
-  .field-value { text-align: left; }
   .detail-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 700px) {

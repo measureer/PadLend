@@ -507,26 +507,12 @@ pub const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: i32 = -4;
 // ---------------------------------------------------------------------------
 // 事件词表（7.4，测试据此断言，勿改）
 // ---------------------------------------------------------------------------
-/// 开始捕获。
-pub const EVENT_CAP_START: &str = "cap.start";
-/// 捕获命中平板。
-pub const EVENT_CAP_HIT: &str = "cap.hit";
-/// 结束捕获。
-pub const EVENT_CAP_END: &str = "cap.end";
-/// 判定失败。
-pub const EVENT_ARM_FAIL: &str = "arm.fail";
-/// 状态机故障。
-pub const EVENT_STATE_FAULT: &str = "state.fault";
 /// 平板连接。
 pub const EVENT_TABLET_CONNECT: &str = "tablet.connect";
 /// 平板重连。
 pub const EVENT_TABLET_RECONNECT: &str = "tablet.reconnect";
 /// 清理幽灵设备。
 pub const EVENT_TABLET_CLEANUP_GHOST: &str = "tablet.cleanup.ghost";
-/// PC 键盘抑制开启。
-pub const EVENT_KBD_SUPPRESS_ON: &str = "kbd.suppress.on";
-/// 设计文档 7.4 的固定词表承诺；当前 Python 侧没有发送者，保留供前端/后续配置热载使用。
-pub const EVENT_CFG_RELOAD: &str = "cfg.reload";
 
 #[cfg(test)]
 mod tests {

@@ -129,7 +129,6 @@ pub struct Engine {
     simulate: bool,
     no_hooks: bool,
     config_path: PathBuf,
-    registry_path: PathBuf,
     first_run: bool,
     config: Mutex<Config>,
     registry: Mutex<registry::Registry>,
@@ -286,7 +285,6 @@ impl Engine {
             simulate: options.simulate,
             no_hooks: options.no_hooks,
             config_path,
-            registry_path,
             first_run,
             config: Mutex::new(cfg.clone()),
             registry: Mutex::new(registry),
@@ -936,24 +934,8 @@ impl Engine {
 
     // -- 只读视图 ----------------------------------------------------------
 
-    pub fn simulate(&self) -> bool {
-        self.simulate
-    }
-
-    pub fn no_hooks(&self) -> bool {
-        self.no_hooks
-    }
-
     pub fn config_path(&self) -> &Path {
         &self.config_path
-    }
-
-    pub fn registry_path(&self) -> &Path {
-        &self.registry_path
-    }
-
-    pub fn first_run(&self) -> bool {
-        self.first_run
     }
 
     pub fn started(&self) -> bool {
@@ -1282,11 +1264,6 @@ impl Engine {
     pub fn with_registry<R>(&self, apply: impl FnOnce(&mut registry::Registry) -> R) -> R {
         let mut guard = lock(&self.registry);
         apply(&mut guard)
-    }
-
-    pub fn save_registry(&self) -> bool {
-        let mut guard = lock(&self.registry);
-        guard.save()
     }
 
     pub fn registry_snapshot(&self) -> registry::Registry {
@@ -2116,7 +2093,7 @@ mod tests {
     }
 
     #[test]
-    fn simulated_adb_output_matches_python() {
+    fn simulated_adb_output_parses_like_adb() {
         assert!(simulated_adb_output(&["devices"]).contains("SIMULATEDPAD"));
         assert_eq!(
             simulated_adb_output(&["shell", "dumpsys", "input"]),

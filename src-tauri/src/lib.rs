@@ -84,7 +84,6 @@ pub fn run() {
             commands::check_update,
             commands::service_shutdown,
             commands::quit_app,
-            commands::app_info,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

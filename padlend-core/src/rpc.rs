@@ -255,10 +255,6 @@ fn spawn_request(method: String, params: Value, id: Value) {
                     eprintln!("[rpc] {thread_method} 失败：{err}");
                     write_value(&json!({ "id": thread_id, "ok": false, "error": err }));
                 }
-                Reply::Shutdown(result) => {
-                    // app.shutdown 在 stdin 循环里特判，正常不会走到这里。
-                    write_value(&json!({ "id": thread_id, "ok": true, "result": result }));
-                }
             }
             let elapsed = started.elapsed();
             if elapsed >= std::time::Duration::from_millis(1500) {

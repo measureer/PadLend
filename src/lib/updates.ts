@@ -69,6 +69,13 @@ export function pickInstaller(assets: ReleaseAsset[]): ReleaseAsset | null {
   );
 }
 
+/** GitHub 的 ISO 时间 → 本地日期；空值或非法时间原样返回。 */
+export function formatReleaseDate(text: string): string {
+  if (!text) return '';
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString('zh-CN');
+}
+
 export function humanSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '';
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

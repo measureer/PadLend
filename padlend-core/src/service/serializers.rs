@@ -319,7 +319,7 @@ fn coerce_kind(raw: &Value, kind: Value) -> Result<Value, String> {
     coerce_value(raw, &kind)
 }
 
-/// 把 `raw` 强转成 `expected` 的类型（Python `_coerce` 的等价实现）。
+/// 把 `raw` 强转成 `expected` 的类型；`null` 落到字符串字段时清空，不写成 "None"。
 fn coerce_value(raw: &Value, expected: &Value) -> Result<Value, String> {
     match expected {
         Value::Bool(_) => Ok(Value::Bool(match raw {
@@ -385,9 +385,9 @@ fn number_of(raw: &Value) -> Result<f64, String> {
 fn text_of(raw: &Value) -> String {
     match raw {
         Value::String(text) => text.clone(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
-        Value::Null => "None".to_string(),
+        Value::Bool(true) => "true".to_string(),
+        Value::Bool(false) => "false".to_string(),
+        Value::Null => String::new(),
         Value::Number(number) => number.to_string(),
         other => other.to_string(),
     }
@@ -442,6 +442,17 @@ mod tests {
             problems.contains(&"hotkeys.volume_up 不能为空".to_string()),
             "{problems:?}"
         );
+    }
+
+    #[test]
+    fn config_patch_does_not_turn_null_into_none_string() {
+        let mut config = Config::default();
+        let problems = apply_config_patch(&mut config, &json!({"ui": {"language": null}}));
+        assert!(
+            !problems.iter().any(|problem| problem.contains("None")),
+            "{problems:?}"
+        );
+        assert_eq!(config.ui.language, "");
     }
 
     #[test]

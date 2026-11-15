@@ -4,14 +4,8 @@ import { useEffect, useRef } from 'react';
 import { Icon } from '../../components/Icon';
 import { Button, Modal } from '../../components/ui';
 import { checkUpdates, openUrl } from '../../lib/actions';
-import { humanSize } from '../../lib/updates';
+import { formatReleaseDate, humanSize } from '../../lib/updates';
 import { useAppStore } from '../../store/appStore';
-
-function formatDate(text: string): string {
-  if (!text) return '';
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? text : date.toLocaleDateString('zh-CN');
-}
 
 export function UpdateDialog() {
   const close = () => useAppStore.getState().openDialog(null);
@@ -60,7 +54,7 @@ export function UpdateDialog() {
             <>
               <div>发现新版本：<strong>v{result.latest}</strong>{result.release.name ? `（${result.release.name}）` : ''}</div>
               <div className="muted">
-                发布于 {formatDate(result.release.publishedAt) || '时间未知'}
+                发布于 {formatReleaseDate(result.release.publishedAt) || '时间未知'}
                 {installer ? ` · ${installer.name}${installer.size ? ` · ${humanSize(installer.size)}` : ''}` : ' · 该发布没有可直接下载的安装包'}
               </div>
             </>

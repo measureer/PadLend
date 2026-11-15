@@ -4596,8 +4596,6 @@ mod tests {
         Position(i32, i32),
         /// 有 getter 但读不到。
         Missing,
-        /// 没有绝对光标源。
-        Unsupported,
     }
 
     /// 桌面替身（对应 tests/fakes.py::FakeDesktop）。
@@ -4673,7 +4671,6 @@ mod tests {
             match *lock_mutex(&self.cursor) {
                 FakeCursor::Position(x, y) => CursorQuery::Position(x, y),
                 FakeCursor::Missing => CursorQuery::Unavailable,
-                FakeCursor::Unsupported => CursorQuery::Unsupported,
             }
         }
 

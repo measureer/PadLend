@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::service::api;
 use crate::service::engine::Engine;
@@ -50,8 +50,6 @@ pub enum Reply {
     Ok(Value),
     /// 失败：写 error 文本。
     Error(String),
-    /// 关闭：写 result 后退出循环。
-    Shutdown(Value),
 }
 
 static ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
@@ -79,21 +77,16 @@ pub fn dispatch(method: &str, params: &Value) -> Reply {
     let Some(engine) = engine() else {
         return Reply::Error("引擎未启动".to_string());
     };
-    match method {
-        "app.shutdown" => {
-            engine.shutdown();
-            Reply::Shutdown(json!({ "ok": true }))
-        }
-        _ => api::call(&engine, method, params),
-    }
+    api::call(&engine, method, params)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
-    fn method_table_matches_python_contract() {
+    fn method_table_matches_rpc_contract() {
         assert_eq!(METHODS.len(), 29);
         let mut sorted = METHODS.to_vec();
         sorted.sort_unstable();
@@ -147,9 +140,9 @@ mod tests {
     }
 
     #[test]
-    fn method_list_covers_every_python_handler() {
-        // Python 分派表的 25 个键（用于防止移植时漏项）。
-        let python = [
+    fn method_list_covers_every_handler() {
+        // 核心 RPC 方法（防止白名单漏项）。
+        let required = [
             "app.bootstrap",
             "app.shutdown",
             "config.get",
@@ -176,7 +169,7 @@ mod tests {
             "wizard.check",
             "logs.recent",
         ];
-        for method in python {
+        for method in required {
             assert!(METHODS.contains(&method), "缺少 {method}");
         }
     }

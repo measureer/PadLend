@@ -122,12 +122,3 @@ pub fn quit_app(app: AppHandle, bridge: State<'_, Arc<Bridge>>) {
     bridge.shutdown();
     app.exit(0);
 }
-
-#[tauri::command]
-pub fn app_info() -> Value {
-    json!({
-        "name": "PadLend",
-        "version": env!("CARGO_PKG_VERSION"),
-        "shell": "Tauri 2",
-    })
-}

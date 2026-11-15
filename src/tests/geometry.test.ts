@@ -43,8 +43,8 @@ describe('画布几何（与 core/geometry.py 保持一致）', () => {
 
   it('offset 落在 0..1 且中点为 0.5', () => {
     expect(clamp01(1.4)).toBe(1);
-    expect(segmentOffset(right, monitor, 0, 540)).toBeCloseTo(0.5);
-    expect(segmentOffset(right, monitor, 0, 5000)).toBe(1);
+    expect(segmentOffset(right, 0, 540)).toBeCloseTo(0.5);
+    expect(segmentOffset(right, 0, 5000)).toBe(1);
   });
 
   it('平板贴在右边缘外侧，段上投影对准平板中心', () => {

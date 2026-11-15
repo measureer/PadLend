@@ -3,7 +3,6 @@
 pub mod adb;
 pub mod adb_links;
 pub mod audio;
-pub mod cursor;
 pub mod keymap;
 pub mod locator;
 pub mod mdns;
