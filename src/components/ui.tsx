@@ -187,6 +187,61 @@ export const Slider = memo(function Slider({
   );
 });
 
+interface NumberFieldProps {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+  /** 框里显示的文本（默认直接显示 value）。 */
+  text?: (value: number) => string;
+  /** 把输入文本解析回内部值；返回 null 表示输入无效。 */
+  parse?: (text: string) => number | null;
+  unit?: string;
+  label: string;
+}
+
+/** 纯数字输入框（没有滑条）：回车 / 失焦提交，按 min/max/step 规范化，Esc 还原。 */
+export const NumberField = memo(function NumberField({
+  value, min, max, step = 1, onChange, text, parse, unit, label,
+}: NumberFieldProps) {
+  const toText = (next: number) => (text ? text(next) : String(next));
+  const [draft, setDraft] = useState(() => toText(value));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(toText(value));
+    // toText 依赖调用方传入的 text，随 value 一起变
+  }, [value, editing, text]);
+  const commit = () => {
+    const parsed = parse ? parse(draft) : Number(draft);
+    if (parsed === null || !Number.isFinite(parsed)) {
+      setDraft(toText(value));
+      return;
+    }
+    const stepped = step > 0 ? Number((Math.round(parsed / step) * step).toFixed(4)) : parsed;
+    const next = Math.min(max, Math.max(min, stepped));
+    setDraft(toText(next));
+    if (next !== value) onChange(next);
+  };
+  return (
+    <span className="number-field">
+      <input
+        className="input field-number mono"
+        value={draft}
+        aria-label={label}
+        onFocus={() => setEditing(true)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(toText(value)); setEditing(false); e.currentTarget.blur(); }
+        }}
+      />
+      {unit ? <span className="field-unit mono">{unit}</span> : null}
+    </span>
+  );
+});
+
 interface SelectProps {
   value: string;
   options: { value: string; label: string }[];

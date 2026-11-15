@@ -18,15 +18,16 @@ layouts:
   devices: {}
 motion:
   gain: 1.0
-  report_hz: 1000
+  report_hz: 125
   hid_clamp: 127
   entry_margin_px: 2
-  exit_overflow_px: 80
+  exit_overflow_px: 120
   debounce_ms: 250
   arm_px: 10
   arm_window_ms: 80
   edge_band_px: 1
   boundary_inset_px: 0
+  px_per_count: 2.0
 keyboard:
   forward: true
   suppress_pc: true
@@ -44,6 +45,6 @@ ui:
   close_to_tray: false
 misc:
   clipboard_sync: true
-  keep_screen_on: true
+  keep_screen_on: false
   restore_pointer_speed: -3
   forward_audio: false

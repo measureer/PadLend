@@ -440,9 +440,11 @@ pub const ARM_WINDOW_MS: i32 = 80;
 /// 慢推兜底：没在 80ms 内攒够 `arm_px`，但已经明显向外推了这么多，
 /// 仍视为有意接管。轻推/慢推的用户不该被 500px/s 的速度门槛挡住。
 pub const ARM_SLOW_PX: i32 = 12;
-/// 在平板边缘反向拖回多少像素才交还 PC。0.3.16 起 120（原来 24），
-/// 1.2.1 起默认 80：保留防误退，同时缩短回 PC 的拖动距离。
-pub const EXIT_OVERFLOW_PX: i32 = 80;
+/// 在平板边缘反向拖回多少像素才交还 PC。0.3.16 起 120（原来 24），1.2.1 短暂用过 80。
+///
+/// 2.0.1 起回到 120：指针比例（px_per_count）越保守，「模型到顶」的判定就越晚，
+/// 这里再给一点余量，边缘点按时的轻微抖动才不至于误判成交还。
+pub const EXIT_OVERFLOW_PX: i32 = 120;
 
 /// 边缘捕获带宽度（像素）。
 pub const EDGE_BAND_PX: i32 = 1;
@@ -458,7 +460,10 @@ pub const CORNER_DIRECTION_RATIO: f64 = 0.15;
 /// 默认增益。
 pub const DEFAULT_GAIN: f64 = 1.0;
 /// 默认上报频率（Hz）。
-pub const DEFAULT_REPORT_HZ: i32 = 1000;
+///
+/// 2.0.1 起 125：无线链路下 125 Hz 已经够跟手，报文少一半还更省电；
+/// 想更跟手可以在设置页选 250/500/1000。
+pub const DEFAULT_REPORT_HZ: i32 = 125;
 /// 最小上报频率（Hz）。
 pub const MIN_REPORT_HZ: i32 = 125;
 /// 最大上报频率（Hz）。
@@ -660,7 +665,7 @@ mod tests {
         assert_eq!(REPORT_HZ_CHOICES, [125, 250, 500, 1000]);
         assert_eq!(MIN_REPORT_HZ, 125);
         assert_eq!(MAX_REPORT_HZ, 1000);
-        assert_eq!(DEFAULT_REPORT_HZ, 1000);
+        assert_eq!(DEFAULT_REPORT_HZ, 125);
         assert_eq!(WIRELESS_DEFAULT_PORT, 5555);
         assert_eq!(HANDSHAKE_DUMMY, b"\x00");
     }

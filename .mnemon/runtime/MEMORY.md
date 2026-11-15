@@ -27,3 +27,5 @@ PadLend 的 .ps1 脚本必须存成 UTF-8 带 BOM：Windows PowerShell 5.1 按�
 PadLend scrcpy 握手陷阱（1.7.1 修，详见 docs/PITFALLS.md 2.8）：scrcpy 5.0.1 的 dummy 字节只发给**第一个** accept 的 socket——audio=true 时音频通道带 dummy、控制通道一个字节都没有；服务端 cleanup=true 被杀时自删 /data/local/tmp/scrcpy-server-manual.jar，任何重启服务端的路径都必须先 push_if_needed()，否则 ClassNotFound 秒退、握手全被关闭直到 CONNECT_TIMEOUT_S=30。
 §
 PadLend 引擎里凡是「只有某条 RPC 才打开的开关」，都要确认自动路径（router supervisor / 定时器 / 回调）也走那条 RPC：facts_ready 闸门曾只在 devices.connect 打开，导致 auto_connect 自动连上后 bootstrap 的 facts 恒 null、界面显示未连接（1.7.3 在 Engine::open 里按 cfg.device.auto_connect 提前 enable_facts 修复）。另：adb 无线调试链路由 adb_links 登记，devices.disconnect 与 Engine::shutdown 都会 adb disconnect（1.7.2 加），已实测退出时日志「断开无线调试连接 …：disconnected」且 adb devices 清空。
+§
+PadLend 发布流程（2.0.0 起固化）：后台 job 跑 tools/release.ps1（日志轮询 ^exit=）→ git checkout -- .mnemon/documents/index.json → git add -A → git commit -F 临时文件 → git tag vX.Y.Z → git push origin master --tags → gh release create vX.Y.Z --title "PadLend X.Y.Z" --notes-file .github/release-notes.md dist/PadLend-X-setup.exe dist/PadLend-X-win64.zip dist/SHA256SUMS.txt。应用内「检查更新」走 WinHTTP 读 /releases/latest 的 302 Location，发版后立刻能比对。

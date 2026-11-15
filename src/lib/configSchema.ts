@@ -11,7 +11,7 @@ export interface FieldDef {
   key: string;
   label: string;
   hint: string;
-  kind: 'toggle' | 'slider' | 'select' | 'hotkey';
+  kind: 'toggle' | 'slider' | 'number' | 'select' | 'hotkey';
   min?: number;
   max?: number;
   step?: number;
@@ -75,7 +75,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'report_hz', section: 'motion', key: 'report_hz', label: '上报频率', kind: 'select',
         options: HZ_OPTIONS,
-        hint: '每秒向平板发多少次指针位置。无线连接抖动时可以降到 500 或 250 Hz。',
+        hint: '每秒向平板发多少次指针位置。默认 125 Hz，无线连接也够跟手；想更跟手可以调高，抖动时调低。',
       },
       {
         id: 'arm_px', section: 'motion', key: 'arm_px', label: '触发阈值', kind: 'slider',
@@ -86,6 +86,18 @@ export const SETTING_GROUPS: SettingGroup[] = [
         id: 'exit_overflow_px', section: 'motion', key: 'exit_overflow_px', label: '穿回阈值', kind: 'slider',
         min: 4, max: 120, step: 1, format: (v) => `${v} px`, unit: 'px',
         hint: '在平板边缘反向拖回多少像素才交还 PC。调大可以避免边缘点按晃动误退。',
+      },
+      {
+        id: 'px_per_count', section: 'motion', key: 'px_per_count', label: '指针比例', kind: 'number',
+        min: 0, max: 10, step: 0.01,
+        text: (v) => v.toFixed(2),
+        parse: (text) => {
+          const parsed = Number.parseFloat(text.replace(',', '.'));
+          return Number.isFinite(parsed) ? parsed : null;
+        },
+        unit: 'px/计数',
+        applies: 'live',
+        hint: '每个 HID 计数在平板上走多少像素；0 表示按分辨率推理论值。自动校准会随手速浮动（推得越快测得越小），填比校准值低 10–20% 更稳：估计器宁可偏晚交还，也不会在屏幕中间掉回 PC；觉得回 PC 太迟钝就往大调。',
       },
     ],
   },
@@ -192,12 +204,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'keep_screen_on', section: 'misc', key: 'keep_screen_on', label: '保持平板亮屏', kind: 'toggle',
         applies: 'reconnect',
-        hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。',
+        hint: '连接期间把平板的「熄屏时间」临时调到 5 小时（原本更长就不动），断开或退出时还原；异常退出会在下次启动补还原。默认关闭。',
       },
       {
         id: 'forward_audio', section: 'misc', key: 'forward_audio', label: '转发平板声音', kind: 'toggle',
         applies: 'reconnect',
-        hint: '把平板正在播放的声音实时转到电脑，平板自身静音。需要 Android 11 或更高版本；首次开启可能要在平板上确认。音频通道在连接时建立，改完要断开再连一次。',
+        hint: '把平板的声音实时转到电脑，平板自身静音。需要 Android 11+，首次开启可能要在平板上确认；音频通道在连接时建立，改完要断开再连一次。',
       },
     ],
   },
@@ -253,6 +265,9 @@ export function validateConfig(config: Config): string[] {
   if (motion.arm_px < 1) problems.push('motion.arm_px 必须 ≥1');
   if (motion.arm_window_ms < 1) problems.push('motion.arm_window_ms 必须 ≥1');
   if (motion.exit_overflow_px < 1) problems.push('motion.exit_overflow_px 必须 ≥1');
+  if (!(motion.px_per_count === 0 || (motion.px_per_count >= 1 && motion.px_per_count <= 10))) {
+    problems.push('motion.px_per_count 必须是 0 或 1..10');
+  }
   if (motion.edge_band_px < 1) problems.push('motion.edge_band_px 必须 ≥1');
   if (motion.debounce_ms < 0) problems.push('motion.debounce_ms 不能为负');
   if (motion.boundary_inset_px < 0) problems.push('motion.boundary_inset_px 不能为负');

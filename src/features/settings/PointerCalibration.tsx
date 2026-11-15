@@ -125,8 +125,8 @@ function Dialog({ current, onClose, onMeasured }: {
           <p className="calib-status ok">
             测得 <span className="mono">{measured.toFixed(2)} px/计数</span>
             {' '}（累计 {reading?.countsY ?? 0} 计数 / 平板高 {reading?.height ?? 0} px）。
-            当前用的是 {current > 0 ? `${current.toFixed(2)} px/计数` : '未校准（理论值）'}。
-            <br />点「使用这个结果」填进设置，回到设置页再点「保存设置」。
+            <br />点「使用这个结果」写进设置里的「指针比例」，再点「保存设置」。
+            推得越快这个数越小（指针加速），建议再往下调 10–20%：宁可略晚交还，也别在屏幕中间掉回 PC。
           </p>
         ) : (
           <p className="calib-status err">
@@ -156,7 +156,7 @@ export function PointerCalibration({ value, onMeasured }: {
           <span className="badge ok" title="保存后引擎立刻用新的比例换算，不用重连。">即时生效</span>
         </span>
       )}
-      hint="估计器按「1 个 HID 计数 ≈ 多少平板像素」推算指针位置；Android 的指针速度没法读，只能用实测值校准。不校准就退回屏幕密度的理论值。"
+      hint="不能读 Android 的指针速度，只能实测：点「校准…」把指针推到屏幕底部，测完自动填进上面的「指针比例」。实测值随手速浮动，填低一点更稳。"
     >
       <div className="calib-row">
         <span className="mono">{value > 0 ? `${value.toFixed(2)} px/计数` : '未校准（理论值）'}</span>

@@ -105,6 +105,13 @@
       "updated_at": "2026-11-14T17:44:43.405Z",
       "target": "memory",
       "importance": "normal"
+    },
+    {
+      "content": "PadLend 发布流程（2.0.0 起固化）：后台 job 跑 tools/release.ps1（日志轮询 ^exit=）→ git checkout -- .mnemon/documents/index.json → git add -A → git commit -F 临时文件 → git tag vX.Y.Z → git push origin master --tags → gh release create vX.Y.Z --title \"PadLend X.Y.Z\" --notes-file .github/release-notes.md dist/PadLend-X-setup.exe dist/PadLend-X-win64.zip dist/SHA256SUMS.txt。应用内「检查更新」走 WinHTTP 读 /releases/latest 的 302 Location，发版后立刻能比对。",
+      "created_at": "2026-11-15T09:36:15.068Z",
+      "updated_at": "2026-11-15T09:36:15.068Z",
+      "target": "memory",
+      "importance": "normal"
     }
   ]
 }

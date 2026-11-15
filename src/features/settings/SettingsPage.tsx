@@ -3,7 +3,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { Config } from '../../api/types';
 import { Icon, type IconName } from '../../components/Icon';
-import { Banner, Button, Card, Field, Select, Slider, Toggle } from '../../components/ui';
+import { Banner, Button, Card, Field, NumberField, Select, Slider, Toggle } from '../../components/ui';
 import { SETTING_GROUPS, readField, validateConfig, settingsPatch, writeField, type FieldDef, type SettingGroup } from '../../lib/configSchema';
 import { saveConfig } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
@@ -45,6 +45,20 @@ function Control({ field, config, onChange }: {
           step={field.step ?? 1}
           label={field.label}
           format={field.format}
+          text={field.text}
+          parse={field.parse}
+          unit={field.unit}
+          onChange={onChange}
+        />
+      );
+    case 'number':
+      return (
+        <NumberField
+          value={Number(value)}
+          min={field.min ?? 0}
+          max={field.max ?? 100}
+          step={field.step ?? 1}
+          label={field.label}
           text={field.text}
           parse={field.parse}
           unit={field.unit}
@@ -115,9 +129,14 @@ export function SettingsPage() {
     }
   }, [config, dirty]);
 
+  // 2.0.1：dirty 每次按「草稿 vs 已保存配置」重新算，把值改回原样时徽章会自己消失。
+  const commitDraft = (next: Config) => {
+    setDraft(next);
+    setDirty(JSON.stringify(next) !== JSON.stringify(config));
+  };
+
   const change = (field: FieldDef, value: string | number | boolean) => {
-    setDraft((current) => writeField(current, field, value));
-    setDirty(true);
+    commitDraft(writeField(draft, field, value));
     setBanner(null);
   };
 
@@ -161,8 +180,7 @@ export function SettingsPage() {
               onChange={change}
               onMeasured={(value) => {
                 // 只改草稿，仍然走统一的「保存设置」提交（和其它字段一致）。
-                setDraft((current) => ({ ...current, motion: { ...current.motion, px_per_count: value } }));
-                setDirty(true);
+                commitDraft({ ...draft, motion: { ...draft.motion, px_per_count: value } });
                 setBanner(null);
               }}
             />

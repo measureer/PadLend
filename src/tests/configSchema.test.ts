@@ -12,9 +12,9 @@ const gainField = SETTING_GROUPS[0].fields[0];
 const reportField = SETTING_GROUPS[0].fields[1];
 
 describe('声明式设置 schema', () => {
-  it('覆盖 22 个可编辑字段，且每个字段都有提示文案', () => {
+  it('覆盖 23 个可编辑字段，且每个字段都有提示文案', () => {
     const fields = SETTING_GROUPS.flatMap((group) => group.fields);
-    expect(fields).toHaveLength(22);
+    expect(fields).toHaveLength(23);
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
@@ -29,10 +29,10 @@ describe('声明式设置 schema', () => {
     expect(SETTING_GROUPS.filter((g) => g.column === 'side').map((g) => g.title)).toEqual(['杂项']);
 
     const keepScreen = fields.find((f) => f.id === 'keep_screen_on');
-    expect(keepScreen?.hint).toContain('临时把');
+    expect(keepScreen?.hint).toContain('临时调到');
     expect(keepScreen?.hint).toContain('熄屏时间');
     expect(keepScreen?.hint).toContain('5 小时');
-    expect(keepScreen?.hint).toContain('可以关闭');
+    expect(keepScreen?.hint).toContain('默认关闭');
 
     const audio = fields.find((f) => f.id === 'forward_audio');
     expect(audio?.label).toBe('转发平板声音');
@@ -83,10 +83,23 @@ describe('声明式设置 schema', () => {
 
   it('上报频率写回为数字，且只接受固定档位', () => {
     const config = defaultConfig();
-    expect(readField(config, reportField)).toBe('1000');
+    expect(readField(config, reportField)).toBe('125');
     expect(writeField(config, reportField, '250').motion.report_hz).toBe(250);
     const invalid = { ...config, motion: { ...config.motion, report_hz: 300 } };
     expect(validateConfig(invalid)).toContain('motion.report_hz 必须是 125/250/500/1000 之一');
+  });
+
+
+  it('指针比例是可直接输入的数字框，写回 motion 段', () => {
+    const config = defaultConfig();
+    const field = SETTING_GROUPS[0].fields.find((f) => f.id === 'px_per_count')!;
+    expect(field.kind).toBe('number');
+    expect(field.unit).toBe('px/计数');
+    expect(field.applies).toBe('live');
+    expect(readField(config, field)).toBe(2);
+    expect(writeField(config, field, 2.4).motion.px_per_count).toBe(2.4);
+    const tooSmall = { ...config, motion: { ...config.motion, px_per_count: 0.5 } };
+    expect(validateConfig(tooSmall)).toContain('motion.px_per_count 必须是 0 或 1..10');
   });
 
   it('校验规则与 config.py 一致并回报具体字段', () => {

@@ -323,11 +323,15 @@ pub struct MotionCfg {
     pub edge_band_px: i64,
     /// 桌面边界内缩（像素）；H3 规避手势时 8~16。
     pub boundary_inset_px: i64,
-    /// 校准得到的「1 个 HID 计数对应平板多少像素」；0 表示未校准，退回 xscale。
+    /// 「1 个 HID 计数对应平板多少像素」；0 表示未校准，退回 xscale(理论值)。
     ///
     /// Android 指针速度在更上层且不可读（DESIGN F4），本机实测约 2.5~2.9 px/计数，
     /// 而 xscale(1.312) 只是理论值；用错比例会让估计器与实际指针分叉，表现就是
     /// 「指针还在屏幕中部就交还 PC」（PITFALLS 19）。校准流程见 PITFALLS 20。
+    ///
+    /// 2.0.1 起默认 2.0（而不是 0 或实测的 2.7~2.8）：Android 指针加速让实测值随
+    /// 手速浮动（快推测得偏小、慢推偏大），取偏小的固定值最安全 —— 估计器会比真实
+    /// 指针慢一点，「到顶」判定只会偏晚，绝不会在屏幕中部就交还。见 PITFALLS 23。
     pub px_per_count: f64,
 }
 
@@ -344,7 +348,7 @@ impl Default for MotionCfg {
             arm_window_ms: i64::from(C::ARM_WINDOW_MS),
             edge_band_px: i64::from(C::EDGE_BAND_PX),
             boundary_inset_px: i64::from(C::BOUNDARY_INSET_PX),
-            px_per_count: 0.0,
+            px_per_count: 2.0,
         }
     }
 }
@@ -493,7 +497,9 @@ impl Default for MiscCfg {
     fn default() -> Self {
         Self {
             clipboard_sync: true,
-            keep_screen_on: true,
+            // 2.0.1 起默认不常亮：连接期间改写平板「熄屏时间」有副作用（断连要还原），
+            // 需要时在设置页手动打开即可。
+            keep_screen_on: false,
             restore_pointer_speed: -3,
             forward_audio: false,
         }
@@ -2045,13 +2051,16 @@ mod tests {
             .iter()
             .any(|hz| i64::from(*hz) == cfg.motion.report_hz));
         assert!(cfg.motion.hid_clamp >= 1 && cfg.motion.hid_clamp <= 127);
-        assert_eq!(cfg.motion.exit_overflow_px, 80);
+        assert_eq!(cfg.motion.exit_overflow_px, 120);
+        assert_eq!(cfg.motion.px_per_count, 2.0);
+        assert!(!cfg.misc.keep_screen_on);
         assert!(cfg.validate().is_empty());
     }
 
     #[test]
-    fn exit_overflow_default_is_80() {
-        assert_eq!(MotionCfg::default().exit_overflow_px, 80);
+    fn exit_overflow_default_is_120() {
+        // 2.0.1：比例默认偏保守，「模型到顶」判定本来就晚，穿回阈值再给足余量。
+        assert_eq!(MotionCfg::default().exit_overflow_px, 120);
     }
 
     #[test]

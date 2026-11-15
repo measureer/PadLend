@@ -39,16 +39,16 @@ export function defaultConfig(): Config {
     layouts: { devices: {} },
     motion: {
       gain: 1.0,
-      report_hz: 1000,
+      report_hz: 125,
       hid_clamp: 127,
       entry_margin_px: 2,
-      exit_overflow_px: 80,
+      exit_overflow_px: 120,
       debounce_ms: 250,
       arm_px: 10,
       arm_window_ms: 80,
       edge_band_px: 1,
       boundary_inset_px: 0,
-    px_per_count: 0,
+    px_per_count: 2.0,
     },
     keyboard: {
       forward: true,
@@ -75,7 +75,7 @@ export function defaultConfig(): Config {
     },
     misc: {
       clipboard_sync: true,
-      keep_screen_on: true,
+      keep_screen_on: false,
       restore_pointer_speed: -3,
       forward_audio: false,
     },
@@ -497,7 +497,7 @@ export class MockBackend {
   async openUrl(): Promise<void> {}
   async checkUpdate(): Promise<{ tag: string; release: unknown }> {
     // 浏览器预览：假装 GitHub 上最新就是当前版本，避免走真网络。
-    return { tag: 'v2.0.0', release: null };
+    return { tag: 'v2.0.1', release: null };
   }
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}

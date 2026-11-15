@@ -53,4 +53,18 @@ describe('应用外壳与核心交互（浏览器 mock 后端）', () => {
     expect(screen.getByText('https://github.com/measureer/PadLend')).toBeTruthy();
     expect(screen.getByRole('button', { name: '检查更新' })).toBeTruthy();
   });
+
+  it('「有未保存的修改」徽章随草稿与已保存配置的差异出现和消失', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '设备' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    await waitFor(() => expect(screen.getByText('杂项')).toBeTruthy());
+
+    expect(screen.queryByText('有未保存的修改')).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: '剪贴板同步' }));
+    await waitFor(() => expect(screen.getByText('有未保存的修改')).toBeTruthy());
+    // 2.0.1：把值改回原样，徽章要自己消失，而不是必须点一次保存。
+    fireEvent.click(screen.getByRole('switch', { name: '剪贴板同步' }));
+    await waitFor(() => expect(screen.queryByText('有未保存的修改')).toBeNull());
+  });
 });

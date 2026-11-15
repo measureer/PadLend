@@ -4688,7 +4688,10 @@ mod tests {
         let mut cfg = Config::default();
         cfg.motion.arm_px = i64::from(C::ARM_PX);
         cfg.motion.arm_window_ms = i64::from(C::ARM_WINDOW_MS);
-        cfg.motion.exit_overflow_px = i64::from(C::EXIT_OVERFLOW_PX);
+        // 穿回阈值与指针比例都和录制 fixture 时的取值一致（默认值 2.0.1 起改了）：
+        // 场景回放要逐条对拍，不能被新默认值带偏。
+        cfg.motion.exit_overflow_px = 80;
+        cfg.motion.px_per_count = 0.0;
         cfg.motion.edge_band_px = i64::from(C::EDGE_BAND_PX);
         cfg.motion.debounce_ms = i64::from(C::DEBOUNCE_MS);
         cfg.motion.entry_margin_px = i64::from(C::ENTRY_MARGIN_PX);

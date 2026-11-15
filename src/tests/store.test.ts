@@ -39,7 +39,7 @@ describe('应用状态切片', () => {
     useAppStore.getState().hydrate(bootstrap());
     const state = useAppStore.getState();
     expect(state.hydrated).toBe(true);
-    expect(state.config.motion.report_hz).toBe(1000);
+    expect(state.config.motion.report_hz).toBe(125);
     expect(state.configPath).toContain('config.yaml');
   });
 
