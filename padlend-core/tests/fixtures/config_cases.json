@@ -18,7 +18,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -93,7 +93,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -169,7 +169,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -282,7 +282,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 1,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           }
@@ -357,7 +357,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -369,7 +369,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 0.5,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           }
@@ -448,7 +448,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 1,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -503,7 +503,7 @@
     "issues": [
       "device.server_port=80 越界，已恢复默认",
       "placement.edge='diagonal' 非法，已回退 right",
-      "placement.align='stretch' 非法，已回退 proportional",
+      "placement.align='stretch' 非法，已回退 one_to_one",
       "placement.offset=3.0 越界，已夹紧到 [0,1]",
       "placement.span_end 必须大于 span_start，已恢复默认",
       "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
@@ -544,7 +544,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": ""
       },
       "layouts": {
@@ -599,7 +599,7 @@
     "issues": [
       "ui.theme='NEON' 非法，已回退 dark",
       "placement.edge='Left' 非法，已回退 right",
-      "placement.align='' 非法，已回退 proportional",
+      "placement.align='' 非法，已回退 one_to_one",
       "placement.span_end 必须大于 span_start，已恢复默认",
       "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
       "motion.report_hz=998 不是固定档位，已改成 1000",
@@ -636,7 +636,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -648,7 +648,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 0.5,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           },
@@ -659,7 +659,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 1,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           },
@@ -670,7 +670,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 0.5,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           },
@@ -681,7 +681,7 @@
               "span_start": 0,
               "span_end": 1600,
               "offset": 0.5,
-              "align": "proportional",
+              "align": "one_to_one",
               "corner_priority": "right"
             }
           }
@@ -738,7 +738,7 @@
       "layouts.devices.SERIAL1.portrait 必须是映射，已忽略",
       "layouts.devices.SERIAL2.diagonal 方向非法（只支持 landscape/portrait），已忽略",
       "layouts.devices.serial1.landscape.edge='diagonal' 非法，已回退 right",
-      "layouts.devices.serial1.landscape.align='stretch' 非法，已回退 proportional",
+      "layouts.devices.serial1.landscape.align='stretch' 非法，已回退 one_to_one",
       "layouts.devices.serial1.landscape.offset=3.0 越界，已夹紧到 [0,1]"
     ],
     "validate": [],
@@ -764,7 +764,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -842,7 +842,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -920,7 +920,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1000,7 +1000,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1080,7 +1080,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1160,7 +1160,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1240,7 +1240,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1320,7 +1320,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1400,7 +1400,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1476,7 +1476,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1552,7 +1552,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1632,7 +1632,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1709,7 +1709,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1785,7 +1785,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1866,7 +1866,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -1942,7 +1942,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2018,7 +2018,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2094,7 +2094,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2170,7 +2170,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2246,7 +2246,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2322,7 +2322,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2398,7 +2398,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2478,7 +2478,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2554,7 +2554,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2630,7 +2630,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2706,7 +2706,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {
@@ -2766,7 +2766,7 @@
   {
     "name": "saved_default",
     "kind": "file",
-    "yaml": "version: 1\ndevice:\n  serial: ''\n  prefer_usb: true\n  auto_connect: true\n  server_port: 1234\n  known: []\n  macs: {}\nplacement:\n  monitor: ''\n  edge: right\n  span_start: 0\n  span_end: 1600\n  offset: 0.5\n  align: proportional\n  corner_priority: right\nlayouts:\n  devices: {}\nmotion:\n  gain: 1.0\n  report_hz: 1000\n  hid_clamp: 127\n  entry_margin_px: 2\n  exit_overflow_px: 80\n  debounce_ms: 250\n  arm_px: 10\n  arm_window_ms: 80\n  edge_band_px: 1\n  boundary_inset_px: 0\nkeyboard:\n  forward: true\n  suppress_pc: true\n  layout: us\n  passthrough_keys:\n  - VK_LWIN\n  - VK_RWIN\nhotkeys:\n  toggle: Ctrl+Alt+S\n  panic: Ctrl+Alt+Q\nui:\n  language: zh_CN\n  theme: dark\n  tray_notifications: true\n  close_to_tray: false\nmisc:\n  clipboard_sync: true\n  keep_screen_on: true\n  restore_pointer_speed: -3\n  forward_audio: false\n",
+    "yaml": "version: 1\ndevice:\n  serial: ''\n  prefer_usb: true\n  auto_connect: true\n  server_port: 1234\n  known: []\n  macs: {}\nplacement:\n  monitor: ''\n  edge: right\n  span_start: 0\n  span_end: 1600\n  offset: 0.5\n  align: one_to_one\n  corner_priority: right\nlayouts:\n  devices: {}\nmotion:\n  gain: 1.0\n  report_hz: 1000\n  hid_clamp: 127\n  entry_margin_px: 2\n  exit_overflow_px: 80\n  debounce_ms: 250\n  arm_px: 10\n  arm_window_ms: 80\n  edge_band_px: 1\n  boundary_inset_px: 0\nkeyboard:\n  forward: true\n  suppress_pc: true\n  layout: us\n  passthrough_keys:\n  - VK_LWIN\n  - VK_RWIN\nhotkeys:\n  toggle: Ctrl+Alt+S\n  panic: Ctrl+Alt+Q\nui:\n  language: zh_CN\n  theme: dark\n  tray_notifications: true\n  close_to_tray: false\nmisc:\n  clipboard_sync: true\n  keep_screen_on: true\n  restore_pointer_speed: -3\n  forward_audio: false\n",
     "config": {
       "version": 1,
       "device": {
@@ -2783,7 +2783,7 @@
         "span_start": 0,
         "span_end": 1600,
         "offset": 0.5,
-        "align": "proportional",
+        "align": "one_to_one",
         "corner_priority": "right"
       },
       "layouts": {

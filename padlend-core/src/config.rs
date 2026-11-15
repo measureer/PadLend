@@ -257,7 +257,7 @@ impl Default for PlacementCfg {
             span_start: 0,
             span_end: 1600,
             offset: 0.5,
-            align: "proportional".to_string(),
+            align: "one_to_one".to_string(),
             corner_priority: "right".to_string(),
         }
     }
@@ -1572,10 +1572,10 @@ fn repair_placement(placement: &mut PlacementCfg, prefix: &str, found: &mut Vec<
     }
     if !ALIGNS.contains(&placement.align.as_str()) {
         found.push(format!(
-            "{prefix}.align={} 非法，已回退 proportional",
+            "{prefix}.align={} 非法，已回退 one_to_one",
             py_repr_str(&placement.align)
         ));
-        placement.align = "proportional".to_string();
+        placement.align = "one_to_one".to_string();
     }
     if !placement.corner_priority.is_empty()
         && !PLACEMENT_EDGES.contains(&placement.corner_priority.as_str())
@@ -2096,6 +2096,7 @@ mod tests {
         assert!(cfg.validate().is_empty());
         assert_eq!(cfg.device.server_port, 1234);
         assert_eq!(cfg.device.serial, "");
+        assert_eq!(cfg.placement.align, "one_to_one");
         assert!(cfg.device.prefer_usb);
         assert!(cfg.device.auto_connect);
     }
@@ -2150,7 +2151,7 @@ mod tests {
             strings(&[
                 "device.server_port=80 越界，已恢复默认",
                 "placement.edge='diagonal' 非法，已回退 right",
-                "placement.align='stretch' 非法，已回退 proportional",
+                "placement.align='stretch' 非法，已回退 one_to_one",
                 "placement.offset=3.0 越界，已夹紧到 [0,1]",
                 "placement.span_end 必须大于 span_start，已恢复默认",
                 "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
@@ -2486,6 +2487,9 @@ mod tests {
     // -- 与 Python 生成的 fixture 逐字段对拍 --------------------------------
     #[test]
     fn fixture_cases_match_python() {
+        // 2.2.0 起 `placement.align` 默认从 proportional 改为 one_to_one：
+        // fixture 里只把「YAML 未写 align / 写了非法值」的 expected 改成新默认，
+        // YAML 显式写出的 proportional / center / one_to_one 仍与旧 Python 输出一致。
         let dir = fixtures_dir();
         let index_text =
             fs::read_to_string(dir.join("config_cases.json")).expect("缺少 config_cases.json");

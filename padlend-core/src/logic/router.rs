@@ -615,6 +615,11 @@ fn router_debug_enabled() -> bool {
     })
 }
 
+/// RawInput 诊断行的采样点：首条必打，之后只在 debug 模式下每 5000 条打一次。
+fn raw_seen_is_report_point(seen: u64, debug: bool) -> bool {
+    seen == 1 || (debug && seen % 5000 == 0)
+}
+
 /// 打一行 router debug 日志（门控；热路径不会格式化）。
 macro_rules! rdebug {
     ($($arg:tt)*) => {
@@ -1073,6 +1078,8 @@ struct Inner {
     device_suspended: bool,
     /// 上次 pointer_speed 复查时刻。
     last_pointer_poll: Option<f64>,
+    /// 上次心跳的发送时刻（None = 本次接管还没发过）。
+    last_heartbeat: Option<f64>,
     /// 连续 adb 复查失败次数（2.0.3：adb 链路断掉时控制通道不会报错，
     /// 只能靠周期性的 adb 调用失败来判断平板已经不在了）。
     adb_link_failures: u32,
@@ -1141,6 +1148,7 @@ impl Inner {
             connect_in_progress: false,
             device_suspended: false,
             last_pointer_poll: None,
+            last_heartbeat: None,
             adb_link_failures: 0,
             desktop_sig: None,
             keymap_loaded: keymap.is_some(),
@@ -1261,6 +1269,9 @@ pub struct Router {
     session: Arc<dyn SessionPort>,
     /// 桌面端口。
     desktop: Arc<dyn DesktopPort>,
+    /// 显示器快照（2.2.0）：每个 Raw Input 事件不再向桌面端口要整份列表；
+    /// 由 start_prepare / check_desktop 刷新。
+    monitors_cache: Mutex<Option<Arc<Vec<MonitorInfo>>>>,
     /// 遮罩端口。
     mask: Arc<dyn MaskPort>,
     /// 时���。
@@ -1358,6 +1369,7 @@ impl Router {
             cfg: RwLock::new(cfg),
             session,
             desktop,
+            monitors_cache: Mutex::new(None),
             mask,
             clock,
             metrics,
@@ -2117,16 +2129,22 @@ impl Router {
 
     /// RawInput 线程入口；绝不向调用方抛异常。
     pub fn on_raw(&self, ev: &RawDelta) {
-        // 诊断：每 500 个原始事件打一行，用来判断"接管后平板指针不动"是不是
+        // 诊断：首条原始事件打一行，用来判断"接管后平板指针不动"是不是
         // 因为 PC 侧根本没收到 Raw Input（RDP/钩子/注册失败都会是这种表现）。
+        // 之后只在 PADLEND_ROUTER_DEBUG 打开时每 5000 条打一次：默认 1kHz 输入
+        // 下原来每 500 条一行（2 行/s）会把 service.log 撑大，stderr 变慢时还会
+        // 反压输入线程；这里不再在热路径上无条件格式化。
         static RAW_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seen = RAW_SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if seen % 500 == 0 {
+        if raw_seen_is_report_point(seen, router_debug_enabled()) {
             eprintln!(
                 "[router] raw.seen n={seen} dx={} dy={} buttons={:#04x} wheel={} absolute={}",
                 ev.dx, ev.dy, ev.buttons, ev.wheel, ev.absolute
             );
         }
+        // 2.2.0：GetCursorPos 在拿 Inner 锁之前查完，输入线程持锁期间不再做
+        // Win32 调用；锁只保护状态迁移。
+        let cursor = self.desktop.cursor_pos();
         let mut events: Vec<RouterEvent> = Vec::new();
         let outcome = {
             let mut inner = self.lock_inner();
@@ -2134,7 +2152,7 @@ impl Router {
                 return;
             }
             self.metrics.record_raw(1);
-            self.on_raw_locked(&mut inner, &mut events, ev)
+            self.on_raw_locked(&mut inner, &mut events, ev, cursor)
         };
         if let Err(err) = outcome {
             eprintln!(
@@ -2159,6 +2177,7 @@ impl Router {
         inner: &mut Inner,
         events: &mut Vec<RouterEvent>,
         ev: &RawDelta,
+        cursor: CursorQuery,
     ) -> Result<(), RouterError> {
         let previous_buttons = inner.buttons;
         inner.buttons = ev.buttons;
@@ -2173,14 +2192,14 @@ impl Router {
                 }
             }
         }
-        self.track_pc_cursor(inner, ev);
+        self.track_pc_cursor(inner, ev, cursor);
         match inner.state {
             State::Fault => Ok(()),
             State::Returning => {
                 if self.clock.now() >= inner.return_deadline {
                     self.change_state(inner, events, State::Idle, "debounce");
-                    if let Some(position) = self.query_cursor_pos() {
-                        inner.pc_cursor = Some(position);
+                    if let CursorQuery::Position(x, y) = cursor {
+                        inner.pc_cursor = Some((x, y));
                     }
                 }
                 Ok(())
@@ -2192,8 +2211,8 @@ impl Router {
     }
 
     /// 跟踪 PC 绝对光标（对应 Python _track_pc_cursor）。
-    fn track_pc_cursor(&self, inner: &mut Inner, ev: &RawDelta) {
-        match self.desktop.cursor_pos() {
+    fn track_pc_cursor(&self, inner: &mut Inner, ev: &RawDelta, cursor: CursorQuery) {
+        match cursor {
             CursorQuery::Position(x, y) => {
                 inner.pc_cursor = Some((x, y));
                 return;
@@ -2492,26 +2511,45 @@ impl Router {
 
     // -- 显示器查询 --------------------------------------------------------
 
-    /// 当前显示器列表（Python _monitors）。
-    fn monitors(&self) -> Vec<MonitorInfo> {
-        let monitors = self.desktop.monitors();
-        if monitors.is_empty() {
-            return Vec::new();
+    /// 当前显示器快照（Python _monitors）。
+    ///
+    /// 2.2.0：缓存成 Arc，热路径只克隆指针；刷新点只有 `start_prepare` 和
+    /// `check_desktop`（每 2s 的 supervisor tick），不会每个 Raw Input 事件都
+    /// 让桌面端口 `to_vec()` 一次（旧实现每个显示器还要克隆 device String）。
+    fn monitors(&self) -> Arc<Vec<MonitorInfo>> {
+        let cached = lock_mutex(&self.monitors_cache);
+        if let Some(monitors) = cached.as_ref() {
+            return Arc::clone(monitors);
         }
+        drop(cached);
+        let monitors = Arc::new(self.desktop.monitors());
+        let mut cached = lock_mutex(&self.monitors_cache);
+        if let Some(existing) = cached.as_ref() {
+            return Arc::clone(existing);
+        }
+        *cached = Some(Arc::clone(&monitors));
+        monitors
+    }
+
+    /// 丢弃缓存并重新向桌面端口要一份（拓扑刷新/启动时用）。
+    fn reload_monitors(&self) -> Arc<Vec<MonitorInfo>> {
+        let monitors = Arc::new(self.desktop.monitors());
+        *lock_mutex(&self.monitors_cache) = Some(Arc::clone(&monitors));
         monitors
     }
 
     /// 按句柄查显示器（Python _monitor_for_handle）。
     fn monitor_for_handle(&self, handle: i64) -> Option<MonitorInfo> {
         self.monitors()
-            .into_iter()
+            .iter()
             .find(|monitor| monitor.handle == handle)
+            .cloned()
     }
 
     /// 显示器签名（用于发现拓扑变化；Python _monitor_signature）。
     fn monitor_signature(&self) -> Vec<(i64, Rect)> {
-        self.monitors()
-            .into_iter()
+        self.reload_monitors()
+            .iter()
             .map(|monitor| (monitor.handle, monitor.rect))
             .collect()
     }
@@ -2814,6 +2852,7 @@ impl Router {
         let entry_edge = segment.edge.opposite();
         inner.entry_edge = Some(entry_edge);
         inner.overflow = 0.0;
+        inner.last_heartbeat = None;
         inner.neutral_until_release = inner.buttons != 0;
         inner.wheel_accum = 0;
         inner.hit_logged = false;
@@ -2911,7 +2950,7 @@ impl Router {
         let along = if vertical { cursor_y } else { cursor_x };
         let expected_line = Self::edge_line(segment.edge, &monitor.rect);
         let mut target = monitor.clone();
-        for candidate in self.monitors() {
+        for candidate in self.monitors().iter() {
             let rect = candidate.rect;
             if Self::edge_line(segment.edge, &rect) != expected_line {
                 continue;
@@ -2922,7 +2961,7 @@ impl Router {
                 rect.left <= along && along < rect.right
             };
             if hit {
-                target = candidate;
+                target = candidate.clone();
                 break;
             }
         }
@@ -3210,9 +3249,12 @@ impl Router {
 
     /// 出一帧（对应 Python _sender_frame）；sender 线程与测试共用。
     pub fn sender_frame(&self) {
-        let inactive = {
+        let (inactive, captured) = {
             let inner = self.lock_inner();
-            inner.stopped || inner.device_suspended
+            (
+                inner.stopped || inner.device_suspended,
+                inner.state == State::Captured,
+            )
         };
         if inactive {
             self.lock_queue().clear();
@@ -3233,7 +3275,11 @@ impl Router {
             );
         }
         if messages.is_empty() {
-            self.send_heartbeat();
+            // 2.2.0：空闲（IDLE/ARMING/FAULT）不再发心跳，CAPTURED 也限到
+            // HEARTBEAT_MIN_INTERVAL_S，避免 1kHz 配置下空转流量。
+            if captured {
+                self.send_heartbeat();
+            }
         } else {
             for message in &messages {
                 self.send_mouse_message(message);
@@ -3244,16 +3290,24 @@ impl Router {
     }
 
     /// 发心跳（必须带当前按键位图，PITFALLS 2.2）。
+    ///
+    /// 只在 CAPTURED 发；并且两次心跳至少间隔 `HEARTBEAT_MIN_INTERVAL_S`，
+    /// 这样 report_hz=1000 时空队列也不会把心跳抬到 1kHz。
     fn send_heartbeat(&self) {
-        let buttons = {
-            let inner = self.lock_inner();
-            if inner.state == State::Captured {
-                inner.effective_buttons()
-            } else {
-                0
+        let message = {
+            let mut inner = self.lock_inner();
+            if inner.state != State::Captured {
+                return;
             }
+            let now = self.clock.now();
+            if let Some(last) = inner.last_heartbeat {
+                if now - last < C::HEARTBEAT_MIN_INTERVAL_S {
+                    return;
+                }
+            }
+            inner.last_heartbeat = Some(now);
+            SendMsg::heartbeat(inner.effective_buttons())
         };
-        let message = SendMsg::heartbeat(buttons);
         self.send_mouse_message(&message);
     }
 
@@ -3357,18 +3411,17 @@ impl Router {
             return;
         }
         let mut rotation_facts: Option<DeviceFacts> = None;
+        let metrics_due;
         {
             let mut inner = self.lock_inner();
             if inner.stopped {
                 return;
             }
-            if inner.device_suspended {
+            metrics_due = if inner.device_suspended {
                 if inner.state == State::Fault {
                     self.change_state(&mut inner, &mut events, State::Idle, "device.suspended");
                 }
-                if inner.state != State::Fault {
-                    self.emit_metrics(&mut events);
-                }
+                inner.state != State::Fault
             } else {
                 if inner.state != State::Fault {
                     self.check_health(&mut inner, &mut events);
@@ -3390,8 +3443,13 @@ impl Router {
                         self.change_state(&mut inner, &mut events, State::Idle, "debounce");
                     }
                 }
-                self.emit_metrics(&mut events);
-            }
+                true
+            };
+        }
+        // 2.2.0：指标快照里有进程 CPU/内存采样和 256 条延迟排序，必须在释放
+        // Inner 锁之后做，否则每 2s 的 supervisor tick 会阻塞 1kHz 输入线程。
+        if metrics_due {
+            self.emit_metrics(&mut events);
         }
         if let Some(facts) = rotation_facts {
             events.push(RouterEvent::Orientation(facts));
@@ -3606,6 +3664,7 @@ impl Router {
             eprintln!("[router] router.desktop_refresh_failed err={err}");
             return;
         }
+        self.reload_monitors();
         eprintln!(
             "[router] router.desktop_changed monitors={}",
             signature.len()
@@ -3681,7 +3740,13 @@ impl Router {
             Some(placement) => placement.corner_priority,
             None => self.config_edge_opt(),
         };
-        match Placement::new(best, 0.5, Align::Proportional, corner_priority) {
+        // 2.2.0：新摆位默认 1:1；已有摆位保留用户选过的对齐方式，
+        // 避免显示器拓扑变化时把 center/one_to_one 重置回旧默认。
+        let align = match &old {
+            Some(placement) => placement.align,
+            None => Align::OneToOne,
+        };
+        match Placement::new(best, 0.5, align, corner_priority) {
             Ok(placement) => {
                 inner.placement = Some(placement);
                 eprintln!(
@@ -4290,6 +4355,57 @@ mod tests {
 
     use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
 
+    /// GetCursorPos 必须在 Inner 锁外调用（2.2.0 热路径）。
+    /// 每个 Raw Input 事件不得再向桌面端口克隆整套显示器列表。
+    #[test]
+    fn raw_events_reuse_monitor_snapshot() {
+        let rig = make_rig(test_config());
+        rig.tick(); // 建立 desktop_sig + 显示器快照
+        let before = rig.desktop.monitors_calls();
+        rig.raw(1, 0);
+        rig.raw(1, 0);
+        assert_eq!(
+            rig.desktop.monitors_calls(),
+            before,
+            "热路径不应重复调用 DesktopPort::monitors()"
+        );
+    }
+
+    /// 指标快照（进程采样 + 延迟排序）必须在 Inner 锁外执行。
+    #[test]
+    fn supervisor_metrics_run_outside_inner_lock() {
+        let rig = make_rig(test_config());
+        rig.tick();
+        assert!(rig.usage.calls() > 0, "看护周期应产生指标快照");
+        assert_eq!(
+            rig.usage.violations(),
+            0,
+            "metrics.snapshot 不得在 Inner 锁内执行"
+        );
+    }
+
+    #[test]
+    fn cursor_query_runs_outside_inner_lock() {
+        let rig = make_rig(test_config());
+        rig.raw(1, 0);
+        assert_eq!(
+            rig.desktop.lock_violations(),
+            0,
+            "cursor_pos 不得在 Router Inner 锁内调用"
+        );
+    }
+
+    #[test]
+    fn raw_seen_logs_first_event_and_only_samples_in_debug() {
+        assert!(raw_seen_is_report_point(1, false), "首条事件必须留下诊断");
+        assert!(!raw_seen_is_report_point(2, false));
+        assert!(!raw_seen_is_report_point(500, false));
+        assert!(!raw_seen_is_report_point(4999, false));
+        assert!(raw_seen_is_report_point(5000, true));
+        assert!(!raw_seen_is_report_point(5000, false));
+        assert!(raw_seen_is_report_point(10000, true));
+    }
+
     // -----------------------------------------------------------------------
     // 假时钟
     // -----------------------------------------------------------------------
@@ -4327,6 +4443,47 @@ mod tests {
     impl Clock for FakeClock {
         fn now(&self) -> f64 {
             self.value()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 指标采样探针（验证 metrics.snapshot 不在 Inner 锁内执行）
+    // -----------------------------------------------------------------------
+
+    #[derive(Debug, Default)]
+    struct LockProbeInner {
+        router: Mutex<Option<Weak<Router>>>,
+        calls: AtomicI32,
+        violations: AtomicI32,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct LockProbeUsage(Arc<LockProbeInner>);
+
+    impl LockProbeUsage {
+        fn set_router(&self, router: &Arc<Router>) {
+            *lock_mutex(&self.0.router) = Some(Arc::downgrade(router));
+        }
+
+        fn calls(&self) -> i32 {
+            self.0.calls.load(Ordering::SeqCst)
+        }
+
+        fn violations(&self) -> i32 {
+            self.0.violations.load(Ordering::SeqCst)
+        }
+    }
+
+    impl crate::logic::metrics::ProcessUsage for LockProbeUsage {
+        fn usage(&self) -> (f64, f64) {
+            self.0.calls.fetch_add(1, Ordering::SeqCst);
+            let probe = lock_mutex(&self.0.router).clone();
+            if let Some(router) = probe.and_then(|weak| weak.upgrade()) {
+                if !router.try_lock_inner_for_test() {
+                    self.0.violations.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            (0.0, 0.0)
         }
     }
 
@@ -4605,7 +4762,11 @@ mod tests {
         segments: Mutex<Vec<EdgeSegment>>,
         cursor: Mutex<FakeCursor>,
         refresh_calls: AtomicI32,
+        monitors_calls: AtomicI32,
         corner_calls: Mutex<Vec<((i32, i32), Option<Edge>)>>,
+        /// 2.2.0：cursor_pos 被调用时若 Inner 锁被占，记一次违规。
+        lock_probe: Mutex<Option<Weak<Router>>>,
+        lock_violations: AtomicI32,
     }
 
     impl FakeDesktop {
@@ -4616,7 +4777,10 @@ mod tests {
                 segments: Mutex::new(vec![right_segment()]),
                 cursor: Mutex::new(FakeCursor::Position(960, 540)),
                 refresh_calls: AtomicI32::new(0),
+                monitors_calls: AtomicI32::new(0),
                 corner_calls: Mutex::new(Vec::new()),
+                lock_probe: Mutex::new(None),
+                lock_violations: AtomicI32::new(0),
             }
         }
 
@@ -4647,10 +4811,21 @@ mod tests {
         fn refreshes(&self) -> i32 {
             self.refresh_calls.load(Ordering::SeqCst)
         }
+
+        /// 桌面端口 monitors() 被调用次数（热路径应只在 tick/启动时增长）。
+        fn monitors_calls(&self) -> i32 {
+            self.monitors_calls.load(Ordering::SeqCst)
+        }
+
+        /// cursor_pos 在 Inner 锁内被调用的次数（必须为 0）。
+        fn lock_violations(&self) -> i32 {
+            self.lock_violations.load(Ordering::SeqCst)
+        }
     }
 
     impl DesktopPort for FakeDesktop {
         fn monitors(&self) -> Vec<MonitorInfo> {
+            self.monitors_calls.fetch_add(1, Ordering::SeqCst);
             lock_mutex(&self.monitors).clone()
         }
 
@@ -4668,6 +4843,11 @@ mod tests {
         }
 
         fn cursor_pos(&self) -> CursorQuery {
+            if let Some(router) = lock_mutex(&self.lock_probe).as_ref().and_then(Weak::upgrade) {
+                if !router.try_lock_inner_for_test() {
+                    self.lock_violations.fetch_add(1, Ordering::SeqCst);
+                }
+            }
             match *lock_mutex(&self.cursor) {
                 FakeCursor::Position(x, y) => CursorQuery::Position(x, y),
                 FakeCursor::Missing => CursorQuery::Unavailable,
@@ -4885,6 +5065,7 @@ mod tests {
         mask: Arc<FakeMask>,
         keymap: Arc<FakeKeymap>,
         clock: Arc<FakeClock>,
+        usage: LockProbeUsage,
         transitions: Arc<Mutex<Vec<(State, State, String)>>>,
     }
 
@@ -4932,12 +5113,16 @@ mod tests {
         let mask_port: Arc<dyn MaskPort> = mask.clone();
         let clock_port: Arc<dyn Clock> = clock.clone();
         let keymap_port: Arc<dyn KeymapPort> = keymap.clone();
+        let usage = LockProbeUsage::default();
         let router = Arc::new(
             Router::new(cfg, session_port, desktop_port, mask_port)
                 .with_clock(clock_port)
-                .with_keymap(keymap_port),
+                .with_keymap(keymap_port)
+                .with_process_usage(Box::new(usage.clone())),
         );
+        usage.set_router(&router);
         *lock_mutex(&session.lock_probe) = Some(Arc::downgrade(&router));
+        *lock_mutex(&desktop.lock_probe) = Some(Arc::downgrade(&router));
         {
             let sink = Arc::clone(&transitions);
             router.set_on_state_changed(move |old, new, reason| {
@@ -4952,6 +5137,7 @@ mod tests {
             mask,
             keymap,
             clock,
+            usage,
             transitions,
         }
     }
@@ -5175,6 +5361,8 @@ mod tests {
         );
 
         // (3) 鼠标报文。fixture 由真线程录制，开头可能多 1 条纯心跳 [0,0,0,0]。
+        // 2.2.0 起 IDLE/RETURNING 不再发心跳，所以 manual_release 结尾原有的两条
+        // 空帧心跳已从 fixture 删除；这里仍只容忍开头 1 条录制噪声。
         let actual_reports = rig.reports();
         if expected.mouse_reports.len() == actual_reports.len() {
             assert_eq!(
@@ -5308,6 +5496,36 @@ mod tests {
             Some((0, 3, 0, 0)),
             "物理松开后新按键事件应正常转发"
         );
+    }
+
+    /// 空闲（未接管）出帧不得产生心跳流量。
+    #[test]
+    fn idle_frames_do_not_send_heartbeats() {
+        let rig = make_rig(test_config());
+        rig.frame();
+        assert!(rig.reports().is_empty(), "IDLE 空帧不应发心跳");
+    }
+
+    /// CAPTURED 心跳最高 250Hz：1kHz 出帧也只能每 4ms 发一条。
+    #[test]
+    fn captured_heartbeats_are_rate_limited() {
+        let rig = make_rig(test_config());
+        rig.capture_manually();
+        rig.flush();
+        rig.frame();
+        assert_eq!(rig.reports().len(), 1, "接管后第一条心跳应立即发出");
+
+        rig.clear_reports();
+        rig.frame();
+        assert!(rig.reports().is_empty(), "4ms 内不得重复发心跳");
+
+        rig.clock.advance(0.003);
+        rig.frame();
+        assert!(rig.reports().is_empty(), "3ms 仍不足一个心跳周期");
+
+        rig.clock.advance(0.002);
+        rig.frame();
+        assert_eq!(rig.reports().len(), 1, "超过 4ms 后恢复心跳");
     }
 
     /// 进入前已按住的键在物理松开前保持中性。
@@ -5712,8 +5930,11 @@ mod tests {
         let worker = Arc::clone(&rig.router);
         let handle = std::thread::spawn(move || worker.sender_loop());
 
+        // 2.2.0 起 IDLE 不再发心跳，所以不能靠空队列心跳判断 sender 还活着：
+        // 持续投递真实报文，前 3 条会 panic，第 4 条必须成功写出。
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while rig.session.reports().is_empty() && std::time::Instant::now() < deadline {
+            rig.router.queue_mouse(0, 0, 0, 0);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
@@ -6174,6 +6395,7 @@ mod tests {
         assert_eq!(placement.segment.monitor_handle, 2);
         assert_eq!(placement.segment.edge, Edge::Top);
         assert!((placement.offset - 0.5).abs() < 1e-9);
+        // 已有摆位保留了用户选过的 proportional，不被重锚定重置。
         assert_eq!(placement.align, Align::Proportional);
     }
 

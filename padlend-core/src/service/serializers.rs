@@ -81,7 +81,7 @@ pub fn placement_from_dict(data: &Value) -> Placement {
         .get("align")
         .and_then(Value::as_str)
         .and_then(|text| Align::try_from(text).ok())
-        .unwrap_or(Align::Proportional);
+        .unwrap_or(Align::OneToOne);
     let corner_priority = data
         .get("cornerPriority")
         .and_then(Value::as_str)
@@ -501,7 +501,7 @@ mod tests {
     fn placement_from_dict_falls_back_on_invalid_values() {
         let placement = placement_from_dict(&json!({"edge": "diagonal", "align": "stretch", "cornerPriority": "middle", "offset": 9}));
         assert_eq!(placement.segment.edge.as_str(), "right");
-        assert_eq!(placement.align.as_str(), "proportional");
+        assert_eq!(placement.align.as_str(), "one_to_one");
         assert!(placement.corner_priority.is_none());
         assert_eq!(placement.offset, 1.0);
     }

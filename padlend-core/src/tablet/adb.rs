@@ -480,6 +480,23 @@ fn start_error(program: &str, error: &std::io::Error) -> RunnerError {
     }
 }
 
+/// Windows：阻塞等待子进程退出或超时，替代 5ms try_wait 轮询。
+#[cfg(windows)]
+fn wait_for_child(child: &mut Child, timeout: Duration) -> std::io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::WaitForSingleObject;
+
+    let millis = timeout.as_millis().min(u128::from(u32::MAX)) as u32;
+    let result = unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), millis) };
+    match result {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
 impl AdbRunner for SystemRunner {
     fn run(&self, argv: &[String], timeout: Duration) -> Result<CommandOutput, RunnerError> {
         let Some(program) = argv.first() else {
@@ -502,14 +519,22 @@ impl AdbRunner for SystemRunner {
 
         let deadline = Instant::now() + timeout;
         let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => {
-                    if Instant::now() >= deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            #[cfg(windows)]
+            let wait = wait_for_child(&mut child, remaining);
+            #[cfg(not(windows))]
+            let wait = child
+                .try_wait()
+                .map(|status| status.is_some());
+            match wait {
+                Ok(true) => break child.wait().ok(),
+                Ok(false) => {
+                    if remaining.is_zero() {
                         let _ = child.kill();
                         let _ = child.wait();
                         break None;
                     }
+                    #[cfg(not(windows))]
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 Err(error) => {
@@ -2110,6 +2135,42 @@ adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp device product:CGA-W00 mod
     fn wifi_mac_returns_empty_when_nothing_valid() {
         let runner = ScriptRunner::new(vec![ok("not-a-mac\n"), rc(1, ""), rc(1, ""), rc(1, "")]);
         assert_eq!(fake_adb(runner).wifi_mac(None), "");
+    }
+
+    /// Windows：SystemRunner 必须阻塞等子进程，而不是 5ms try_wait 轮询；
+    /// 超时后要杀进程并尽快返回 TimedOut。
+    #[cfg(windows)]
+    #[test]
+    fn system_runner_blocks_and_reports_exit_status() {
+        let ok = SystemRunner
+            .run(
+                &[
+                    "cmd".to_string(),
+                    "/C".to_string(),
+                    "exit".to_string(),
+                    "7".to_string(),
+                ],
+                Duration::from_secs(5),
+            )
+            .expect("cmd 应能启动");
+        assert_eq!(ok.returncode, 7);
+
+        let started = Instant::now();
+        let outcome = SystemRunner.run(
+            &[
+                "powershell".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 20".to_string(),
+            ],
+            Duration::from_millis(300),
+        );
+        assert!(matches!(outcome, Err(RunnerError::TimedOut(_))));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "超时后应尽快返回，实际 {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

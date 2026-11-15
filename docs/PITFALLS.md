@@ -1345,6 +1345,30 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
   改为输出必须含 connected to，失败提示分「解析不到 / 路由不可达 / 端口拒绝」三类。
 - **教训**：解析外部文本永远按字符边界；判定成功要匹配成功标志，而不是列举已知失败。
 
+### 31.11 性能项：热路径里的锁、克隆与轮询
+
+- **raw.seen 每 500 事件无条件打印**：1000Hz 时 2 行/秒、8000Hz 时 16 行/秒，stderr 阻塞会
+  直接卡住输入线程。改为首条必打，之后只在 `PADLEND_ROUTER_DEBUG` 下每 5000 条采样。
+- **空闲也按 report_hz 发心跳**：1000Hz 配置下 IDLE 每秒写 1000 个空帧。发送线程现在只在
+  `Captured` 发心跳，并用 `last_heartbeat` 把最小间隔压到 4ms（最高 250Hz）。
+- **GetCursorPos 在 Inner 锁内**：输入线程持锁调用 Win32，桌面卡顿时会拖住整条输入路径。
+  `on_raw` 先取 `cursor_pos()` 再进锁，`on_raw_locked`/`track_pc_cursor` 只消费结果；
+  FakeDesktop 的 lock_probe 回归测试断言取指针时未持 Inner 锁。
+- **每个事件克隆显示器列表**：`monitor_for_handle` 原来每次 `monitors().to_vec()`，含
+  `device: String` 的列表在 IDLE/ARMING 每事件克隆 1–3 次。改为 `Arc<Vec<MonitorInfo>>`
+  快照，只有 `check_desktop` 刷新桌面后才 `reload_monitors()`。
+- **metrics 在锁内做进程采样和排序**：每 2 秒一次的 supervisor 在 `Inner` 锁内调
+  `metrics.snapshot()`（Win32 进程采样 + 256 条延迟排序）。改为锁内只算 `metrics_due`，
+  锁外 `emit_metrics`。
+- **adb 每 5ms try_wait 忙等**：Windows 改 `WaitForSingleObject(child.as_raw_handle())`。
+  测试超时时别用 `cmd /C ping`：kill 只杀直接子进程，ping 仍持有 stdout 管道，join 会等到
+  ping 自己结束（实测 19s）；用单进程 `powershell Start-Sleep` 才能验证 <2s 返回。
+- **发送线程 1ms 轮询**：改为 `Condvar` 等待，入队 notify_one、停止 notify_all；同一帧报文
+  拼进复用缓冲一次 `write_all`。注意 `sent` 是 `AtomicI64`，`fetch_add` 要传 `count as i64`。
+- **接收缓冲 drain O(n²)**：每条消息 `buffer.drain(..consumed)` 前移剩余字节；改为 offset
+  游标，循环结束只 drain 一次。
+- **教训**：锁内不做 Win32/IO/排序，热路径不克隆含堆分配的集合，空闲路径不要按最高频率
+  写设备；性能修复同样要有可重复的单元测试（锁探测、写调用计数、分片流）再上真机。
 ### 31.10 `adb devices -l` 的分隔符随 platform-tools 版本变化
 
 - **现象**：真机已连接，向导第 0 步仍报「未检测到设备」。旧解析用 `line.contains("\tdevice")`，
@@ -1352,3 +1376,14 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 - **修法**：按空白切分，取第二列判断是否等于 `device`；补空格 / 制表符 / `unauthorized`
   三种固定输出测试。
 - **教训**：不要假设 adb 的列分隔符；测试 fixture 用手写 tab，会让错误实现永远绿灯。
+
+### 31.12 对齐默认值散落在五处，改一处不够
+
+- **现象**：设置页默认仍是「等比」，与「默认 1:1」的预期不符。
+- **根因**：默认值不只在 `Align` 的 `#[default]`：`PlacementCfg::default()`、
+  `repair_placement` 的非法值回退、`engine.rs` / `serializers.rs` 的反序列化回退、
+  自动重锚定、前端 mock 各有一份；只改枚举默认值，新建配置仍可能拿到 proportional。
+- **修法**：五处统一为 `one_to_one`；自动重锚定保留已有摆位的 `align`，避免用户选过
+  `center` 后被显示器拓扑变化重置。已有配置里显式写的 `proportional` 不迁移。
+- **教训**：改默认值先全仓搜字符串与枚举构造点，再补「缺省字段」和「非法值回退」两类测试；
+  默认值本身也是契约，不能只测显式值。

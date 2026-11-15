@@ -37,7 +37,7 @@ export function defaultConfig(): Config {
       span_start: 0,
       span_end: 1600,
       offset: 0.5,
-      align: 'proportional',
+      align: 'one_to_one',
       corner_priority: 'right',
     },
     layouts: { devices: {} },
@@ -148,7 +148,7 @@ function placementFromConfig(cfg: Config['placement']): Placement | null {
   const segments = DESKTOP.segments.filter((item) => item.monitorHandle === monitor.handle);
   const segment = segments.find((item) => item.edge === edge) ?? segments[0];
   if (!segment) return null;
-  const align = (['proportional', 'center', 'one_to_one'] as const).find((value) => value === cfg.align) ?? 'proportional';
+  const align = (['proportional', 'center', 'one_to_one'] as const).find((value) => value === cfg.align) ?? 'one_to_one';
   const corner = (['left', 'right', 'top', 'bottom'] as const).find((value) => value === cfg.corner_priority) ?? null;
   return {
     monitorHandle: segment.monitorHandle,
@@ -233,7 +233,7 @@ export class MockBackend {
     spanStart: 0,
     spanEnd: 1080,
     offset: 0.5,
-    align: 'proportional',
+    align: 'one_to_one',
     cornerPriority: 'right',
   };
   private diagnosticsText = '';

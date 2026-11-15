@@ -1131,7 +1131,7 @@ impl Engine {
             .into_iter()
             .max_by_key(|segment| segment.length())?
             .clone();
-        let align = Align::try_from(source.align.as_str()).unwrap_or(Align::Proportional);
+        let align = Align::try_from(source.align.as_str()).unwrap_or(Align::OneToOne);
         let corner_priority = if source.corner_priority.trim().is_empty() {
             None
         } else {

@@ -25,7 +25,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -826,6 +826,8 @@ impl SessionBuilder {
             audio_sock: Mutex::new(None),
             audio_relay: Mutex::new(None),
             queue: Mutex::new(VecDeque::new()),
+            queue_cv: Condvar::new(),
+            send_buffer: Mutex::new(Vec::new()),
             last_mouse_buttons: Mutex::new(None),
             receiver: Mutex::new(None),
             receiver_stop: Mutex::new(None),
@@ -1261,6 +1263,10 @@ struct SessionCore {
     audio_relay: Mutex<Option<Arc<AudioRelay>>>,
     // 发送队列（锁内只搬指针，不做 IO）
     queue: Mutex<std::collections::VecDeque<Vec<u8>>>,
+    /// 发送线程在队列空时阻塞等待（2.2.0：替代 1ms 轮询）。
+    queue_cv: Condvar,
+    /// 发送线程复用的一块拼包缓冲（2.2.0：替代每帧 new Vec<Vec<u8>>）。
+    send_buffer: Mutex<Vec<u8>>,
     last_mouse_buttons: Mutex<Option<i32>>,
     // 线程
     receiver: Mutex<Option<JoinHandle<()>>>,
@@ -2544,14 +2550,21 @@ impl SessionCore {
                     return;
                 }
             }
+            // 2.2.0：用 offset 游标解析，循环内不再 drain 整个缓冲区（原实现
+            // 每条消息都把剩余字节前移，连续到达时最坏 O(n²)）。
+            let mut offset = 0usize;
             loop {
-                if buffer.is_empty() || stop.load(Ordering::SeqCst) {
+                if offset >= buffer.len() || stop.load(Ordering::SeqCst) {
                     break;
                 }
-                match crate::tablet::protocol::deserialize_device_message(&buffer) {
+                match crate::tablet::protocol::deserialize_device_message(&buffer[offset..]) {
                     Ok((None, _)) => break,
                     Ok((Some(message), consumed)) => {
-                        buffer.drain(..consumed.min(buffer.len()));
+                        let consumed = consumed.min(buffer.len() - offset);
+                        if consumed == 0 {
+                            break;
+                        }
+                        offset += consumed;
                         self.handle_device_message(&message);
                     }
                     Err(error) => {
@@ -2561,6 +2574,13 @@ impl SessionCore {
                         );
                         return;
                     }
+                }
+            }
+            if offset > 0 {
+                if offset >= buffer.len() {
+                    buffer.clear();
+                } else {
+                    buffer.drain(..offset);
                 }
             }
         }
@@ -2734,50 +2754,77 @@ impl SessionCore {
                 guard.pop_front();
             }
             guard.push_back(payload);
+            drop(guard);
+            // 发送线程在 queue_cv 上等空队列；入队后叫醒它，不再靠 1ms 轮询。
+            self.queue_cv.notify_one();
         }
     }
 
+    /// 发送线程的空队列等待（2.2.0）。
+    ///
+    /// 调用前 sender_frame 已把队列取空；这里在锁内再确认一次，避免
+    /// “取空 → 入队 → notify” 之间丢唤醒。stop 由 stop_flusher 置位并
+    /// notify_all，最长 1s 的 wait_timeout 只是兜底。
+    fn wait_for_sender_work(&self, stop: &AtomicBool) {
+        let guard = match self.queue.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        if stop.load(Ordering::SeqCst) || !guard.is_empty() {
+            return;
+        }
+        let _ = self.queue_cv.wait_timeout(guard, Duration::from_secs(1));
+    }
+
     /// 在锁外批量写出队列（最多 MAX_BATCH 条）；返回写成功条数。
+    ///
+    /// 2.2.0：同一帧的所有报文拼进复用缓冲后一次 write_all，避免每帧
+    /// new 一个 Vec<Vec<u8>> 并为每条报文各做一次系统调用。
     fn sender_frame(&self) -> Result<usize, SessionError> {
-        let mut batch: Vec<Vec<u8>> = Vec::new();
+        let mut batch: [Option<Vec<u8>>; C::MAX_BATCH] = std::array::from_fn(|_| None);
+        let mut count = 0usize;
         if let Ok(mut guard) = self.queue.lock() {
-            let take = guard.len().min(C::MAX_BATCH);
-            for _ in 0..take {
-                if let Some(item) = guard.pop_front() {
-                    batch.push(item);
+            while count < C::MAX_BATCH {
+                match guard.pop_front() {
+                    Some(item) => {
+                        batch[count] = Some(item);
+                        count += 1;
+                    }
+                    None => break,
                 }
             }
         }
-        if batch.is_empty() {
+        if count == 0 {
             return Ok(0);
         }
         let Some(socket) = self.current_socket() else {
             // 与 Python 的 _send_quiet 一致：socket 已关闭时丢弃报文，不算失败。
             return Ok(0);
         };
-        let mut written = 0;
-        for payload in batch {
-            match socket.write_all(&payload) {
-                Ok(()) => {
-                    self.failures.store(0, Ordering::SeqCst);
-                    self.sent.fetch_add(1, Ordering::SeqCst);
-                    written += 1;
+        let mut buffer = self.send_buffer.lock().unwrap_or_else(|error| error.into_inner());
+        buffer.clear();
+        for item in batch.iter().take(count).flatten() {
+            buffer.extend_from_slice(item);
+        }
+        match socket.write_all(&buffer) {
+            Ok(()) => {
+                self.failures.store(0, Ordering::SeqCst);
+                self.sent.fetch_add(count as i64, Ordering::SeqCst);
+                Ok(count)
+            }
+            Err(error) => {
+                let failures = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
+                self.set_last_error(&format!("socket 写失败: {error}"));
+                eprintln!("[tablet.session] socket 写失败（连续 {failures} 次）: {error}");
+                if failures >= C::CONSECUTIVE_WRITE_FAILURES {
+                    self.sock_broken.store(true, Ordering::SeqCst);
+                    return Err(SessionError::SocketBroken(format!(
+                        "连续 {failures} 次写失败"
+                    )));
                 }
-                Err(error) => {
-                    let count = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
-                    self.set_last_error(&format!("socket 写失败: {error}"));
-                    eprintln!("[tablet.session] socket 写失败（连续 {count} 次）: {error}");
-                    if count >= C::CONSECUTIVE_WRITE_FAILURES {
-                        self.sock_broken.store(true, Ordering::SeqCst);
-                        return Err(SessionError::SocketBroken(format!(
-                            "连续 {count} 次写失败"
-                        )));
-                    }
-                    return Ok(written);
-                }
+                Ok(0)
             }
         }
-        Ok(written)
     }
 
     fn start_flusher(&self) {
@@ -2802,7 +2849,7 @@ impl SessionCore {
             .spawn(move || {
                 while !stop.load(Ordering::SeqCst) {
                     let _ = shared.sender_frame();
-                    thread::sleep(Duration::from_millis(1));
+                    shared.wait_for_sender_work(&stop);
                 }
             });
         match spawn {
@@ -2817,6 +2864,8 @@ impl SessionCore {
 
     fn stop_flusher(&self) {
         self.flusher_stop.store(true, Ordering::SeqCst);
+        // 发送线程可能正阻塞在 queue_cv 上，必须叫醒它才能及时 join。
+        self.queue_cv.notify_all();
         let handle = self.flusher.lock().ok().and_then(|mut guard| guard.take());
         if let Some(handle) = handle {
             if handle.thread().id() != thread::current().id() {
@@ -3554,6 +3603,7 @@ mod tests {
         shutdown: AtomicBool,
         write_fail: AtomicBool,
         fail_after: Mutex<Option<usize>>,
+        write_calls: AtomicUsize,
     }
 
     impl FakeSocket {
@@ -3568,6 +3618,7 @@ mod tests {
                 shutdown: AtomicBool::new(false),
                 write_fail: AtomicBool::new(false),
                 fail_after: Mutex::new(None),
+                write_calls: AtomicUsize::new(0),
             })
         }
 
@@ -3582,6 +3633,10 @@ mod tests {
                 .lock()
                 .map(|guard| guard.clone())
                 .unwrap_or_default()
+        }
+
+        fn write_calls(&self) -> usize {
+            self.write_calls.load(Ordering::SeqCst)
         }
 
         fn clear_written(&self) {
@@ -3618,6 +3673,7 @@ mod tests {
         }
 
         fn write_all(&self, data: &[u8]) -> io::Result<()> {
+            self.write_calls.fetch_add(1, Ordering::SeqCst);
             if self.write_fail.load(Ordering::SeqCst) {
                 return Err(io::Error::new(io::ErrorKind::BrokenPipe, "已断开"));
             }
@@ -4087,6 +4143,107 @@ mod tests {
         assert_eq!(harness.session.pending_len(), C::SEND_QUEUE_MAXLEN);
     }
 
+    #[test]
+    fn enqueue_and_stop_wake_blocked_sender() {
+        let harness = harness();
+        let stop = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&harness.session.core);
+        let worker_stop = Arc::clone(&stop);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            core.wait_for_sender_work(&worker_stop);
+            let _ = tx.send(());
+        });
+        thread::sleep(Duration::from_millis(100));
+        let started = Instant::now();
+        harness.session.core.enqueue(vec![1, 2, 3]);
+        rx.recv_timeout(Duration::from_millis(500))
+            .expect("入队应唤醒发送线程");
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "入队到唤醒耗时 {:?}",
+            started.elapsed()
+        );
+        worker.join().expect("等待线程应退出");
+
+        // stop_flusher 的 notify_all 也必须能叫醒空闲等待，不能等满 1s 兜底。
+        let stop = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&harness.session.core);
+        let worker_stop = Arc::clone(&stop);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            core.wait_for_sender_work(&worker_stop);
+            let _ = tx.send(());
+        });
+        thread::sleep(Duration::from_millis(100));
+        let started = Instant::now();
+        stop.store(true, Ordering::SeqCst);
+        harness.session.core.queue_cv.notify_all();
+        rx.recv_timeout(Duration::from_millis(500))
+            .expect("stop 应唤醒发送线程");
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "stop 到唤醒耗时 {:?}",
+            started.elapsed()
+        );
+        worker.join().expect("等待线程应退出");
+    }
+    #[test]
+    fn receiver_loop_handles_messages_split_across_reads() {
+        fn clipboard_packet(text: &str) -> Vec<u8> {
+            let mut packet = vec![crate::tablet::protocol::DEVICE_MSG_CLIPBOARD];
+            packet.extend_from_slice(&(text.len() as u32).to_be_bytes());
+            packet.extend_from_slice(text.as_bytes());
+            packet
+        }
+
+        let harness = harness();
+        let (tx, rx) = std::sync::mpsc::channel();
+        harness.session.set_clipboard_callback(Some(Arc::new(move |text| {
+            let _ = tx.send(text);
+        })));
+        let first = clipboard_packet("一号");
+        let second = clipboard_packet("second");
+        let third = clipboard_packet("三号");
+        let socket = FakeSocket::new(Vec::new());
+        // 第一条完整 + 第二条前 3 字节；第二条剩余 + 第三条前 2 字节；第三条剩余；EOF。
+        let mut chunk = first.clone();
+        chunk.extend_from_slice(&second[..3]);
+        socket.push_read(chunk);
+        let mut chunk = second[3..].to_vec();
+        chunk.extend_from_slice(&third[..2]);
+        socket.push_read(chunk);
+        socket.push_read(third[2..].to_vec());
+        socket.push_read(Vec::new());
+        let core = Arc::clone(&harness.session.core);
+        let socket: Arc<dyn SocketIo> = socket;
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker = thread::spawn(move || core.receiver_loop(socket, stop));
+        let received = vec![
+            rx.recv_timeout(Duration::from_secs(1)).expect("第一条"),
+            rx.recv_timeout(Duration::from_secs(1)).expect("第二条"),
+            rx.recv_timeout(Duration::from_secs(1)).expect("第三条"),
+        ];
+        worker.join().expect("接收线程应退出");
+        assert_eq!(received, vec!["一号", "second", "三号"]);
+        assert!(harness.session.pending_len() == 0);
+    }
+    #[test]
+    fn sender_frame_writes_each_batch_in_one_call() {
+        let harness = harness();
+        harness.session.connect().expect("应当启动");
+        let socket = harness.factory.last().expect("应当有控制通道");
+        socket.clear_written();
+        for _ in 0..3 {
+            harness.session.send_mouse(0, 1, 1, 0).expect("应当入队");
+        }
+        let before = socket.write_calls();
+        let written = harness.session.sender_frame().expect("应当写出");
+        assert_eq!(written, 3);
+        assert_eq!(socket.write_calls() - before, 1, "一帧只应一次 write_all");
+        // 每条鼠标报告是 UHID_INPUT：1 + 2 + 2 + 4 = 9 字节。
+        assert_eq!(socket.written().len(), 9 * 3);
+    }
     #[test]
     fn sender_frame_flags_broken_after_three_write_failures() {
         let harness = harness();

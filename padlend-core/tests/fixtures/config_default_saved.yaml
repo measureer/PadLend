@@ -12,7 +12,7 @@ placement:
   span_start: 0
   span_end: 1600
   offset: 0.5
-  align: proportional
+  align: one_to_one
   corner_priority: right
 layouts:
   devices: {}

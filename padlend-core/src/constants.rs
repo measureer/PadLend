@@ -465,6 +465,9 @@ pub const MIN_REPORT_HZ: i32 = 125;
 pub const MAX_REPORT_HZ: i32 = 1000;
 /// 0.3.16：上报频率只给四个固定档（设置页是下拉框，不再是滑条）。
 pub const REPORT_HZ_CHOICES: [i32; 4] = [125, 250, 500, 1000];
+/// 空闲心跳的最高频率（2.2.0）：sender 在队列空时最多每 4ms 发一条心跳，
+/// 即使 report_hz=1000 也不会把心跳也拉到 1kHz；非 CAPTURED 状态不发心跳。
+pub const HEARTBEAT_MIN_INTERVAL_S: f64 = 0.004;
 /// 单帧最多 8 报文（D12）。
 pub const MAX_BATCH: usize = 8;
 /// 1.7.10：单帧真正发往平板的报文上限（burst 也受这个限制）。

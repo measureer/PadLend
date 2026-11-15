@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 **2.1.0**，Apache-2.0。2.1.0 是一次审计修复版：补齐崩溃/强杀后的清理链、Raw Input 退出挂死与钩子 UAF、布局移除落盘、配置校验、日志目录与诊断脱敏；2.0.x 修掉一批真机问题：转屏识别时灵时不灵（adb 把 `sh -c` 拆开，查询每轮超时）、接管期间转屏界面不跟随、平板越用越卡（window dump 拖死 adbd）、无线调试换端口后只能重启应用、平板掉线后界面仍显示「已连接」、指针周期性卡顿；完整记录见 [CHANGELOG](docs/CHANGELOG.md)。1.7.0 起引擎（`padlend-core`）与 Tauri 2 外壳都是 Rust，Python 实现已整体移除；1.1.0 起界面为 **Tauri 2 + React 19 + TypeScript**，不再依赖 Qt/PySide6。界面外壳的迁移记录见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)（历史文档，其中「业务层继续用 Python」的结论已被 1.7.0 推翻），引擎协议与 Win32 设计见 [docs/DESIGN.md](docs/DESIGN.md)（1.0.x 时期设计稿），遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
+当前源码版本 **2.2.0**，Apache-2.0。2.2.0 是一次性能与延迟修复版，默认摆位对齐同时改为 1:1：输入热路径去掉每事件的锁内 Win32 调用与显示器克隆，空闲心跳降频，发送线程改条件变量等待、一帧一次写，接收缓冲改游标解析，adb 命令改阻塞等待；2.1.0 是审计修复版：补齐崩溃/强杀后的清理链、Raw Input 退出挂死与钩子 UAF、布局移除落盘、配置校验、日志目录与诊断脱敏；2.0.x 修掉一批真机问题：转屏识别时灵时不灵（adb 把 `sh -c` 拆开，查询每轮超时）、接管期间转屏界面不跟随、平板越用越卡（window dump 拖死 adbd）、无线调试换端口后只能重启应用、平板掉线后界面仍显示「已连接」、指针周期性卡顿；完整记录见 [CHANGELOG](docs/CHANGELOG.md)。1.7.0 起引擎（`padlend-core`）与 Tauri 2 外壳都是 Rust，Python 实现已整体移除；1.1.0 起界面为 **Tauri 2 + React 19 + TypeScript**，不再依赖 Qt/PySide6。界面外壳的迁移记录见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)（历史文档，其中「业务层继续用 Python」的结论已被 1.7.0 推翻），引擎协议与 Win32 设计见 [docs/DESIGN.md](docs/DESIGN.md)（1.0.x 时期设计稿），遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ![桌面布局页](docs/screenshots/tauri-layout.png)
 
@@ -50,10 +50,10 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 - `PadLend-<版本>-win64.zip`：免安装包，解压即用。
 - `SHA256SUMS.txt`：下载后建议核对。
 
-以 2.1.0 为例：
+以 2.2.0 为例：
 
 ```powershell
-Get-FileHash .\PadLend-2.1.0-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-2.2.0-win64.zip -Algorithm SHA256
 ```
 
 安装器默认装到 `%LOCALAPPDATA%\Programs\PadLend`。配置写在 `%APPDATA%\PadLend\`（`config.yaml`、`devices.json`），升级覆盖程序目录不会丢配置；日志写在 `%LOCALAPPDATA%\PadLend\`（见「日志与诊断」）。免安装包请保持 `PadLend.exe`、`padlend-core.exe` 与 `vendor\` 在同一目录。
@@ -110,7 +110,7 @@ placement:
   span_start: 0
   span_end: 1600
   offset: 0.5             # 0–1，该边段内的相对落点
-  align: proportional     # proportional / center / one_to_one
+  align: one_to_one      # proportional / center / one_to_one（默认 1:1）
   corner_priority: right  # 角落争夺时优先的边
 layouts:
   devices: {}             # 每台设备 × 横/竖屏的布局，保存布局时自动维护

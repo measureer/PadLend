@@ -17,7 +17,7 @@
 //! span_start: 0
 //! span_end: 1600
 //! offset: 0.5
-//! align: proportional
+//! align: one_to_one
 //! corner_priority: right
 //! ```
 //!
@@ -148,16 +148,17 @@ impl TryFrom<&str> for Edge {
 
 /// 平板在边段内的对齐方式（Python `Align(StrEnum)`）。
 ///
-/// 默认 `Proportional`（`proportional`）：按段内相对位置摆放。
+/// 默认 `OneToOne`（`one_to_one`）：2.2.0 起默认 1:1 对齐，按真实像素
+/// 摆放，不再把整段 PC 边归一化到整条平板边。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Align {
-    /// 按比例（默认）。
-    #[default]
+    /// 按比例。
     Proportional,
     /// 居中。
     Center,
-    /// 1:1。
+    /// 1:1（默认）。
+    #[default]
     OneToOne,
 }
 
@@ -893,7 +894,7 @@ mod tests {
             assert_eq!(serde_yaml_ng::to_string(&align).unwrap().trim(), text);
             assert_eq!(text.parse::<Align>(), Ok(align));
         }
-        assert_eq!(Align::default(), Align::Proportional);
+        assert_eq!(Align::default(), Align::OneToOne);
         assert_eq!(
             "middle".parse::<Edge>(),
             Err(GeometryError::UnknownEdge {
@@ -1059,12 +1060,12 @@ mod tests {
         assert_eq!(placement.align, Align::OneToOne);
         assert_eq!(placement.corner_priority, Some(Edge::Bottom));
 
-        // 缺省字段回退 Python dataclass 默认值（offset=0.5 / proportional / None）。
+        // 缺省字段回退默认值（offset=0.5 / one_to_one / None）。
         let defaults: Placement =
             serde_yaml_ng::from_str("monitor_handle: 1\nedge: top\nspan_start: 0\nspan_end: 10\n")
                 .unwrap();
         assert_eq!(defaults.offset, 0.5);
-        assert_eq!(defaults.align, Align::Proportional);
+        assert_eq!(defaults.align, Align::OneToOne);
         assert_eq!(defaults.corner_priority, None);
 
         // 空串 / null 都表示“无偏好”。

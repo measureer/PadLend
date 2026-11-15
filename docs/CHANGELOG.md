@@ -2,6 +2,40 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.2.0] — 2026-11-17
+
+### 变更
+
+- **默认对齐方式改为 1:1**：平板摆位的 `align` 默认值由 `proportional`（等比）改为
+  `one_to_one`（1:1），新配置和自动摆位不再把 PC 边段归一化到平板边；已有配置里显式写的
+  `align` 保持不变，显示器拓扑变化自动重锚定时也保留用户已选的对齐方式。
+
+### 优化
+
+- **输入热路径去掉锁内 Win32 调用与显示器克隆**：`Router::on_raw` 在拿 `Inner` 锁之前先取
+  `GetCursorPos`，`track_pc_cursor` 只消费结果；显示器列表改为 `Arc` 快照缓存，桌面刷新时才
+  重取，`monitor_for_handle` 不再每个事件 `monitors().to_vec()` 克隆含 String 的整套列表。
+- **空闲心跳降频**：只有 `Captured` 状态才发空帧心跳，且最小间隔 4ms（最高 250Hz）；
+  `IDLE` / `RETURNING` / `FAULT` 不再按 `report_hz`（1000Hz 时空闲也 1000 次/秒）写平板。
+- **指标采样移出输入锁**：`tick_supervisor` 在 `Inner` 锁内只做检查，进程采样与 256 条延迟
+  排序在锁外执行，避免每 2 秒阻塞一次输入线程。
+- **adb 命令不再 5ms 忙等**：Windows 下用 `WaitForSingleObject` 阻塞等子进程退出，超时才
+  `kill`；保留原有超时与返回码语义。
+- **发送线程改条件变量等待**：`queue_cv` 在入队时唤醒、停止时 `notify_all`，删除 1ms 轮询；
+  同一帧报文拼进复用缓冲后一次 `write_all`（最多 8 条），不再每帧 `new Vec<Vec<u8>>`
+  并为每条报文各做一次系统调用。
+- **接收缓冲改游标解析**：`receiver_loop` 用 offset 解析连续消息，循环结束统一 `drain` 一次，
+  避免每条消息都把剩余字节前移的 O(n²) 行为。
+- **Raw Input 诊断降噪**：首条事件必打，之后仅在 `PADLEND_ROUTER_DEBUG` 下每 5000 条采样；
+  不再每 500 条无条件 `eprintln`（1000Hz 时 2 行/秒、8000Hz 时 16 行/秒）。
+
+### 验证
+
+- `cargo test`：572 passed / 13 ignored / 0 failed；新增显示器快照复用、指标锁外采样、
+  Condvar 唤醒、分片接收、单次批量写等回归测试。
+- 前端：16 个测试文件 90 passed，`tsc --noEmit` 无错误。
+- 真机（华为 CGA-W00，`192.168.68.129:40639`）：全流程连接、UHID 鼠标/键盘、
+  右推接管 → 左推交还、退出清理均通过；1000Hz 配置下空闲 `send_hz=0`、接管后约 215Hz。
 ## [2.1.0] — 2026-11-16
 
 ### 修复
