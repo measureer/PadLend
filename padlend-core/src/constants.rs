@@ -467,6 +467,14 @@ pub const MAX_REPORT_HZ: i32 = 1000;
 pub const REPORT_HZ_CHOICES: [i32; 4] = [125, 250, 500, 1000];
 /// 单帧最多 8 报文（D12）。
 pub const MAX_BATCH: usize = 8;
+/// 1.7.10：单帧真正发往平板的报文上限（burst 也受这个限制）。
+///
+/// Linux evdev 的每设备环形缓冲只有 8 个 packet（`EVDEV_BUF_PACKETS`）；写满后
+/// 内核丢最旧的 packet，并给读端一个 SYN_DROPPED。入口的 warp+pin 一次会排 20 条
+/// 以上，全挤在同一帧里发就会丢包 —— 而估计器照样按发出去的条数记账，于是模型
+/// 比真实指针跑得快，回程就会在「模型到顶、真实指针还在中上部」时提前交还。
+/// 留一半余量，让内核和 InputReader 有空把队列排空。
+pub const PACKETS_PER_FRAME: usize = 4;
 /// 发送队列背压软阈值（不是硬上限）。
 pub const SEND_QUEUE_MAXLEN: usize = 64;
 

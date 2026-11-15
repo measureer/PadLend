@@ -2556,6 +2556,7 @@ impl Router {
         let report_count = reports.len();
         reports.extend(pin);
         self.enqueue_burst(&reports);
+        rdebug!("cap.burst queued={} pin={}", self.lock_queue().len(), pin_count);
         eprintln!(
             "[router] cap.start edge={} manual={} reports={} pin={} point=({:.0},{:.0}) buttons=0x{:02x}",
             segment.edge.as_str(),
@@ -2891,24 +2892,29 @@ impl Router {
         let captured = self.lock_inner().state == State::Captured;
         let mut out: Vec<SendMsg> = Vec::new();
         let mut queue = self.lock_queue();
-        while !queue.is_empty() && out.len() < C::MAX_BATCH {
+        // 1.7.10：一帧最多发 PACKETS_PER_FRAME 条 —— burst 也受限。
+        //
+        // 原来是「burst 一帧全发、普通报文每帧 8 条」。入口 warp+pin 会排 20 条
+        // 以上，一口气写完会超过平板上 evdev 的 8 packet 环形缓冲，内核丢最旧的
+        // 包，平板指针只走了一小段；估计器却按发出去的条数记账，模型于是比真实
+        // 指针超前几百像素，回程在屏幕中上部就判定到顶并交还。
+        while !queue.is_empty() && out.len() < C::PACKETS_PER_FRAME {
             let head_is_burst = queue.front().map(|message| message.burst).unwrap_or(false);
+            let message = match queue.pop_front() {
+                Some(message) => message,
+                None => break,
+            };
             if head_is_burst {
-                while queue.front().map(|message| message.burst).unwrap_or(false) {
-                    if let Some(message) = queue.pop_front() {
-                        if captured {
-                            out.push(message);
-                        }
-                    }
+                // 非接管期的 burst 没有意义，直接丢弃（保持原语义）。
+                if captured {
+                    out.push(message);
                 }
-                break;
+                continue;
             }
-            if let Some(message) = queue.pop_front() {
-                if (message.dx != 0 || message.dy != 0) && !captured {
-                    continue;
-                }
-                out.push(message);
+            if (message.dx != 0 || message.dy != 0) && !captured {
+                continue;
             }
+            out.push(message);
         }
         out
     }
@@ -2925,6 +2931,18 @@ impl Router {
             return;
         }
         let messages = self.drain();
+        if !messages.is_empty() {
+            let bursts = messages.iter().filter(|message| message.burst).count();
+            let dx: i32 = messages.iter().map(|message| message.dx).sum();
+            let dy: i32 = messages.iter().map(|message| message.dy).sum();
+            rdebug!(
+                "send.frame n={} burst={} dx={} dy={}",
+                messages.len(),
+                bursts,
+                dx,
+                dy
+            );
+        }
         if messages.is_empty() {
             self.send_heartbeat();
         } else {
@@ -4529,9 +4547,19 @@ mod tests {
             assert_eq!(self.router.state(), State::Captured, "手动接管应进入 CAPTURED");
         }
 
-        /// 把队列发空（一帧可突破批次上限发完 burst）。
+        /// 连续出帧直到队列排空（1.7.10 起每帧最多 4 条，burst 也要跨帧）。
+        fn settle(&self) {
+            for _ in 0..64 {
+                if self.router.lock_queue().is_empty() {
+                    break;
+                }
+                self.frame();
+            }
+        }
+
+        /// 把队列发空并清掉记录。
         fn flush(&self) {
-            self.frame();
+            self.settle();
             self.clear_reports();
         }
 
@@ -4582,7 +4610,9 @@ mod tests {
                     .and_then(|value| value.as_i64())
                     .unwrap_or(1);
                 for _ in 0..times.max(0) {
+                    // 1.7.10：每帧最多 4 条，录制的 burst 要跨多帧补发。
                     rig.frame();
+                    rig.settle();
                 }
             }
             other => panic!("fixture 里有未知 op: {other}"),
@@ -4766,7 +4796,7 @@ mod tests {
             "入口应贴在 LEFT 边"
         );
 
-        rig.frame();
+        rig.settle();
         let reports = rig.reports();
         assert_eq!(reports[0], (0, 0, 0, 0), "首条必须是全零松键");
         assert!(reports.iter().all(|report| report.0 == 0), "接管瞬间所有按键位必须为 0");
@@ -5171,9 +5201,9 @@ mod tests {
         assert!(mask.shown().is_empty());
     }
 
-    /// 一批最多 8 条；burst 不受批次上限约束。
+    /// 1.7.10：一帧最多 4 条（burst 同样受限），避免 evdev 环形缓冲溢出。
     #[test]
-    fn drain_batch_limit_is_eight() {
+    fn drain_sends_at_most_four_packets_per_frame() {
         let rig = make_rig(test_config());
         rig.capture_manually();
         rig.flush();
@@ -5181,7 +5211,10 @@ mod tests {
             rig.router.queue_mouse(1, 1, 0, 0);
         }
         rig.frame();
-        assert_eq!(rig.reports().len(), C::MAX_BATCH, "单帧最多 8 条");
+        assert_eq!(rig.reports().len(), C::PACKETS_PER_FRAME, "单帧最多 4 条");
+        rig.clear_reports();
+        rig.frame();
+        assert_eq!(rig.reports().len(), C::PACKETS_PER_FRAME, "第二批 4 条");
         rig.clear_reports();
         rig.frame();
         assert_eq!(rig.reports().len(), 2, "剩余 2 条");
