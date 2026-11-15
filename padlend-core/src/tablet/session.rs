@@ -158,6 +158,17 @@ const LINK_PROBE_TIMEOUT_S: f64 = 2.5;
 /// 好几份 window dump 抢 WindowManager 锁，system_server 越拖越慢。
 /// 旋转是低频事件，15s 一次足够，连续失败还会翻倍退避。
 const ORIENTATION_POLL_S: f64 = 15.0;
+/// 2.0.6：接管期间也要偶尔看一眼，否则用户拿着鼠标在平板上转屏时永远发现不了。
+const ORIENTATION_CAPTURE_POLL_S: f64 = 60.0;
+/// 朝向轮询周期：接管期间放宽到 ORIENTATION_CAPTURE_POLL_S。
+fn orientation_interval(capturing: bool) -> f64 {
+    if capturing {
+        ORIENTATION_CAPTURE_POLL_S
+    } else {
+        ORIENTATION_POLL_S
+    }
+}
+
 /// 朝向监听重启等待（秒）。
 const ORIENTATION_RESTART_S: f64 = 2.0;
 /// 候选地址 TCP 探测超时（秒）。
@@ -169,15 +180,21 @@ const CANDIDATE_CONNECT_TIMEOUT_S: f64 = 4.0;
 /// 2.0.2 起不再使用：改成 PC 侧按 ORIENTATION_POLL_S 跑一次 ORIENTATION_VIEWPORT_SH。
 pub const ORIENTATION_SCRIPT: &str = "while true; do dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='; sleep 1; done";
 
-/// 廉价的朝向查询：从 InputDispatcher 的 Viewport 行里取 orientation=。
+/// 朝向查询：跑一次 `dumpsys input`，从 InputDispatcher 的 Viewport 行里取 orientation=。
 ///
 /// 2.0.2 用的是 `dumpsys window displays | grep mDisplayRotation`，看着「输出只有
 /// 几十字节」，代价其实全在那个 window dump 上：HONOR CGA-W00 实测 851ms 起步、
 /// 忙时 4.7–13.4s，而且全程拿 WindowManager 的锁；`dumpsys input` 同样信息只要
-/// 65–150ms（不是 PITFALLS §24 里说的「几十 KB 会拖慢输入」的量级，那次是 1s
-/// 一轮的问题）。这里在设备端就 grep 掉，只回一行几十字节。
-pub const ORIENTATION_VIEWPORT_SH: &str =
-    "dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='";
+/// 65–150ms。所以 2.0.5 换成了 `dumpsys input`。
+///
+/// 2.0.6 揪出真正的坑：2.0.5 把它写成
+/// `device.shell(&["sh", "-c", "dumpsys input | grep ..."])`，而 adb 客户端是把
+/// `shell` 之后的 argv **用空格拼成一个字符串**再交给设备端 shell 的 —— `sh -c`
+/// 只拿到第一个词，实际执行的是不带参数的 `dumpsys`（又慢又没有 Viewport 行），
+/// 每轮都 5s 超时。朝向检测此前一直靠「三次失败后退回完整 dump」的兜底在工作，
+/// 所以时灵时不灵。现在直接执行 `dumpsys input`（单条命令，不经过 `sh -c`），
+/// 输出在本地解析。
+const ORIENTATION_QUERY_TIMEOUT_S: f64 = 8.0;
 
 /// 从 "Override size: 1200x2000" 这类行里解析宽高。
 fn parse_size_value(text: &str) -> Option<(i32, i32)> {
@@ -795,6 +812,7 @@ impl SessionBuilder {
             uhid_created: AtomicBool::new(false),
             audio_active: AtomicBool::new(false),
             capturing: AtomicBool::new(false),
+            orientation_wake: AtomicBool::new(false),
             auto_flush: AtomicBool::new(auto_flush),
             facts: Mutex::new(None),
             last_error: Mutex::new(String::new()),
@@ -1184,6 +1202,11 @@ impl SessionPort for TabletSession {
 
     fn set_capturing(&self, capturing: bool) {
         self.core.capturing.store(capturing, Ordering::SeqCst);
+        // 2.0.6：用户把鼠标滑回电脑（交还）时立刻看一下朝向，否则刚转过屏也要
+        // 等满一个轮询周期（接管期间是 60s）才更新。
+        if !capturing {
+            self.core.orientation_wake.store(true, Ordering::SeqCst);
+        }
     }
 }
 
@@ -1222,8 +1245,10 @@ struct SessionCore {
     sock_broken: AtomicBool,
     uhid_created: AtomicBool,
     audio_active: AtomicBool,
-    /// 2.0.2：Router 是否正在接管（接管期间暂停后台朝向轮询，见 orientation_loop）。
+    /// 2.0.2：Router 是否正在接管（接管期间降低朝向轮询频率，见 orientation_loop）。
     capturing: AtomicBool,
+    /// 2.0.6：交还控制权时叫醒朝向线程立刻补一次查询，不用等满一个轮询周期。
+    orientation_wake: AtomicBool,
     auto_flush: AtomicBool,
     // 事实与统计
     facts: Mutex<Option<DeviceFacts>>,
@@ -1430,11 +1455,17 @@ impl SessionCore {
     }
 
     /// 可中断睡眠一个朝向轮询周期；返回 true 表示要退出。
+    ///
+    /// 2.0.6：交还控制权时 `set_capturing(false)` 会抬起 `orientation_wake`，
+    /// 这里看到就立刻返回，让下一轮查询马上跑（最多等 50ms），不用等满周期。
     fn sleep_interruptible(&self, seconds: f64, stop: &AtomicBool) -> bool {
         let slices = ((seconds / 0.05).ceil() as u32).max(1);
         for _ in 0..slices {
             if stop.load(Ordering::SeqCst) || self.closing.load(Ordering::SeqCst) {
                 return true;
+            }
+            if self.orientation_wake.swap(false, Ordering::SeqCst) {
+                return false;
             }
             self.sleeper.sleep(0.05);
         }
@@ -2911,46 +2942,41 @@ impl SessionCore {
     ///
     /// 2.0.2：从「每 1s 跑一次完整 dumpsys input」改成「每 2s 只问显示旋转」。
     /// 2.0.5：那一步问错了地方 —— `dumpsys window displays` 实测 851ms 起步、
-    /// 忙时 4.7–13.4s，而 `dumpsys input` 的 Viewport 行只要 65–150ms。周期也从
-    /// 2s 拉到 15s，拿不到结果时翻倍退避（15 → 30 → 60s），避免平板忙的时候把
-    /// 查询堆成一串。连续 3 次拿不到 Viewport 行才退回完整 dump。
+    /// 忙时 4.7–13.4s，而 `dumpsys input` 同样信息只要 65–150ms。周期也从 2s 拉到
+    /// 15s，拿不到结果时翻倍退避（15 → 30 → 60s），避免平板忙的时候把查询堆成一串。
+    /// 2.0.6：查询改成直接跑 `dumpsys input`（不再经过 `sh -c`，见 ORIENTATION_QUERY_TIMEOUT_S），
+    /// 并且接管期间也查（60s 一次）；交还时由 orientation_wake 立刻叫醒补一次。
     fn orientation_loop(&self, device: Arc<dyn AdbApi>, stop: Arc<AtomicBool>) {
-        let mut viewport_failures = 0u32;
         let mut interval = ORIENTATION_POLL_S;
+        let mut was_capturing = false;
         while !stop.load(Ordering::SeqCst) {
             if self.sleep_interruptible(interval, &stop) {
                 break;
             }
-            // 2.0.2：接管期间完全不查询。dumpsys 不论查什么都会在 system_server 的
-            // 主线程上排队，输入派发也跟着卡几十毫秒 —— 接管时每分钟上百次就够让
-            // 指针一顿一顿。交还后下一轮立刻补一次。
-            if self.capturing.load(Ordering::SeqCst) {
-                continue;
+            // 2.0.2 曾经在接管期间完全不查询（dumpsys 会在 system_server 主线程上排队，
+            // 输入派发跟着卡几十毫秒）。但那样用户拿着鼠标在平板上转屏就永远发现不了 ——
+            // 2.0.6 改成接管期间每 60s 才问一次，交还时由 orientation_wake 立刻补一次。
+            let capturing = self.capturing.load(Ordering::SeqCst);
+            if capturing != was_capturing {
+                was_capturing = capturing;
+                interval = orientation_interval(capturing);
             }
-            let mut applied = false;
-            match device.shell(&["sh", "-c", ORIENTATION_VIEWPORT_SH], C::ADB_SHELL_TIMEOUT) {
+            match device.shell(&["dumpsys", "input"], ORIENTATION_QUERY_TIMEOUT_S) {
                 Ok(text) if text.contains("orientation=") => {
                     self.apply_orientation(&text);
-                    applied = true;
+                    interval = orientation_interval(self.capturing.load(Ordering::SeqCst));
                 }
-                _ => viewport_failures = viewport_failures.saturating_add(1),
-            }
-            if applied {
-                viewport_failures = 0;
-                interval = ORIENTATION_POLL_S;
-                continue;
-            }
-            interval = (interval * 2.0).min(ORIENTATION_POLL_S * 4.0);
-            if viewport_failures < 3 {
-                continue;
-            }
-            viewport_failures = 0;
-            match device.shell(&["dumpsys", "input"], C::ADB_SHELL_TIMEOUT) {
-                Ok(text) => self.apply_orientation(&text),
+                Ok(_) => {
+                    eprintln!("[tablet.session] 朝向查询里没有 Viewport 行");
+                    interval = (interval * 2.0)
+                        .min(orientation_interval(self.capturing.load(Ordering::SeqCst)) * 4.0);
+                }
                 Err(error) => {
                     if !stop.load(Ordering::SeqCst) {
-                        eprintln!("[tablet.session] 朝向监听中断: {}", error.detail);
+                        eprintln!("[tablet.session] 朝向查询失败: {}", error.detail);
                     }
+                    interval = (interval * 2.0)
+                        .min(orientation_interval(self.capturing.load(Ordering::SeqCst)) * 4.0);
                 }
             }
         }
@@ -3774,11 +3800,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_orientation_reads_the_grepped_viewport_line() {
-        // ORIENTATION_VIEWPORT_SH 在设备端 grep 出来的就是这一行。
-        let line = "      Viewport INTERNAL: displayId=0, uniqueId=local:1, port=131, orientation=1, densityDpi=420";
-        assert_eq!(parse_orientation(line), 1);
-        assert_eq!(oriented_size(2136, 3200, parse_orientation(line)), (3200, 2136));
+    fn parse_orientation_reads_the_viewport_line_in_a_full_dump() {
+        // 2.0.6：整份 dumpsys input 的输出里挑 Viewport 行（不再在设备端 grep）。
+        let dump = [
+            "INPUT MANAGER (dumpsys input)",
+            "",
+            "Input Dispatcher State:",
+            "  DispatchEnabled: true",
+            "  Viewport INTERNAL: displayId=0, uniqueId=local:1, port=131, orientation=1, densityDpi=420",
+            "  FocusedApplications:",
+            "    displayId=0, name='com.android.launcher3'",
+        ]
+        .join("\n");
+        assert_eq!(parse_orientation(&dump), 1);
+        assert_eq!(oriented_size(2136, 3200, parse_orientation(&dump)), (3200, 2136));
+    }
+
+    #[test]
+    fn orientation_interval_backs_off_while_capturing() {
+        // 2.0.6：接管期间不能停摆（否则转屏发现不了），但要拉长到 60s。
+        assert_eq!(orientation_interval(false), ORIENTATION_POLL_S);
+        assert_eq!(orientation_interval(true), ORIENTATION_CAPTURE_POLL_S);
+        assert!(ORIENTATION_CAPTURE_POLL_S > ORIENTATION_POLL_S);
     }
 
     #[test]

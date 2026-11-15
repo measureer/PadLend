@@ -2,6 +2,30 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.0.6] — 2026-11-15
+
+### 修复
+
+- **转屏识别时灵时不灵（真凶：adb 把 `sh -c` 的脚本拆开了）**：2.0.5 起朝向查询写成
+  `device.shell(&["sh", "-c", "dumpsys input | grep -m1 'Viewport.*orientation='"])`。
+  但 adb 客户端是把 `shell` 之后的 argv **用空格拼成一个字符串**再交给设备端 shell 的，
+  于是设备上实际执行的是 `sh -c dumpsys`（不带参数、又慢又没有 Viewport 行），每轮 5s 超时。
+  朝向检测此前一直靠「连续 3 次失败后退回完整 `dumpsys input`」的兜底在工作，所以
+  用户看到的是「横屏转竖屏识别到了，竖屏转回横屏没识别」。现在直接执行 `dumpsys input`
+  （单条命令，不经过 `sh -c`，实测 65–150ms），输出在本地解析。
+
+- **接管期间在平板上转屏，界面不跟着变**：2.0.2 为了不让 dumpsys 拖慢指针，在接管期间
+  **完全停掉**了朝向轮询 —— 用户拿着鼠标在平板上转屏（鼠标还停在平板那边）时，引擎一次都不查，
+  界面就一直显示旧方向，直到把鼠标滑回电脑、下一轮查询才补上。现在接管期间也查，只是把周期
+  放宽到 **60s**；交还控制权时 set_capturing(false) 会抬起 orientation_wake，让轮询线程 50ms 内
+  醒过来立刻补一次，不用干等满周期。
+
+### 验证
+
+- 引擎 cargo test：lib 562 + rawinput 1 + tablet 5 全绿（新增 orientation_interval_backs_off_while_capturing）。
+- 真机：连上后把平板从竖屏转横屏，20s 内界面跟着变；接管中再转回去，60s 内跟上；
+  转屏后立刻交还（Ctrl+Alt+S），4s 内就看到新的方向与分辨率。
+
 ## [2.0.5] — 2026-11-15
 
 ### 修复

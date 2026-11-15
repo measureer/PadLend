@@ -21,6 +21,7 @@
 | 退出后下次启动报「上次未正常退出」 | [4.2](#42-python-关闭被守护线程截断) [4.3](#43-首次运行就报上次未正常退出) |
 | 高 DPI / 多屏遮罩错位、落点偏 | [5.1](#51-dpi-感知晚于建窗遮罩只盖住一部分) [5.2](#52-物理坐标与逻辑坐标混用) [5.3](#53-接管中显示器拓扑变化) [5.4](#54-负坐标副屏) |
 | 开「转发平板声音」后一直卡在「连接中」 | [2.8](#28-audio-模式下控制通道等-dummy回退重启又丢了-jar) |
+| 转屏后界面方向不对 / 转回去没反应 | [29.3](#293-根因) |
 | 连上平板但输入乱/没反应 | [1.1](#11-幽灵-scrcpy-server-杀不掉) [2.2](#22-心跳把按住冲成松开) [2.4](#24-进入接管没有先补发全松) |
 | 换 Wi-Fi 后设备多出一台 / 自动连接卡 40 秒 | [1.6](#16-把-adb-serial-当设备身份换网就多出一台) [1.7](#17-坏历史地址把首连拖-40-秒) |
 | 安装版缺 jar/adb、sidecar 找不到 | [7.2](#72-sidecar-解析失败回退到开发期-python) [7.3](#73-资源清单双轨安装版与-zip-版不一致) |
@@ -1123,6 +1124,7 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 
 - 廉价查询换成设备端 grep：`dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='`
   （`ORIENTATION_VIEWPORT_SH`），输出一行、65–150ms，解析走原来的 `parse_orientation`。
+  **注意**：这个 `sh -c` 写法本身是坏的（见 §30），2.0.6 已改成直接跑 `dumpsys input`。
 - `ORIENTATION_POLL_S` 2.0 → **15.0**；失败时周期翻倍退避（15 → 30 → 60s 封顶），
   成功立刻复位。连续 3 次拿不到 Viewport 行才退回完整 `dumpsys input`。
 - 删掉 `ORIENTATION_ROTATION_SH` 与 `parse_display_rotation`（连同两条 ROTATION_* 用例），
@@ -1164,3 +1166,90 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 - **配置改了不等于运行中的对象改了**：凡是「连接时快照」的参数（serial、端口、地址），
   自动迁移之后必须显式重建持有它的对象，否则日志显示「已更新」而实际仍在用旧值。
 
+
+## 29. 2.0.6 补录：接管期间转屏，界面方向不跟着变
+
+### 29.1 现象
+
+- 平板从横屏转竖屏，界面识别到了；再从竖屏转回横屏，界面一直停在「竖屏 2136x3200」。
+- `service.log` 里两条变化记录之间隔了很久，用户以为「没识别到」。
+
+### 29.2 触发条件
+
+- 鼠标还停在平板那边（Router 处于 Captured / 接管中）时转屏。
+
+### 29.3 根因
+
+- 2.0.2 为了不让 `dumpsys` 拖慢指针，在 `orientation_loop` 里写了
+  `if self.capturing.load(...) { continue; }` —— **接管期间一次都不查朝向**。
+  用户用鼠标操作平板的那几十秒里转屏，引擎全程盲区；
+  等把鼠标滑回电脑（状态回到 Idle）之后，下一轮 15s 的查询才补上，
+  如果用户这时已经在看界面，就会看到旧方向，感觉是「没识别」。
+- 实测证据：连续 36 秒每秒 `ps -A | grep dumpsys` 全是 0（引擎根本没在查），
+  而日志里那段时间只有 `cap.start` 和 `tablet.mouse.btn` —— 一直在接管。
+
+### 29.4 修法
+
+- 接管期间不再停摆，只是把周期放宽：`ORIENTATION_CAPTURE_POLL_S = 60.0`（Idle 时仍是 15s）。
+  一次 Viewport 查询 65–150ms，一分钟一次不会影响手感。
+- `set_capturing(false)`（交还控制权）时抬起 `orientation_wake: AtomicBool`；
+  `sleep_interruptible` 每 50ms 分片检查一次，看到就立刻返回并补一次查询 —— 交还后 ≤1s 就能更新。
+- 轮询周期统一由 `orientation_interval(capturing)` 计算，接管状态切换时重置周期。
+
+### 29.5 如何验证
+
+- `cargo test --manifest-path padlend-core/Cargo.toml`：新增 `orientation_interval_backs_off_while_capturing`。
+- 真机：接管中把平板转 90°，60s 内界面方向与分辨率跟着变；把鼠标滑回电脑后 1s 内也会立刻纠正一次。
+
+### 29.6 教训
+
+- **「省一次查询」和「看不见变化」之间要选后者能接受的那个**：输入路径上确实不能高频 dump，
+  但低频不等于零次。取消轮询前先想清楚「用户在这种状态下还会不会改这个东西」。
+- 交还/接管这类状态切换是最好的补查时机，用唤醒标志比调小周期更划算（既不增加常态开销，又能立刻响应）。
+- 排障时「我采了 36 秒一次都没有」比日志更能定性：日志没有记录 ≠ 没发生，进程采样才是硬证据。
+
+## 30. 2.0.6 补录：`device.shell(&["sh", "-c", "... | grep ..."])` 只会执行第一个词
+
+### 30.1 现象
+
+- 平板转屏识别时灵时不灵：横屏 → 竖屏认到了，竖屏 → 横屏没认到。
+- 引擎日志里没有「朝向变化」，偶尔有 `[tablet.session] 朝向监听中断: adb 超时 5s: shell dumpsys input`。
+
+### 30.2 触发条件
+
+- 2.0.5 起朝向查询写成 `device.shell(&["sh", "-c", "dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='"])`。
+
+### 30.3 根因
+
+- adb 客户端在 Windows 上收到的是一串 argv，它把 `shell` 之后的参数**用空格拼成一个字符串**
+  再发给设备端 shell。所以设备上看到的命令行是：
+
+      sh -c dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='
+
+  设备 shell 把这一行解析成「`sh -c dumpsys input`（`$0=input`）管道给 `grep`」。
+  真正执行的是**不带参数的 `dumpsys`** —— 它会把所有服务 dump 一遍（几秒到十几秒），
+  输出里根本没有 Viewport 行，于是每轮 5s 超时。
+- 之所以看起来「有时候能用」：失败 3 次后会退回 `device.shell(&["dumpsys", "input"])` 的兜底
+  （单条命令，字符串拼接无所谓），那一次才是真正拿到朝向的查询。检测因此变得又慢又随机。
+
+### 30.4 修法
+
+- 直接 `device.shell(&["dumpsys", "input"], ORIENTATION_QUERY_TIMEOUT_S)`，不再经过 `sh -c`：
+  单条命令没有引号/管道可拆，实测 65–150ms；输出在本地用 `parse_orientation` 挑 Viewport 行。
+- 删掉 `ORIENTATION_VIEWPORT_SH` 与「三次失败后退回完整 dump」的兜底（主查询本身就是完整 dump）。
+- 超时单独给 8s（`ORIENTATION_QUERY_TIMEOUT_S`）：平板忙时 dump 能拖到几秒，5s 会在设备上留下
+  还在跑的 dump，几条以后互相抢锁。
+
+### 30.5 如何验证
+
+- `adb -s <serial> shell dumpsys input` 手工 71–132ms；引擎日志里不再出现「朝向查询失败」。
+- 真机：竖屏转横屏 20s 内识别；接管中转屏 60s 内识别；转屏后立刻交还 4s 内识别。
+
+### 30.6 教训
+
+- **给 adb 的 `shell` 传参时，不要指望它保留引号**：需要管道/重定向/引号时，要么整条命令自己加好引号
+  交给 `sh -c`，要么干脆避开 shell 语法用单条命令。
+- 「带 grep 只回一行」这种优化看着划算，实际把命令拆坏了还很隐蔽：本地日志只报超时，
+  看不出设备上跑的是另一个命令。怀疑某个 adb 查询慢时，先在设备端 `ps -A` 看真正跑的是什么。
+- 兜底路径会掩盖主路径的故障：主查询一直失败、兜底偶尔成功，表现为「时灵时不灵」，
+  很难从日志看出来。主路径失败要留下明确的日志（本次一并补了「朝向查询失败/没有 Viewport 行」）。
