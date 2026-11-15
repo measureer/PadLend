@@ -22,14 +22,17 @@ use crate::config::{Config, PlacementCfg};
 use crate::constants as C;
 use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
 use crate::logic::ports::{DesktopAdapter, MaskAdapter};
-use crate::logic::router::{DesktopPort, DeviceFacts, MaskPort, Router, SessionPort};
+use crate::logic::router::{CaptureHotkey, DesktopPort, DeviceFacts, MaskPort, Router, SessionPort};
 use crate::tablet::adb::{Adb, AdbApi, AdbErrorCode, DeviceEntry};
 use crate::tablet::locator;
 use crate::tablet::session::{SessionBuilder, TabletSession};
 use crate::tablet::simulated::{SimulatedAdb, SimulatedSession};
 use crate::win::desktop::DesktopMap;
 use crate::tablet::protocol::AndroidAction;
-use crate::win::hotkeys::{parse_combo, HotkeyAction, HotkeyBinding, HotkeyHandler, HotkeyManager};
+use crate::win::hotkeys::{
+    parse_combo, HotkeyAction, HotkeyBinding, HotkeyHandler, HotkeyManager, MOD_ALT, MOD_CONTROL,
+    MOD_SHIFT, MOD_WIN,
+};
 use crate::win::double_tap::{parse_double_tap, DoubleTapMatcher, ModifierFamily};
 use crate::win::keyboard_hook::KeyboardHook;
 use crate::win::mask::MaskConfig;
@@ -502,7 +505,14 @@ impl Engine {
                 down: event.down,
                 ts: event.ts,
             };
-            router.on_key(&logical)
+            let (suppress, hotkey) = router.on_key_action(&logical);
+            if let Some(action) = hotkey {
+                if let Some(engine) = weak_engine.upgrade() {
+                    // 动作可能走 RPC / 注入按键，绝不能跑在钩子线程上。
+                    std::thread::spawn(move || engine.fire_hotkey(action));
+                }
+            }
+            suppress
         });
         match hook.install() {
             Ok(()) => {
@@ -526,6 +536,10 @@ impl Engine {
         // 先卸掉上一套：设置页改了快捷键要立刻生效，不能留着旧组合键占着系统。
         *lock(&self.hotkeys) = None;
         *lock(&self.double_taps) = Vec::new();
+        // 接管期间的快捷键副本也一起清掉：配置改坏时不能让旧的还在钩子里生效。
+        if let Some(router) = self.router() {
+            router.set_capture_hotkeys(Vec::new());
+        }
         if self.simulate || self.no_hooks {
             return;
         }
@@ -533,6 +547,9 @@ impl Engine {
         let mut bindings = Vec::new();
         let mut handlers: Vec<(i32, HotkeyHandler)> = Vec::new();
         let mut double_taps: Vec<(ModifierFamily, HotkeyAction)> = Vec::new();
+        // 接管期间由键盘钩子直接识别的副本（PITFALLS 22：suppress_pc 把 Ctrl/Alt 吞了，
+        // WM_HOTKEY 不会来，只能自己比对）。
+        let mut capture_hotkeys: Vec<CaptureHotkey> = Vec::new();
         for action in HotkeyAction::ALL {
             let combo = action.combo(&cfg.hotkeys).to_string();
             // 「Ctrl+Ctrl」这种双击写法：RegisterHotKey 注册不了裸修饰键（按下 Ctrl 时系统在等
@@ -547,6 +564,14 @@ impl Engine {
                         id: action.id(),
                         modifiers,
                         vk,
+                    });
+                    capture_hotkeys.push(CaptureHotkey {
+                        ctrl: modifiers & MOD_CONTROL != 0,
+                        alt: modifiers & MOD_ALT != 0,
+                        shift: modifiers & MOD_SHIFT != 0,
+                        win: modifiers & MOD_WIN != 0,
+                        vk: vk as i32,
+                        action,
                     });
                     let weak = Arc::downgrade(self);
                     handlers.push((
@@ -571,6 +596,9 @@ impl Engine {
             }
         }
         *lock(&self.double_taps) = double_taps.clone();
+        if let Some(router) = self.router() {
+            router.set_capture_hotkeys(capture_hotkeys);
+        }
         let double_summary = double_taps
             .iter()
             .map(|(family, action)| format!("双击{}=>{}", family.label(), action.label()))

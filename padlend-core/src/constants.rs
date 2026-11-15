@@ -475,6 +475,12 @@ pub const MAX_BATCH: usize = 8;
 /// 比真实指针跑得快，回程就会在「模型到顶、真实指针还在中上部」时提前交还。
 /// 留一半余量，让内核和 InputReader 有空把队列排空。
 pub const PACKETS_PER_FRAME: usize = 4;
+
+/// 指针校准「顶到左上角」时一次排的报文数。
+///
+/// 每条约 -127 计数，14 条 = 1778 计数；按本机实测 ~2.9 px/计数 可推 ~5100 px，
+/// 足够顶穿 3200 长的边（PointerController 到边就夹住，多余计数不累积）。
+pub const CALIBRATION_PIN_REPORTS: usize = 14;
 /// 发送队列背压软阈值（不是硬上限）。
 pub const SEND_QUEUE_MAXLEN: usize = 64;
 

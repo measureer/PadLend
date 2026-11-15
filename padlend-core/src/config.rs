@@ -323,6 +323,12 @@ pub struct MotionCfg {
     pub edge_band_px: i64,
     /// 桌面边界内缩（像素）；H3 规避手势时 8~16。
     pub boundary_inset_px: i64,
+    /// 校准得到的「1 个 HID 计数对应平板多少像素」；0 表示未校准，退回 xscale。
+    ///
+    /// Android 指针速度在更上层且不可读（DESIGN F4），本机实测约 2.5~2.9 px/计数，
+    /// 而 xscale(1.312) 只是理论值；用错比例会让估计器与实际指针分叉，表现就是
+    /// 「指针还在屏幕中部就交还 PC」（PITFALLS 19）。校准流程见 PITFALLS 20。
+    pub px_per_count: f64,
 }
 
 impl Default for MotionCfg {
@@ -338,6 +344,7 @@ impl Default for MotionCfg {
             arm_window_ms: i64::from(C::ARM_WINDOW_MS),
             edge_band_px: i64::from(C::EDGE_BAND_PX),
             boundary_inset_px: i64::from(C::BOUNDARY_INSET_PX),
+            px_per_count: 0.0,
         }
     }
 }
@@ -795,6 +802,9 @@ impl Config {
         if self.motion.boundary_inset_px < 0 {
             problems.push("motion.boundary_inset_px 不能为负".to_string());
         }
+        if !(self.motion.px_per_count == 0.0 || (1.0..=10.0).contains(&self.motion.px_per_count)) {
+            problems.push("motion.px_per_count 必须是 0 或 1.0..10.0".to_string());
+        }
 
         if py_strip(&self.keyboard.layout).is_empty() {
             problems.push("keyboard.layout 不能为空".to_string());
@@ -920,6 +930,10 @@ impl Config {
             if motion.boundary_inset_px < 0 {
                 found.push("motion.boundary_inset_px 不能为负，已恢复默认".to_string());
                 motion.boundary_inset_px = motion_defaults.boundary_inset_px;
+            }
+            if !(motion.px_per_count == 0.0 || (1.0..=10.0).contains(&motion.px_per_count)) {
+                found.push("motion.px_per_count 必须是 0（未校准）或 1.0..10.0，已恢复默认".to_string());
+                motion.px_per_count = motion_defaults.px_per_count;
             }
             if motion.entry_margin_px < 0 {
                 found.push("motion.entry_margin_px 不能为负，已恢复默认".to_string());
@@ -1098,6 +1112,7 @@ fn section_motion(raw: Option<&Value>) -> MotionCfg {
     take_int(map, "arm_window_ms", &mut out.arm_window_ms);
     take_int(map, "edge_band_px", &mut out.edge_band_px);
     take_int(map, "boundary_inset_px", &mut out.boundary_inset_px);
+    take_float(map, "px_per_count", &mut out.px_per_count);
     out
 }
 

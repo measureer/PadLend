@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use crate::service::api;
 use crate::service::engine::Engine;
 
-/// 26 个 RPC 方法名（Python 的 25 个 + 1.6.0 新增的 devices.cancel）。
-pub const METHODS: [&str; 26] = [
+/// RPC 方法名白名单（Python 的 25 个 + 1.6.0 的 devices.cancel + 2.0.0 的三个指针校准）。
+pub const METHODS: [&str; 29] = [
     "app.bootstrap",
     "app.shutdown",
     "config.get",
@@ -37,6 +37,10 @@ pub const METHODS: [&str; 26] = [
     "system.paths",
     "wizard.check",
     "logs.recent",
+    // 2.0.0 指针校准（设置页 → 鼠标 → 指针校准）。
+    "pointer.calibrate_begin",
+    "pointer.calibrate_state",
+    "pointer.calibrate_end",
 ];
 
 /// 一次分派的结果（rpc 层据此写响应）。
@@ -90,11 +94,11 @@ mod tests {
 
     #[test]
     fn method_table_matches_python_contract() {
-        assert_eq!(METHODS.len(), 26);
+        assert_eq!(METHODS.len(), 29);
         let mut sorted = METHODS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 26, "方法名不得重复");
+        assert_eq!(sorted.len(), 29, "方法名不得重复");
         for required in [
             "app.bootstrap",
             "app.shutdown",
@@ -105,6 +109,22 @@ mod tests {
             "logs.recent",
         ] {
             assert!(METHODS.contains(&required), "缺少方法 {required}");
+        }
+    }
+
+    /// 白名单必须覆盖 api::dispatch 里的方法：2.0.0 漏过一次（实现写在 api.rs，
+    /// 白名单没加 → 运行期「未知方法：pointer.calibrate_begin」，单测也发现不了）。
+    #[test]
+    fn whitelist_covers_pointer_calibration() {
+        for method in [
+            "pointer.calibrate_begin",
+            "pointer.calibrate_state",
+            "pointer.calibrate_end",
+        ] {
+            assert!(METHODS.contains(&method), "{method} 不在白名单里");
+            if let Reply::Error(message) = dispatch(method, &json!({})) {
+                assert!(!message.starts_with("未知方法"), "{method}: {message}");
+            }
         }
     }
 

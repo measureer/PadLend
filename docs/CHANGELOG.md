@@ -2,6 +2,46 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.0.0] — 2026-11-15
+
+### 新增
+
+- **指针校准**：设置 → 鼠标 → 「指针校准…」。引擎把平板指针钉到左上角，用户一路推到屏幕最底部，
+  用「平板高 ÷ 累计 HID 计数」反推 1 个计数对应多少像素，写入 `motion.px_per_count` 并**即时生效**
+  （估计器只换比例、不重置位置）。不校准时退回 xscale 理论值。
+  本机实测真实比例约 2.4–2.9 px/计数，而 xscale 只有 1.312 —— 这也是「指针还在屏幕中部就交还 PC」
+  的第二层原因（第一层是丢包，1.7.10 已修）。
+- 设置页的滑条数值变成**可输入的文本框**（速度 `0.84×`、边界 `10 px` 等）：输入回车/失焦提交，
+  自动夹到上下限并按步长取整，Esc 还原；输入框与滑条双向同步。
+
+### 修复
+
+- **接管之后全局快捷键全部失效（连「交还 / 急停」也是）**：接管时低级键盘钩子把 Ctrl/Alt 的按下
+  一并吞掉，Windows 的修饰键状态不更新，`RegisterHotKey` 永远不会派发 `WM_HOTKEY` —— 用户按
+  `Ctrl+Alt+S` 交还、`Ctrl+Alt+Q` 急停、以及平板后退/主页/音量这些键**全部没有反应**（1.x 起就存在）。
+  现在 CAPTURED 期间由钩子自己比对组合键（`CaptureHotkey` + `on_key_action`），命中即吞掉并在锁外
+  执行动作，不再依赖 `WM_HOTKEY`。
+- **指针校准只接受正计数**：推到底边后继续往上推会让计数变负（本机 −84），旧公式算出
+  `2136/84 = 25.43 px/计数` 这种离谱比例；现在返回 0，界面提示重新校准。
+- **键盘修饰键「按下了却抬不起来」**：Ctrl+Alt+S 接管时，Ctrl/Alt 的按下发生在 IDLE 被放行，
+  抬起发生在 CAPTURED 被吞掉，Windows 认为它们一直按着 —— 左 Alt 卡住后所有字母都变成菜单快捷键，
+  表现为「键盘大面积失灵/对不上」。现在按 vk 记住「按下是否放行」，抬起跟随同一个决定
+  （`Inner::passed_keys`），被吞下的键依旧成对吞。
+
+### 变更
+
+- 侧栏去掉「工作区」这行标题，导航直接从第一项开始。
+- 「保持平板唤醒」的说明删掉两段容易误导的补充（「引擎在连接时设置这一项…」「不会修改开发者选项…」），
+  只保留实际行为说明；该项本来就有「重连后生效」徽章。
+
+### 验证
+
+- 引擎 `cargo test`：**557 passed / 13 ignored**（新增 `key_release_follows_down_decision`、
+  `calibration_ratio_uses_height_over_counts`、`calibration_pins_and_ends_on_return`、
+  `capture_hotkey_fires_while_captured`、`calibration_rejects_non_positive_counts`）。
+- 前端：`npx vitest run` 75 passed / 16 files（新增 `sliderField`、`pointerCalibration` 两组），`tsc --noEmit` 干净。
+- 依赖：`motion.px_per_count` 缺省 0（未校准），旧配置文件无需迁移。
+
 ## [1.7.10] — 2026-11-15
 
 ### 修复

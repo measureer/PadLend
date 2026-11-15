@@ -8,6 +8,7 @@ import { SETTING_GROUPS, readField, validateConfig, settingsPatch, writeField, t
 import { saveConfig } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
 import { HotkeyRecorder } from './HotkeyRecorder';
+import { PointerCalibration } from './PointerCalibration';
 
 /** 「生效方式」徽章：只有真的不是即时生效的字段才显示，避免每行都挂一个标签。 */
 const APPLIES: Record<NonNullable<FieldDef['applies']>, { label: string; tone: string; title: string }> = {
@@ -44,6 +45,9 @@ function Control({ field, config, onChange }: {
           step={field.step ?? 1}
           label={field.label}
           format={field.format}
+          text={field.text}
+          parse={field.parse}
+          unit={field.unit}
           onChange={onChange}
         />
       );
@@ -70,10 +74,11 @@ function Control({ field, config, onChange }: {
   }
 }
 
-const GroupCard = memo(function GroupCard({ group, config, onChange }: {
+const GroupCard = memo(function GroupCard({ group, config, onChange, onMeasured }: {
   group: SettingGroup;
   config: Config;
   onChange: (field: FieldDef, value: string | number | boolean) => void;
+  onMeasured: (value: number) => void;
 }) {
   return (
     <Card
@@ -86,6 +91,9 @@ const GroupCard = memo(function GroupCard({ group, config, onChange }: {
           <Control field={field} config={config} onChange={(value) => onChange(field, value)} />
         </Field>
       ))}
+      {group.id === 'motion' && (
+        <PointerCalibration value={config.motion.px_per_count} onMeasured={onMeasured} />
+      )}
     </Card>
   );
 });
@@ -146,7 +154,18 @@ export function SettingsPage() {
         {(['main', 'side'] as const).map((column) => (
           <div className="settings-column" key={column}>
             {SETTING_GROUPS.filter((group) => group.column === column).map((group) => (
-              <GroupCard key={group.id} group={group} config={draft} onChange={change} />
+              <GroupCard
+              key={group.id}
+              group={group}
+              config={draft}
+              onChange={change}
+              onMeasured={(value) => {
+                // 只改草稿，仍然走统一的「保存设置」提交（和其它字段一致）。
+                setDraft((current) => ({ ...current, motion: { ...current.motion, px_per_count: value } }));
+                setDirty(true);
+                setBanner(null);
+              }}
+            />
             ))}
           </div>
         ))}

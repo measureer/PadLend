@@ -48,6 +48,7 @@ export function defaultConfig(): Config {
       arm_window_ms: 80,
       edge_band_px: 1,
       boundary_inset_px: 0,
+    px_per_count: 0,
     },
     keyboard: {
       forward: true,
@@ -213,6 +214,23 @@ export class MockBackend {
     }, 2000);
   }
 
+  /** 指针校准的模拟状态（只有 mock 用）。 */
+  private calib = { active: false, countsX: 0, countsY: 0 };
+
+  private calibReading() {
+    const height = this.facts?.height ?? 2136;
+    const counts = Math.abs(this.calib.countsY);
+    return {
+      active: this.calib.active,
+      captured: this.state === 'captured',
+      countsX: this.calib.countsX,
+      countsY: this.calib.countsY,
+      width: this.facts?.width ?? 3200,
+      height,
+      pxPerCount: counts > 0 ? Math.round((height / counts) * 1000) / 1000 : 0,
+    };
+  }
+
   on(event: string, handler: EventHandler): () => void {
     if (!this.listeners.has(event)) this.listeners.set(event, new Set());
     this.listeners.get(event)!.add(handler);
@@ -374,6 +392,19 @@ export class MockBackend {
       case 'engine.inject_clipboard':
         result = { ok: Boolean(params.text) };
         break;
+      case 'pointer.calibrate_begin':
+        this.calib = { active: true, countsX: 0, countsY: 0 };
+        this.setState('captured', 'manual.calibrate');
+        result = this.calibReading();
+        break;
+      case 'pointer.calibrate_state':
+        if (this.calib.active) this.calib.countsY += 688;
+        result = this.calibReading();
+        break;
+      case 'pointer.calibrate_end':
+        this.calib.active = false;
+        result = this.calibReading();
+        break;
       case 'engine.state':
         result = { state: this.state, connected: this.facts !== null, facts: this.facts, metrics: this.metrics, manual: false };
         break;
@@ -466,7 +497,7 @@ export class MockBackend {
   async openUrl(): Promise<void> {}
   async checkUpdate(): Promise<{ tag: string; release: unknown }> {
     // 浏览器预览：假装 GitHub 上最新就是当前版本，避免走真网络。
-    return { tag: 'v1.7.10', release: null };
+    return { tag: 'v2.0.0', release: null };
   }
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}

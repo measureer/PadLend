@@ -62,6 +62,10 @@ fn dispatch(engine: &Arc<Engine>, method: &str, params: &Value) -> Result<Value,
         "engine.reconnect" => Ok(engine_reconnect(engine)),
         "engine.inject_clipboard" => Ok(engine_inject_clipboard(engine, params)),
     "engine.android_key" => engine_android_key(engine, params),
+        // -- 指针校准（2.0.0）---------------------------------------------
+        "pointer.calibrate_begin" => pointer_calibrate_begin(engine),
+        "pointer.calibrate_state" => Ok(pointer_calibrate_state(engine)),
+        "pointer.calibrate_end" => Ok(pointer_calibrate_end(engine)),
         "engine.state" => Ok(engine_state(engine)),
         "engine.metrics" => Ok(engine.current_metrics_value()),
         // -- 诊断 ---------------------------------------------------------
@@ -309,6 +313,48 @@ fn devices_disconnect(engine: &Arc<Engine>) -> Value {
     engine.release_adb_connections();
     engine.emit_log("DEVICE", "已断开");
     json!({ "ok": true })
+}
+
+// -- 指针校准（2.0.0）--------------------------------------------------
+
+/// 校准读数转 JSON。
+fn calibration_value(state: crate::logic::router::CalibrationState) -> Value {
+    json!({
+        "active": state.active,
+        "captured": state.captured,
+        "countsX": state.counts_x,
+        "countsY": state.counts_y,
+        "width": state.width,
+        "height": state.height,
+        "pxPerCount": (state.px_per_count() * 1000.0).round() / 1000.0,
+    })
+}
+
+fn pointer_calibrate_begin(engine: &Arc<Engine>) -> Result<Value, String> {
+    let Some(router) = engine.router() else {
+        return Err("尚无设备会话：请先连接平板".to_string());
+    };
+    router
+        .calibrate_begin()
+        .map(calibration_value)
+        .map_err(|err| err.detail().to_string())
+}
+
+fn pointer_calibrate_state(engine: &Arc<Engine>) -> Value {
+    match engine.router() {
+        Some(router) => calibration_value(router.calibrate_state()),
+        None => json!({
+            "active": false, "captured": false, "countsX": 0, "countsY": 0,
+            "width": 0, "height": 0, "pxPerCount": 0.0,
+        }),
+    }
+}
+
+fn pointer_calibrate_end(engine: &Arc<Engine>) -> Value {
+    match engine.router() {
+        Some(router) => calibration_value(router.calibrate_end()),
+        None => pointer_calibrate_state(engine),
+    }
 }
 
 fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {

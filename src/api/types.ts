@@ -139,6 +139,8 @@ export interface Config {
     arm_window_ms: number;
     edge_band_px: number;
     boundary_inset_px: number;
+    /** 校准得到的 px/计数；0 表示未校准（引擎退回 xscale）。 */
+    px_per_count: number;
   };
   keyboard: {
     forward: boolean;

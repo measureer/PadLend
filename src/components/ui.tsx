@@ -1,6 +1,6 @@
 /** 基础组件库：所有页面共用同一套交互与视觉，杜绝重复样式代码。 */
 
-import { memo, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import type { AppState } from '../api/types';
 import { STATE_TONES, stateLabel } from '../lib/format';
 import { useAppStore } from '../store/appStore';
@@ -126,10 +126,36 @@ interface SliderProps {
   step?: number;
   onChange: (value: number) => void;
   format?: (value: number) => string;
+  /** 数值框里显示的文本（默认直接显示 value，例如 0.84 需要换算成 84）。 */
+  text?: (value: number) => string;
+  /** 把数值框里输入的文本解析回内部值；返回 null 表示输入无效。 */
+  parse?: (text: string) => number | null;
+  unit?: string;
   label: string;
 }
 
-export const Slider = memo(function Slider({ value, min, max, step = 1, onChange, format, label }: SliderProps) {
+/** 滑条 + 可输入数值框：两者双向同步，回车/失焦提交，Esc 还原。 */
+export const Slider = memo(function Slider({
+  value, min, max, step = 1, onChange, format, text, parse, unit, label,
+}: SliderProps) {
+  const toText = (next: number) => (text ? text(next) : String(next));
+  const [draft, setDraft] = useState(() => toText(value));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(toText(value));
+    // toText 依赖调用方传入的 text/format，随 value 一起变
+  }, [value, editing, text, format]);
+  const commit = () => {
+    const parsed = parse ? parse(draft) : Number(draft);
+    if (parsed === null || !Number.isFinite(parsed)) {
+      setDraft(toText(value));
+      return;
+    }
+    const stepped = step > 0 ? Math.round(parsed / step) * step : parsed;
+    const next = Math.min(max, Math.max(min, stepped));
+    setDraft(toText(next));
+    if (next !== value) onChange(next);
+  };
   return (
     <>
       <input
@@ -142,7 +168,21 @@ export const Slider = memo(function Slider({ value, min, max, step = 1, onChange
         aria-label={label}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      <span className="field-value mono">{format ? format(value) : value}</span>
+      <span className="slider-input">
+        <input
+          className="input field-number mono"
+          value={draft}
+          aria-label={`${label}（数值）`}
+          onFocus={() => setEditing(true)}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { setEditing(false); commit(); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { setDraft(toText(value)); setEditing(false); e.currentTarget.blur(); }
+          }}
+        />
+        {unit ? <span className="field-unit mono">{unit}</span> : null}
+      </span>
     </>
   );
 });

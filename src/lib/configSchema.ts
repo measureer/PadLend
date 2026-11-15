@@ -18,6 +18,11 @@ export interface FieldDef {
   display?: (value: number) => number;
   persist?: (value: number) => number;
   format?: (value: number) => string;
+  /** 滑条数值框里的文本与解析（缺省就是内部值的字符串形式）。 */
+  text?: (value: number) => string;
+  parse?: (text: string) => number | null;
+  /** 数值框后缀单位，例如 × / px / Hz。 */
+  unit?: string;
   options?: { value: string; label: string }[];
   placeholder?: string;
   /** 生效方式：live = 保存即生效；reconnect = 下次连接平板生效；restart = 重启 PadLend 生效。
@@ -59,6 +64,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
         min: 25, max: 300, step: 1,
         display: (v) => Math.round(v * 100), persist: (v) => Math.round(v) / 100,
         format: (v) => `${(v / 100).toFixed(2)}×`,
+        text: (v) => (v / 100).toFixed(2),
+        parse: (text) => {
+          const parsed = Number.parseFloat(text.replace(',', '.'));
+          return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+        },
+        unit: '×',
         hint: '平板指针的移动倍率。数值越大，同样一段鼠标位移在平板上走得越远。',
       },
       {
@@ -68,12 +79,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'arm_px', section: 'motion', key: 'arm_px', label: '触发阈值', kind: 'slider',
-        min: 1, max: 200, step: 1, format: (v) => `${v} px`,
+        min: 1, max: 200, step: 1, format: (v) => `${v} px`, unit: 'px',
         hint: '鼠标从屏幕边缘继续往外推多少像素才正式接管平板。太小容易误触。',
       },
       {
         id: 'exit_overflow_px', section: 'motion', key: 'exit_overflow_px', label: '穿回阈值', kind: 'slider',
-        min: 4, max: 120, step: 1, format: (v) => `${v} px`,
+        min: 4, max: 120, step: 1, format: (v) => `${v} px`, unit: 'px',
         hint: '在平板边缘反向拖回多少像素才交还 PC。调大可以避免边缘点按晃动误退。',
       },
     ],
@@ -181,7 +192,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'keep_screen_on', section: 'misc', key: 'keep_screen_on', label: '保持平板亮屏', kind: 'toggle',
         applies: 'reconnect',
-        hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。引擎在连接时设置这一项，改完要断开再连一次。不会修改开发者选项里的「保持唤醒状态」。',
+        hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。',
       },
       {
         id: 'forward_audio', section: 'misc', key: 'forward_audio', label: '转发平板声音', kind: 'toggle',

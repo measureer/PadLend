@@ -139,7 +139,6 @@ export const Sidebar = memo(function Sidebar() {
   const hotkeys = useAppStore((s) => s.config.hotkeys);
   return (
     <nav className="sidebar" aria-label="主导航">
-      <div className="sidebar-label">工作区</div>
       {NAV.map((item) => (
         <button
           key={item.id}

@@ -53,6 +53,7 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::constants as C;
+use crate::win::hotkeys::HotkeyAction;
 use crate::logic::events::{KeyEvent, RawDelta};
 use crate::logic::geometry::{
     segment_contacts_tablet, tablet_entry_point, tablet_exit_point, tablet_rect, Align, Edge,
@@ -613,6 +614,37 @@ macro_rules! rdebug {
 // 平板指针位置估计器（tablet/cursor.py，DESIGN 8.2 冻结契约）
 // ---------------------------------------------------------------------------
 
+/// 指针校准读数（api 层转成 JSON 给设置页）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CalibrationState {
+    /// 是否仍在累计（交还 PC 后变 false）。
+    pub active: bool,
+    /// 当前是否处于接管状态。
+    pub captured: bool,
+    /// 累计发出的 HID 计数（有符号）。
+    pub counts_x: i64,
+    /// 累计发出的 HID 计数（有符号；校准向下推所以为正）。
+    pub counts_y: i64,
+    /// 平板宽。
+    pub width: i32,
+    /// 平板高。
+    pub height: i32,
+}
+
+impl CalibrationState {
+    /// 由「从左上角推到最底部」的计数反推 1 计数对应的像素数。
+    ///
+    /// 只认**正的**计数：校准规定一路往下推，计数为负说明指针先撞到底边又被推回来
+    /// （或者反过来往上推了），这种比例没有意义 —— 返回 0 让界面提示重新校准，
+    /// 而不是拿 2136/84 这种数当结果。
+    pub fn px_per_count(&self) -> f64 {
+        if self.counts_y <= 0 || self.height <= 0 {
+            return 0.0;
+        }
+        f64::from(self.height) / self.counts_y as f64
+    }
+}
+
 /// 平板指针位置的唯一真相源（只在 Router 锁内访问）。
 ///
 /// 换算链（DESIGN 6.4.1）：PC 物理像素位移 Δp --×gain--> HID 相对计数 c（clamp ±127）
@@ -679,6 +711,11 @@ impl CursorEstimator {
     /// 最近一次发出的 HID 计数。
     pub fn last_report(&self) -> (i32, i32) {
         self.last_report
+    }
+
+    /// 替换比例（校准后运行期生效）。
+    pub fn set_scale(&mut self, scale: f64) {
+        self.scale = if scale > 0.0 { scale } else { 1.0 };
     }
 
     /// 重置位置；缺省归中（旋转/重启后指针位置未知，DESIGN 6.4.3）。
@@ -994,10 +1031,25 @@ struct Inner {
     ctrl_sides: HashSet<i32>,
     /// 按下的 Alt 侧。
     alt_sides: HashSet<i32>,
+    /// 按下的 Shift 侧（接管期间识别 Shift 组合的全局快捷键）。
+    shift_sides: HashSet<i32>,
     /// CAPTURED 期间已吞掉的 Win 键。
     swallowed_win: HashSet<i32>,
+    /// 按下时被**放行**给 Windows 的键：抬起必须同样放行，否则 Windows 会认为它一直按着
+    /// （卡键：Alt 被系统当成菜单修饰键，表现为「很多按键失灵/对不上」，PITFALLS 20）。
+    passed_keys: HashSet<i32>,
     /// 是否已记录 kbd.suppress.on。
     suppress_logged: bool,
+    /// 指针校准：是否正在累计（开始校准后为真，交还 PC 时自动结束）。
+    calib_active: bool,
+    /// 指针校准：累计发出的 HID 计数（x）。
+    calib_dx: i64,
+    /// 指针校准：累计发出的 HID 计数（y）。
+    calib_dy: i64,
+    /// 接管期间被钩子当成快捷键吞掉、正在等抬起的主键（抬起必须跟按下同一个决定）。
+    capture_hotkey_vk: Option<i32>,
+    /// 钩子刚命中的快捷键动作，由 `on_key_action` 在锁外取走执行（不能在锁内跑动作）。
+    pending_hotkey: Option<HotkeyAction>,
 }
 
 impl Inner {
@@ -1037,8 +1089,15 @@ impl Inner {
             passthrough_vks,
             ctrl_sides: HashSet::new(),
             alt_sides: HashSet::new(),
+            shift_sides: HashSet::new(),
             swallowed_win: HashSet::new(),
+            passed_keys: HashSet::new(),
             suppress_logged: false,
+            calib_active: false,
+            calib_dx: 0,
+            calib_dy: 0,
+            capture_hotkey_vk: None,
+            pending_hotkey: None,
         }
     }
 
@@ -1109,6 +1168,29 @@ fn lookup_vk_name(name: &str) -> Option<i32> {
 // ---------------------------------------------------------------------------
 
 /// PadLend 的核心状态机（对应 Python Router，DESIGN 8.2 冻结接口 + 测试注入点）。
+/// 接管期间也要能用的全局快捷键（2.0.0 修复）。
+///
+/// 为什么不能只靠 `RegisterHotKey`：接管时 `keyboard.suppress_pc=true`，低级键盘钩子会把
+/// Ctrl/Alt 的按下吞掉，Windows 自己的修饰键状态因此不会更新，`WM_HOTKEY` 永远不触发——
+/// 用户按「交还 / 急停」毫无反应（PITFALLS 22）。所以钩子在 CAPTURED 期间直接比对组合键，
+/// 命中就吞掉（既不发给平板，也不指望 Windows 再派发一次），动作交给 `on_key_action`
+/// 在锁外执行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureHotkey {
+    /// 需要按住的 Ctrl。
+    pub ctrl: bool,
+    /// 需要按住的 Alt。
+    pub alt: bool,
+    /// 需要按住的 Shift。
+    pub shift: bool,
+    /// 需要按住的 Win。
+    pub win: bool,
+    /// 主键虚拟键码。
+    pub vk: i32,
+    /// 命中后执行的动作。
+    pub action: HotkeyAction,
+}
+
 pub struct Router {
     /// 配置。
     ///
@@ -1140,6 +1222,8 @@ pub struct Router {
     connect_lock: Mutex<()>,
     /// 用户最近一次请求连接的序列号（替代 Python 改写 cfg.device.serial）。
     requested_serial: Mutex<Option<String>>,
+    /// 接管期间由键盘钩子识别的全局快捷键（见 [`CaptureHotkey`]）。
+    capture_hotkeys: Mutex<Vec<CaptureHotkey>>,
 }
 
 impl fmt::Debug for Router {
@@ -1168,7 +1252,32 @@ impl Router {
             .cfg
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = cfg;
+        // 校准值改了就地生效：估计器只换比例，不动当前位置（重置会制造新的分叉）。
+        if let Some(estimator) = self.lock_inner().estimator.as_mut() {
+            estimator.set_scale(self.model_scale(estimator.xscale()));
+        }
         rdebug!("router.config_updated");
+    }
+
+    /// 接管期间的快捷键绑定表（`Engine::install_hotkeys` 在每次保存配置后刷新）。
+    pub fn set_capture_hotkeys(&self, list: Vec<CaptureHotkey>) {
+        let mut guard = self
+            .capture_hotkeys
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = list;
+    }
+
+    /// 估计器用的「1 计数 ≈ 多少平板像素」：校准值优先，缺省退回 xscale。
+    fn model_scale(&self, xscale: f64) -> f64 {
+        let calibrated = self.cfg().motion.px_per_count;
+        if calibrated > 0.0 {
+            calibrated
+        } else if xscale > 0.0 {
+            xscale
+        } else {
+            1.0
+        }
     }
 
     /// 用配置与四个外部端口构造（时钟默认 SystemClock、键位表默认惰性构造）。
@@ -1199,6 +1308,7 @@ impl Router {
             callbacks: Mutex::new(Callbacks::default()),
             connect_lock: Mutex::new(()),
             requested_serial: Mutex::new(requested_serial),
+            capture_hotkeys: Mutex::new(Vec::new()),
         }
     }
 
@@ -1870,6 +1980,69 @@ impl Router {
         Ok(())
     }
 
+    // -- 指针校准 ----------------------------------------------------------
+
+    /// 开始指针校准：把平板指针顶到左上角，清零计数，必要时代为接管。
+    ///
+    /// 之后用户在平板上**向下**推，我们累计真正发出去的 HID 计数；交还 PC 时
+    /// （`begin_return`）计数窗口结束。px/count = 平板高 / 累计计数。
+    pub fn calibrate_begin(&self) -> Result<CalibrationState, RouterError> {
+        if self.lock_inner().state != State::Captured {
+            self.toggle_manual();
+            if self.lock_inner().state != State::Captured {
+                return Err(RouterError::device_offline(
+                    "开始校准需要先接管控件：请先连接平板",
+                ));
+            }
+        }
+        {
+            let mut inner = self.lock_inner();
+            self.ensure_estimator(&mut inner)?;
+            let mut estimator = match inner.estimator {
+                Some(estimator) => estimator,
+                None => return Err(RouterError::unexpected("校准缺少 estimator")),
+            };
+            // 顶到左上角：两个方向都发最大步长，PointerController 会把指针夹在 (0,0)。
+            let reports: Vec<(i32, i32)> = (0..C::CALIBRATION_PIN_REPORTS)
+                .map(|_| (-C::HID_CLAMP, -C::HID_CLAMP))
+                .collect();
+            estimator.reset(Some(0.0), Some(0.0));
+            inner.estimator = Some(estimator);
+            self.enqueue_burst(&reports);
+            inner.calib_active = true;
+            inner.calib_dx = 0;
+            inner.calib_dy = 0;
+            rdebug!("router.calib.begin reports={}", reports.len());
+        }
+        Ok(self.calibrate_state())
+    }
+
+    /// 读取校准读数（前端轮询；active=false 表示计数窗口已结束）。
+    pub fn calibrate_state(&self) -> CalibrationState {
+        let inner = self.lock_inner();
+        let (width, height) = match inner.estimator.as_ref() {
+            Some(estimator) => (estimator.width(), estimator.height()),
+            None => (0, 0),
+        };
+        CalibrationState {
+            active: inner.calib_active,
+            captured: inner.state == State::Captured,
+            counts_x: inner.calib_dx,
+            counts_y: inner.calib_dy,
+            width,
+            height,
+        }
+    }
+
+    /// 结束（或取消）校准的计数窗口；读数保留。
+    pub fn calibrate_end(&self) -> CalibrationState {
+        {
+            let mut inner = self.lock_inner();
+            inner.calib_active = false;
+        }
+        self.calibrate_state()
+    }
+
     // -- RawInput ----------------------------------------------------------
 
     /// RawInput 线程入口；绝不向调用方抛异常。
@@ -2286,7 +2459,8 @@ impl Router {
                 "非法设备尺寸 {width}x{height}"
             )));
         }
-        let mut estimator = CursorEstimator::new(width, height, facts.xscale_or_one())?;
+        // 校准值优先：Android 指针速度让真实比例与 xscale 差一倍以上（PITFALLS 19/20）。
+        let mut estimator = CursorEstimator::new(width, height, self.model_scale(facts.xscale_or_one()))?;
         estimator.reset(None, None);
         inner.facts = Some(facts);
         inner.estimator = Some(estimator);
@@ -2739,6 +2913,11 @@ impl Router {
         let (dx, dy) = estimator.feed(f64::from(ev.dx), f64::from(ev.dy), gain, clamp);
         let wheel = inner.take_wheel(ev.wheel);
         inner.estimator = Some(estimator);
+        if inner.calib_active {
+            // 校准只累计真正发给平板的计数（有符号，来回移动会互相抵消）。
+            inner.calib_dx += i64::from(dx);
+            inner.calib_dy += i64::from(dy);
+        }
         self.queue_mouse(buttons, dx, dy, wheel);
         let entry = match inner.entry_edge {
             Some(edge) => edge,
@@ -2791,6 +2970,8 @@ impl Router {
         if inner.state != State::Captured {
             return;
         }
+        // 交还即结束指针校准的计数窗口（结果保留，前端读得到）。
+        inner.calib_active = false;
         let mut exit_position: Option<(i32, i32)> = None;
         if let (Some(estimator), Some(placement)) = (inner.estimator, inner.placement.clone()) {
             let segment = inner.arm_segment.unwrap_or(placement.segment);
@@ -3552,6 +3733,14 @@ impl Router {
 
     /// 键盘入口；返回 true 表示本机应吞掉该键（对应 Python on_key）。
     pub fn on_key(&self, event: &KeyEvent) -> bool {
+        self.on_key_action(event).0
+    }
+
+    /// 键盘入口（带快捷键动作）：接管期间命中的全局快捷键由调用方在锁外执行。
+    ///
+    /// 键盘钩子必须用这个版本，否则用户在接管状态下按 Ctrl+Alt+S 交还、Ctrl+Alt+Q 急停
+    /// 都没有反应（PITFALLS 22）。
+    pub fn on_key_action(&self, event: &KeyEvent) -> (bool, Option<HotkeyAction>) {
         if event.down {
             // 键盘操作可能伴随窗口切换；趁 IDLE/RETURNING 时刷新一次绝对光标。
             let refresh = self.lock_inner().state != State::Captured;
@@ -3561,27 +3750,49 @@ impl Router {
                 }
             }
         }
-        let prepared = {
+        let (suppress, report, hotkey) = {
             let mut inner = self.lock_inner();
-            self.prepare_key(&mut inner, event)
+            let (suppress, report) = self.prepare_key(&mut inner, event);
+            // 动作在锁外执行：路由回调/DLL 注入都可能回头进 Router（锁序见模块头）。
+            let hotkey = inner.pending_hotkey.take();
+            (suppress, report, hotkey)
         };
-        let (suppress, report) = prepared;
-        let (modifier, usages) = match report {
-            Some(report) => report,
-            None => return suppress,
+        let Some((modifier, usages)) = report else {
+            return (suppress, hotkey);
         };
         // 发送在 Router 锁外：socket 写阻塞绝不能拖住鼠标 Raw Input（PITFALLS 2.5）。
         if let Err(err) = self.session.send_key(modifier, &usages) {
             self.note_write_failure(&err);
-            return false;
+            return (false, hotkey);
         }
         self.note_write_success(None);
-        suppress
+        (suppress, hotkey)
     }
 
     /// 锁内完成状态判定与键位表更新（对应 Python _prepare_key_locked）。
+    ///
+    /// 关键不变量：**同一个按键的抬起必须跟它的按下用同一个决定**。钩子原先只看
+    /// 「此刻的状态」，于是「Idle 时按下放行 → 组合键切到 CAPTURED → 抬起被吞」，
+    /// Windows 会认为这个键一直按着（本机表现为左 Alt 卡住、字母全变成菜单快捷键，
+    /// 用户看到的是「键盘失灵/对不上」，PITFALLS 20）。
     fn prepare_key(&self, inner: &mut Inner, event: &KeyEvent) -> (bool, Option<(u8, Vec<u8>)>) {
         self.track_safety(inner, event);
+        if !event.down && inner.passed_keys.remove(&event.vk) {
+            return (false, None);
+        }
+        let (suppress, report) = self.prepare_key_inner(inner, event);
+        if event.down {
+            if suppress {
+                inner.passed_keys.remove(&event.vk);
+            } else {
+                inner.passed_keys.insert(event.vk);
+            }
+        }
+        (suppress, report)
+    }
+
+    /// prepare_key 的判定主体（只按当前状态决定，不含抬起配对）。
+    fn prepare_key_inner(&self, inner: &mut Inner, event: &KeyEvent) -> (bool, Option<(u8, Vec<u8>)>) {
         if let Some(win_vk) = Self::win_vk(event) {
             // Windows 键在接管期间必须整键消失：放行 keydown 会打开开始菜单，
             // 而 topmost 遮罩会拦住它的鼠标交互，用户看到的就是"整屏卡死"。
@@ -3601,6 +3812,19 @@ impl Router {
         }
         if inner.state != State::Captured {
             return (false, None);
+        }
+        // 接管期间也要能按全局快捷键（交还 / 急停 / 平板按键），PITFALLS 22。
+        if event.down {
+            if let Some(action) = self.match_capture_hotkey(inner, event.vk) {
+                inner.capture_hotkey_vk = Some(event.vk);
+                inner.pending_hotkey = Some(action);
+                rdebug!("router.hotkey.capture vk=0x{:02X}", event.vk);
+                return (true, None);
+            }
+        } else if inner.capture_hotkey_vk == Some(event.vk) {
+            // 抬起跟着按下的决定走：按下的被吞了，抬起也不能漏到平板去。
+            inner.capture_hotkey_vk = None;
+            return (true, None);
         }
         let cfg = self.cfg();
         let keyboard = &cfg.keyboard;
@@ -3646,6 +3870,13 @@ impl Router {
             } else {
                 inner.alt_sides.remove(&side);
             }
+        } else if is_shift_vk(event.vk) {
+            let side = Self::modifier_side(event, 0xA1, 0x10);
+            if event.down {
+                inner.shift_sides.insert(side);
+            } else {
+                inner.shift_sides.remove(&side);
+            }
         }
     }
 
@@ -3689,6 +3920,31 @@ impl Router {
                 false
             }
         }
+    }
+
+    /// 接管期间的快捷键匹配：修饰键状态用我们自己跟踪的左右侧集合（Windows 那边被吞了）。
+    fn match_capture_hotkey(&self, inner: &Inner, vk: i32) -> Option<HotkeyAction> {
+        let bindings = self
+            .capture_hotkeys
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if bindings.is_empty() {
+            return None;
+        }
+        let ctrl = !inner.ctrl_sides.is_empty();
+        let alt = !inner.alt_sides.is_empty();
+        let shift = !inner.shift_sides.is_empty();
+        let win = !inner.swallowed_win.is_empty();
+        bindings
+            .iter()
+            .find(|binding| {
+                binding.vk == vk
+                    && binding.ctrl == ctrl
+                    && binding.alt == alt
+                    && binding.shift == shift
+                    && binding.win == win
+            })
+            .map(|binding| binding.action)
     }
 
     /// 惰性构造内置键位表（对应 Python _ensure_keymap_locked）。
@@ -3764,6 +4020,11 @@ fn is_ctrl_vk(vk: i32) -> bool {
 /// 是否 Alt 家族的 VK（Python _ALT_VKS）。
 fn is_alt_vk(vk: i32) -> bool {
     matches!(vk, 0x12 | 0xA4 | 0xA5)
+}
+
+/// 是否 Shift 家族的 VK（2.0.0：接管期间识别 Shift 组合的全局快捷键）。
+fn is_shift_vk(vk: i32) -> bool {
+    matches!(vk, 0x10 | 0xA0 | 0xA1)
 }
 
 /// 是否左/右 Win（Python _WIN_VKS）。
@@ -4982,6 +5243,141 @@ mod tests {
         assert!(rig.session.keys().is_empty());
         assert!(!rig.router.on_key(&KeyEvent::new(0x5B, 0, false, true)));
         assert!(!rig.router.on_key(&KeyEvent::new(0x5B, 0, false, false)));
+    }
+
+    /// 抬起必须跟随按下的决定：否则 Windows 认为这个键一直按着。
+    ///
+    /// 现场故障（PITFALLS 20）：Ctrl+Alt+S 接管时 Ctrl/Alt 的按下发生在 IDLE 被放行，
+    /// 抬起发生在 CAPTURED 被吞掉 → 左 Alt 卡在按下状态，字母全变成菜单快捷键，
+    /// 用户看到的是「键盘很多按键失灵/对不上」。
+    #[test]
+    fn key_release_follows_down_decision() {
+        let rig = make_rig(test_config());
+        rig.session.clear_keys();
+        assert!(
+            !rig.router.on_key(&KeyEvent::new(0xA2, 0, false, true)),
+            "IDLE 时 Ctrl 按下要放行"
+        );
+        rig.capture_manually();
+        rig.session.clear_keys();
+        assert!(
+            !rig.router.on_key(&KeyEvent::new(0xA2, 0, false, false)),
+            "按下被放行的键，抬起也要放行"
+        );
+        assert_eq!(rig.session.keys().len(), 0, "配对抬起不得转发给平板");
+
+        // 按下被吞的键，抬起同样要吞（保持原有行为）。
+        assert!(rig.router.on_key(&KeyEvent::new(0x41, 0, false, true)));
+        assert!(rig.router.on_key(&KeyEvent::new(0x41, 0, false, false)));
+    }
+
+    /// 负计数（指针先撞边又被推回来）不产出比例。
+    #[test]
+    fn calibration_rejects_non_positive_counts() {
+        let mut state = CalibrationState {
+            active: false,
+            captured: true,
+            counts_x: 0,
+            counts_y: -84,
+            width: 3200,
+            height: 2136,
+        };
+        assert_eq!(state.px_per_count(), 0.0);
+        state.counts_y = 0;
+        assert_eq!(state.px_per_count(), 0.0);
+        state.counts_y = 756;
+        assert!((state.px_per_count() - 2136.0 / 756.0).abs() < 1e-9);
+    }
+
+    /// 接管期间全局快捷键仍然可用（PITFALLS 22）。
+    ///
+    /// 现场故障：接管后按 Ctrl+Alt+S 交还、Ctrl+Alt+Q 急停毫无反应 —— suppress_pc 把
+    /// Ctrl/Alt 的按下吞掉了，Windows 的修饰键状态不更新，WM_HOTKEY 永远不会来。
+    /// 修法：钩子在 CAPTURED 期间自己比对组合键，命中就吞掉并把动作交给调用方执行。
+    #[test]
+    fn capture_hotkey_fires_while_captured() {
+        let rig = make_rig(test_config());
+        rig.capture_manually();
+        rig.router.set_capture_hotkeys(vec![CaptureHotkey {
+            ctrl: true,
+            alt: true,
+            shift: false,
+            win: false,
+            vk: 0x53,
+            action: HotkeyAction::Toggle,
+        }]);
+        rig.router.on_key(&KeyEvent::new(0xA2, 0, false, true));
+        rig.router.on_key(&KeyEvent::new(0xA4, 0, false, true));
+        rig.session.clear_keys();
+
+        let (suppress, action) = rig.router.on_key_action(&KeyEvent::new(0x53, 0, false, true));
+        assert!(suppress, "快捷键按下必须吞掉，不能发给平板");
+        assert_eq!(action, Some(HotkeyAction::Toggle));
+        assert!(rig.session.keys().is_empty(), "快捷键不得转发到平板");
+
+        let (suppress, action) = rig.router.on_key_action(&KeyEvent::new(0x53, 0, false, false));
+        assert!(suppress, "抬起跟着按下的决定走");
+        assert_eq!(action, None, "抬起不应再触发一次");
+
+        // 松开修饰键后，S 是普通按键：转发给平板、不触发快捷键。
+        rig.router.on_key(&KeyEvent::new(0xA2, 0, false, false));
+        rig.router.on_key(&KeyEvent::new(0xA4, 0, false, false));
+        rig.session.clear_keys();
+        let (suppress, action) = rig.router.on_key_action(&KeyEvent::new(0x53, 0, false, true));
+        assert!(suppress);
+        assert_eq!(action, None);
+        assert_eq!(rig.session.keys().len(), 1, "普通 S 仍要转发");
+    }
+
+    /// 校准比例：平板高 ÷ 累计计数。
+    #[test]
+    fn calibration_ratio_uses_height_over_counts() {
+        let state = CalibrationState {
+            active: false,
+            captured: true,
+            counts_x: 0,
+            counts_y: 688,
+            width: 3200,
+            height: 2136,
+        };
+        assert!((state.px_per_count() - 3.1047).abs() < 0.001);
+        // 没测到向下位移时不给比例，避免除零/魔数。
+        let empty = CalibrationState {
+            counts_y: 0,
+            ..state
+        };
+        assert_eq!(empty.px_per_count(), 0.0);
+    }
+
+    /// 校准流程：钉到左上角、清零计数、交还后自动结束窗口。
+    #[test]
+    fn calibration_pins_and_ends_on_return() {
+        let rig = make_rig(test_config());
+        rig.capture_manually();
+        let first = rig.router.calibrate_begin().expect("校准应当能开始");
+        assert!(first.active, "开始后应处于累计状态");
+        assert_eq!((first.counts_x, first.counts_y), (0, 0));
+        assert!(first.height > 0);
+        rig.session.clear_reports();
+
+        // 向下推 400 px（×gain 后超过 ±127，会被 clamp）。
+        rig.router.on_raw(&RawDelta::new(0, 400, 0, 0, false, 0.0));
+        rig.settle();
+        let moved = rig.router.calibrate_state();
+        assert!(moved.counts_y > 0, "向下推应累计正计数");
+        assert!(
+            rig.session
+                .reports()
+                .iter()
+                .any(|report| report.1 == -127 && report.2 == -127),
+            "校准开始时应把指针钉到左上角"
+        );
+
+        // 交还 PC 后计数窗口关闭，读数保留。
+        rig.router.toggle_manual();
+        let ended = rig.router.calibrate_state();
+        assert!(!ended.active, "交还后应停止累计");
+        assert_eq!(ended.counts_y, moved.counts_y, "读数要保留给前端");
     }
 
     /// 按键会刷新 PC 绝对光标（防止接管瞬间从旧位置 warp）。

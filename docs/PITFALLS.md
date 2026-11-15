@@ -772,3 +772,124 @@
   平板上的点击标尺页（`pl.html` 显示最后一次 click 的坐标），三者互证比盯着截图猜可靠得多。
 - 陷阱：`/dev/input/eventN` 每次会话都会变，先 `adb shell dumpsys input | grep -A2 PadLend` 取当前 Path，
   别复用上次的编号（曾把键盘 event12 当鼠标盯了一轮）。
+
+## 20. 2.0.0 补录：修饰键「按下了却抬不起来」
+
+| 项 | 内容 |
+| --- | --- |
+| 症状 | 用 Ctrl+Alt+S 接管后，键盘很多按键「失灵」或「对不上」：字母键变成菜单快捷键，方向键乱跳 |
+| 现场 | `GetAsyncKeyState(VK_LMENU)=0x8000`：左 Alt 处于**系统级按下未抬起**状态；粘滞键/筛选键都没开，键盘布局正常 |
+| 根因 | 低级键盘钩子按「**当时的状态**」决定是否吞键 |
+| 相关文件 | `padlend-core/src/logic/router.rs`（`prepare_key` / `Inner::passed_keys`） |
+
+### 20.1 为什么抬起会被吞
+
+组合键 `Ctrl+Alt+S` 的时序跨了状态边界：
+
+1. `Ctrl` 按下 —— 此时还是 IDLE，钩子放行，Windows 记录「Ctrl 已按下」；
+2. `Alt` 按下 —— 同上，放行；
+3. `S` 按下 —— 热键触发，状态切到 CAPTURED；
+4. `Ctrl` / `Alt` **抬起** —— CAPTURED 期间钩子一律吞键（`keyboard.suppress_pc = true`），抬起事件被吃掉了。
+
+于是 Windows 的世界里 Ctrl 和 Alt 永远按着。Alt 被系统当成菜单修饰键，之后敲字母都变成
+「Alt+字母」的菜单访问键 —— 用户看到的就是键盘大面积失灵。这类「不对称吞键」还会制造
+粘滞的 Shift（大写锁死）、粘滞的 Win（开始菜单反复弹出）等问题。
+
+### 20.2 修法：抬起必须跟随按下的决定
+
+- `Inner` 新增 `passed_keys: HashSet<i32>`：记下「**按下被放行给 Windows**」的 vk。
+- `prepare_key` 拆成外壳 + `prepare_key_inner`：外壳先处理抬起 —— 只要这个 vk 在
+  `passed_keys` 里，抬起就**无条件放行**并移除记录；按下则按判定结果写入/清除该集合。
+  `track_safety`（Ctrl/Alt 左右侧集合）留在外壳里，保证提前返回时不会漏掉状态维护。
+- Win 键同理：以前 `swallowed_win` 只记「被吞的按下」，若按下被放行、抬起时已在 CAPTURED，
+  抬起仍会被吞，开始菜单会卡在按下状态。
+- 单测 `key_release_follows_down_decision`：IDLE 放行 Ctrl 按下 → 接管 → 抬起必须放行；
+  而被吞下的键，抬起仍然吞（保持原行为）。
+
+### 20.3 教训
+
+- **吞键必须成对**：任何「按下/抬起」两个事件各自判定的拦截逻辑，都要么按 vk 记住决定，
+  要么在状态切换时把当前按下的键补发抬起。系统级的修饰键状态是全局的，弄脏了影响整台机器。
+- 用户描述「键盘对不上」时，先量 `GetAsyncKeyState` 的 0x8000 位，比反复猜布局快得多；
+  确认卡住后可以直接 `keybd_event` 补 keyup 救场。
+
+## 21. 2.0.0 补录：xscale 不是真实的 px/计数（指针校准）
+
+| 项 | 内容 |
+| --- | --- |
+| 症状 | 交还 PC 的位置与「感觉」对不上；换一台平板或改指针速度后估计器明显漂移 |
+| 根因 | 估计器用 `xscale`（屏幕密度比，本机 1.312）换算，而 Android 指针速度在更上层、读不到 |
+| 相关文件 | `padlend-core/src/logic/router.rs`（`model_scale` / `calibrate_*`）、`padlend-core/src/config.rs`（`motion.px_per_count`） |
+
+### 21.1 实测差多少
+
+同一台平板、同一个 `pointer_speed = 0`：光标截图 + 平板上的点击标尺页两路互证，
+真实位移约 **2.4–2.9 px/PC 像素**（≈2.9 px/计数），而 `xscale` 只有 1.312 px/计数。
+而且这个比例随**速度**变化（Android 指针加速）：同一段距离快推测得 3.54，慢推 2.25。
+所以航位推算做不到长期准确，只能「把误差闭环掉 + 用实测比例把模型拉近一点」。
+
+### 21.2 校准流程（设置 → 鼠标 → 指针校准）
+
+1. `pointer.calibrate_begin`：把平板指针**钉到左上角**（14 条 `(-127,-127)` 报文，PointerController
+   到边会夹住，多余计数不累积），估计器同步归零到 `(0,0)`，清零计数；
+2. 用户往下推，`handle_captured` 里把**真正发出的 HID 计数**累加到 `calib_dx/dy`（有符号，来回抵消）；
+3. 用户按热键交还，`begin_return` 关掉计数窗口；前端每 400ms 轮询 `pointer.calibrate_state`；
+4. `px/计数 = 平板高 ÷ 累计计数`，写进 `motion.px_per_count`；估计器**就地换比例**
+   （`update_config` 里只改 `scale`，不重置位置 —— 重置会制造新的分叉）。
+
+### 21.3 教训
+
+- **能被测量的常识值不要写死**：`xscale` 只是「屏幕密度比」，不是「指针位移比」；
+  凡是跨过一层别人的输入栈（Android PointerController）的换算，都要留一个实测入口。
+- 校准时「起点必须已知」：钉到角落比「大概在中间」可靠得多，因为到边可以夹住，
+  而中间位置无法验证。**闭环只需要一个可信的重同步点**。
+- 校准得到的比例要能**运行期生效**，否则用户还得为了一次标定重连一次，体验上就没人愿意校准了。
+
+## 22. 2.0.0 补录：接管之后全局快捷键全部失效（连「交还 / 急停」也是）
+
+### 22.1 现象
+
+2.0.0 装机走指针校准：点「开始校准」→ 指针被钉到左上角 → 推到平板最底部 → 按对话框第 3 步写的
+`Ctrl+Alt+S` 交还 —— **毫无反应**。再按 `Ctrl+Alt+Q`（急停）同样没反应，最后只能把指针往上推出
+上边界，让路由器自己交还。
+
+日志里 `hotkeys.registered ids=["0x1001"…"0x1009"]` 说明注册是成功的，但事后 **一条 `cap.end`
+都没有、`MANUAL`/`PANIC` 也没有**；用 `keybd_event` 注入真实的左 Ctrl + 左 Alt + S 同样无效。
+
+### 22.2 根因：低级钩子吞掉了修饰键，`WM_HOTKEY` 永远不会来
+
+- 接管时 `keyboard.suppress_pc=true`（默认），低级键盘钩子对**所有**转发键返回 1（吞掉），
+  Ctrl / Alt 这些修饰键也不例外（`prepare_key_inner` 里只有「保命字母」S/Q 被放行）。
+- `RegisterHotKey` 依赖系统自己的修饰键状态：Ctrl/Alt 的按下事件被钩子吞掉，Windows 认为它们
+  **从没按下过**，于是无论后面按什么字母都不会派发 `WM_HOTKEY`。
+- `is_safety_letter` 只放行了 **S / Q 两个字母**，修饰键仍在被吞 —— 「保命键」只保住了字母，
+  没保住组合键。
+- 结论：**接管期间所有全局快捷键都是死的**：交还、急停、平板后退/主页/最近任务/通知栏/电源/音量。
+  这个问题 1.x 就在（不是 2.0.0 引入），只是以前交还都靠「把指针推出边界」，没人依赖热键退出。
+
+### 22.3 修法：接管期间由钩子自己比对组合键，不再指望 Windows
+
+- `Router` 新增 `pub struct CaptureHotkey { ctrl, alt, shift, win, vk, action }` 与
+  `set_capture_hotkeys()`；`Engine::install_hotkeys` 把 `parse_combo` 解析出的
+  `(modifiers, vk)` 同步一份进去（保存配置后重建，旧配置不会残留）。
+- `Inner` 增加 `shift_sides`（Shift 左右侧，`track_safety` 一并维护）、
+  `capture_hotkey_vk`（记下被吞的主键）、`pending_hotkey`（待执行动作）。
+- `prepare_key_inner` 在 CAPTURED 分支里先做组合键匹配：命中就返回 `(true, None)` ——
+  **既不发给平板，也不指望 Windows 再派发一次**；动作写进 `pending_hotkey`，
+  由 `Router::on_key_action` 在锁外取走。
+- 抬起跟按下同一个决定：`capture_hotkey_vk` 记住命中的主键，抬起时照样吞掉，不会漏到平板。
+- 键盘钩子改用 `on_key_action`，命中后 `std::thread::spawn(move || engine.fire_hotkey(action))`
+  —— 钩子线程里绝不能跑动作（PITFALLS 2.5）。
+- 回归测试 `capture_hotkey_fires_while_captured`：CAPTURED 下 Ctrl+Alt+S 返回 `Some(Toggle)`、
+  不向平板转发、抬起不再触发；松开修饰键后 S 恢复成普通按键。
+
+### 22.4 教训
+
+- **低级钩子吞键会打断系统级热键**：任何「吞掉修饰键 + 依赖 `RegisterHotKey` / `WM_HOTKEY`」的
+  设计都是错的。要么放行修饰键，要么自己识别。
+- 自己识别时**必须同时处理抬起**，否则会复刻 2.0.0 上半场的卡键问题（PITFALLS 20）。
+- 界面文案里的操作路径要和实现一起验收：对话框写着「按 Ctrl+Alt+S 交还」，就必须真按一次。
+- 顺带修：`CalibrationState::px_per_count()` 只认**正计数**。实测把指针推到底边以后继续往上推，
+  计数会变成负数（本机 −84），旧公式会算出 `2136/84 = 25.43 px/计数` 这种离谱结果；
+  现在返回 0，界面提示「这次没测到有效位移，请重新校准」。
+
