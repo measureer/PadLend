@@ -10,7 +10,6 @@ import {
   comboError,
   comboFromEvent,
   comboKeys,
-  doubleTapModifier,
   MODIFIER_CODES,
   modifierNameFromCode,
 } from '../../lib/hotkeys';
@@ -114,9 +113,6 @@ export function HotkeyRecorder({ value, label, placeholder, onChange }: HotkeyRe
         <span className="hotkey-action">{recording ? '录制中' : '点击修改'}</span>
       </button>
       {(hint || error) && <div className={`hotkey-note ${hint ? '' : 'err'}`}>{hint || error}</div>}
-      {!hint && !error && doubleTapModifier(value) && (
-        <div className="hotkey-note">快速连按两次 {doubleTapModifier(value)} 触发</div>
-      )}
     </div>
   );
 }

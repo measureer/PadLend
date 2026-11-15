@@ -109,7 +109,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
     fields: [
       {
         id: 'toggle', section: 'hotkeys', key: 'toggle', label: '接管 / 交还', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+S', hint: '手动接管平板，或把控制权交还给 PC；设成 Ctrl+Ctrl 就是连按两下 Ctrl。',
+        placeholder: 'Ctrl+Alt+S', hint: '手动接管平板，或把控制权交还给 PC。',
       },
       {
         id: 'panic', section: 'hotkeys', key: 'panic', label: '急停', kind: 'hotkey',
