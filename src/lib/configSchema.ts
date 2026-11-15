@@ -93,11 +93,18 @@ export const SETTING_GROUPS: SettingGroup[] = [
         text: (v) => v.toFixed(2),
         parse: (text) => {
           const parsed = Number.parseFloat(text.replace(',', '.'));
-          return Number.isFinite(parsed) ? parsed : null;
+          if (!Number.isFinite(parsed)) return null;
+          // 2.0.2：合法域只有 0 或 1..10。之前这里原样返回，(0,1) 的值能进草稿
+          // 却过不了校验，保存时才弹「配置未保存：motion.px_per_count 必须是
+          // 0 或 1..10」—— 用户看不出到底哪儿不对。直接在入口夹住。
+          if (parsed <= 0) return 0;
+          if (parsed < 1) return 1;
+          if (parsed > 10) return 10;
+          return parsed;
         },
         unit: 'px/计数',
         applies: 'live',
-        hint: '每个 HID 计数在平板上走多少像素；0 表示按分辨率推理论值。自动校准会随手速浮动（推得越快测得越小），填比校准值低 10–20% 更稳：估计器宁可偏晚交还，也不会在屏幕中间掉回 PC；觉得回 PC 太迟钝就往大调。',
+        hint: '每个 HID 计数在平板上走多少像素，填 1–10；0 表示按分辨率推理论值（不写镜头距离）。自动校准会随手速浮动（推得越快测得越小）自动校准会随手速浮动（推得越快测得越小），填比校准值低 10–20% 更稳：估计器宁可偏晚交还，也不会在屏幕中间掉回 PC；觉得回 PC 太迟钝就往大调。',
       },
     ],
   },
@@ -266,7 +273,8 @@ export function validateConfig(config: Config): string[] {
   if (motion.arm_window_ms < 1) problems.push('motion.arm_window_ms 必须 ≥1');
   if (motion.exit_overflow_px < 1) problems.push('motion.exit_overflow_px 必须 ≥1');
   if (!(motion.px_per_count === 0 || (motion.px_per_count >= 1 && motion.px_per_count <= 10))) {
-    problems.push('motion.px_per_count 必须是 0 或 1..10');
+    // 2.0.2：带上当前值，否则用户只看到一句规则，不知道哪个数越界。
+    problems.push(`motion.px_per_count 必须是 0 或 1..10（当前 ${motion.px_per_count}）`);
   }
   if (motion.edge_band_px < 1) problems.push('motion.edge_band_px 必须 ≥1');
   if (motion.debounce_ms < 0) problems.push('motion.debounce_ms 不能为负');

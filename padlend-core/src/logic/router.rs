@@ -415,6 +415,12 @@ pub trait SessionPort: Send + Sync + fmt::Debug {
         false
     }
 
+    /// 通知会话「是否正在接管」（可选扩展）。
+    ///
+    /// 2.0.2：接管期间会话应暂停后台轮询 —— 朝向查询走 dumpsys，会在 system_server
+    /// 上排队输入派发，表现就是接管时指针一顿一顿。
+    fn set_capturing(&self, _capturing: bool) {}
+
     /// 把最新的应用配置推给会话（可选扩展）。
     ///
     /// Python 里会话持有的是同一个 Config 对象，配置一保存就可见；Rust 的会话用的是
@@ -2547,6 +2553,10 @@ impl Router {
             return false;
         }
         inner.state = destination;
+        if old != destination {
+            // 2.0.2：接管期间让会话停掉后台的 dumpsys 轮询（它会卡 system_server 的输入派发）。
+            self.session.set_capturing(destination == State::Captured);
+        }
         if destination != State::Captured {
             inner.arm_accum = 0.0;
         }
@@ -3079,8 +3089,16 @@ impl Router {
         // 以上，一口气写完会超过平板上 evdev 的 8 packet 环形缓冲，内核丢最旧的
         // 包，平板指针只走了一小段；估计器却按发出去的条数记账，模型于是比真实
         // 指针超前几百像素，回程在屏幕中上部就判定到顶并交还。
-        while !queue.is_empty() && out.len() < C::PACKETS_PER_FRAME {
+        //
+        // 2.0.2：普通移动再单独限流 —— 稳态 1 条/帧，队列里真有积压才给 2 条。
+        // 一帧把 4 条积压全发出去，等于把卡顿后的追赶压缩成一次连发，平板的
+        // 指针加速会把它当成更快的手势，落点一跳一跳。
+        let mut movement = 0usize;
+        while out.len() < C::PACKETS_PER_FRAME {
             let head_is_burst = queue.front().map(|message| message.burst).unwrap_or(false);
+            if !head_is_burst && movement >= C::MOVEMENT_PER_FRAME {
+                break;
+            }
             let message = match queue.pop_front() {
                 Some(message) => message,
                 None => break,
@@ -3096,6 +3114,7 @@ impl Router {
                 continue;
             }
             out.push(message);
+            movement += 1;
         }
         out
     }
@@ -5601,27 +5620,43 @@ mod tests {
     }
 
     /// 1.7.10：一帧最多 4 条（burst 同样受限），避免 evdev 环形缓冲溢出。
+    /// 2.0.2：普通移动再降到稳态 1 条/帧、有积压最多 2 条/帧。
     #[test]
-    fn drain_sends_at_most_four_packets_per_frame() {
+    fn drain_smooths_movement_packets() {
         let rig = make_rig(test_config());
         rig.capture_manually();
         rig.flush();
         for _ in 0..10 {
             rig.router.queue_mouse(1, 1, 0, 0);
         }
-        rig.frame();
-        assert_eq!(rig.reports().len(), C::PACKETS_PER_FRAME, "单帧最多 4 条");
-        rig.clear_reports();
-        rig.frame();
-        assert_eq!(rig.reports().len(), C::PACKETS_PER_FRAME, "第二批 4 条");
-        rig.clear_reports();
-        rig.frame();
-        assert_eq!(rig.reports().len(), 2, "剩余 2 条");
-        rig.clear_reports();
+        let mut total = 0usize;
+        for _ in 0..5 {
+            rig.frame();
+            let batch = rig.reports();
+            assert!(
+                batch.len() <= C::MOVEMENT_PER_FRAME,
+                "普通移动单帧最多 2 条，实得 {}",
+                batch.len()
+            );
+            total += batch.len();
+            rig.clear_reports();
+        }
+        assert_eq!(total, 10, "10 条积压按每帧 2 条分 5 帧发完");
         rig.frame();
         let tail = rig.reports();
         assert_eq!(tail.len(), 1, "队列空时发心跳");
         assert_eq!((tail[0].1, tail[0].2), (0, 0));
+    }
+
+    /// 2.0.2：burst（入口 warp+pin）不受移动限流影响，仍按 PACKETS_PER_FRAME 出帧。
+    #[test]
+    fn drain_keeps_burst_budget_per_frame() {
+        let rig = make_rig(test_config());
+        rig.capture_manually();
+        rig.flush();
+        rig.router.enqueue_burst(&[(9, 9); 10]);
+        rig.frame();
+        assert_eq!(rig.reports().len(), C::PACKETS_PER_FRAME, "burst 单帧仍是 4 条");
     }
 
     /// 队列饱和时丢弃心跳、保留真实报文。

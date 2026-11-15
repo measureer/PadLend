@@ -927,3 +927,55 @@
   选择器必须比 `.input` 更具体（`.slider-input .input.field-number`），否则看起来「加了样式」，渲染上没生效。
 - 设置页的字段行原本是「固定标签列 + 剩余宽度」，开关落在第二列开头就停在卡片中间 —— 卡片右半边全空。
   改成 `minmax(0,1fr) auto` 让标签吃掉剩余宽度、控件贴右，才符合「左右两列」的视觉预期。
+## 24. 2.0.2 补录：鼠标一顿一顿（每秒一次的 dumpsys input）
+
+### 24.1 现象
+
+用户：「鼠标在平板上会感觉一顿一顿的……有时候好好的在移动，突然平板上的鼠标卡一下，一下子又跳到了
+右边一点，移动不是很连续」。PC 侧操作是匀速的，平板上的指针却像丢了帧再追赶。
+
+### 24.2 怎么量出来的（可复用）
+
+- 平板侧直接读内核事件：先 `adb shell dumpsys input | Select-String "PadLend Mouse" -Context 0,2`
+  取 `/dev/input/eventN`（**每次重连编号都会变**，而且鼠标/键盘常是相邻号，很容易抓成键盘），
+  再 `adb shell "timeout 18 getevent -lt /dev/input/eventN"` 重定向到文件。
+- PC 侧用 `mouse_event(MOUSEEVENTF_MOVE, ±2, ±1)` 以**精确 10ms** 间距注入 400 次（spin-wait：
+  `while (Stopwatch.Elapsed.TotalMilliseconds -lt $next) {}`，不要用 Start-Sleep —— 分辨率只有 ~15ms），
+  同时把每次注入的实际毫秒写 CSV。先按 Ctrl+Alt+S 接管，结束后再按一次交还。
+- 分析：按 `SYN_REPORT` 把 getevent 归并成一个 report，只统计稳态段（|x|≤6 且 |y|≤6），输出到达间隔的
+  p50/p90/p99/max 与 >25ms、>50ms 的个数。**注入侧 p99 必须一起测**（本轮 10.7–10.9ms），否则说不清
+  抖动在 PC 侧还是链路。
+
+### 24.3 结论
+
+- 音频转发**不是**原因：关掉音频后同样出现 ~120ms 尖峰（第一轮 44ms 纯属运气）。
+- 平板收到的报文数量基本 1:1（387–399/400），但**到达时间**抖动大：p90 15–17ms、p99 27–31ms、
+  偶发 100–125ms 停顿，停顿后紧跟一串（catch-up burst）。这正是「卡一下再跳一步」的观感来源。
+- `set_nodelay(true)` 早就在（padlend-core/src/tablet/session.rs:438 一带），传输层不是瓶颈。
+- 真元凶：`orientation_loop` 每 1 秒调一次 `device.shell(&["dumpsys", "input"])` —— **完整**的 dumpsys input。
+  它在平板上要拿 InputReader 的锁，并把整份 dump（几十 KB）经 adb 传回。实测平板侧的 gap 大致每秒一次
+  （10ms 步长下 idx ≈ 99/198/259/298），量级 100ms，与 dumpsys 耗时吻合。注意常量 `ORIENTATION_SCRIPT`
+  （带 `grep -m1` 的版本）从 1.7 起就没人用了，真正跑的是完整 dump。
+
+### 24.4 修法
+
+- 朝向轮询：`ORIENTATION_POLL_S` 1.0 → **2.0**；改成
+  `dumpsys window displays | grep -m1 -o 'mDisplayRotation=ROTATION_[0-9]*'`（只读 WindowManager 状态，
+  输出几十字节），解析 `ROTATION_N` → N/90（与 dumpsys input 的 Viewport orientation 同编号）。
+  廉价查询连续失败 3 次才退回旧的 `dumpsys input`，老设备不会因此失去旋转检测。
+- **接管期间彻底不查**：`SessionPort::set_capturing(bool)`（默认空实现）由 `Router::change_state`
+  在状态迁移时调用，`TabletSession` 存成 `capturing: AtomicBool`，`orientation_loop` 见到就 `continue`。
+  交还后下一轮（≤2s）自然补查。理由：dumpsys 真正的代价是**占用 system_server 主线程**
+  （输入派发也在里面），换成 window 查询只是把 dump 从 69 KB 降到 26 KB —— 仍然每 2s 卡一次，
+  只有在「不需要的时候不查」才能把抖动从接管路径上完全移除。
+- 出帧限流：新增 `C::MOVEMENT_PER_FRAME = 2`。`drain()` 里 burst 仍受 `PACKETS_PER_FRAME`(4) 约束，
+  普通移动报文稳态 1 条/帧、队列有积压最多 2 条/帧 —— 追赶从「一次 4 条」降到「一次 2 条」，
+  指针加速不至于把追赶算成快甩。
+
+### 24.5 教训
+
+- **周期性 adb 命令要先想「它在设备上做了什么」**：`dumpsys input` 不只读一下状态，它会锁输入栈。
+  任何 1Hz 的后台查询都值得问一句：能不能换成只读几十字节的那个接口。
+- 测抖动必须**同时测注入侧**。少了这一步，就会把 PC 自己的 sleep 精度（~15ms）当成平板的卡顿。
+- `/dev/input/eventN` 每次重连都会变，且鼠标/键盘常是相邻编号 —— 每次都要重新查 Path，别抄上一轮的值。
+

@@ -99,7 +99,20 @@ describe('声明式设置 schema', () => {
     expect(readField(config, field)).toBe(2);
     expect(writeField(config, field, 2.4).motion.px_per_count).toBe(2.4);
     const tooSmall = { ...config, motion: { ...config.motion, px_per_count: 0.5 } };
-    expect(validateConfig(tooSmall)).toContain('motion.px_per_count 必须是 0 或 1..10');
+    expect(validateConfig(tooSmall).join('\n')).toContain('motion.px_per_count 必须是 0 或 1..10');
+  });
+
+  it('指针比例输入会把越界值夹到 0 或 1..10，并在报错里带上当前值', () => {
+    const config = defaultConfig();
+    const field = SETTING_GROUPS[0].fields.find((f) => f.id === 'px_per_count');
+    const parse = field?.parse as (text: string) => number | null;
+    expect(parse('2.5')).toBe(2.5);
+    expect(parse('0')).toBe(0);
+    expect(parse('0.5')).toBe(1);
+    expect(parse('12')).toBe(10);
+    expect(parse('abc')).toBeNull();
+    const invalid = { ...config, motion: { ...config.motion, px_per_count: 0.5 } };
+    expect(validateConfig(invalid).join('\n')).toContain('当前 0.5');
   });
 
   it('校验规则与 config.py 一致并回报具体字段', () => {

@@ -98,7 +98,11 @@ function Dialog({ current, onClose, onMeasured }: {
             disabled={measured <= 0}
             onClick={() => {
               // 百分比精度足够（模型只用它换算位移）。
-              onMeasured(Math.round(measured * 100) / 100);
+              // 2.0.2：校准值可能落在 (0,1)（推得猛时指针被屏幕边缘夹住、像素
+              // 不再增长，计数却继续累积），这种值过不了配置校验；夹到合法域
+              // 1..10 再交给设置页。
+              const value = Math.min(10, Math.max(1, Math.round(measured * 100) / 100));
+              onMeasured(value);
               onClose();
             }}
           >
