@@ -2,7 +2,7 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
-## [未发布] — 2026-11-16
+## [2.1.0] — 2026-11-16
 
 ### 修复
 
@@ -36,6 +36,9 @@
 - **无线设备身份**：mDNS 发现合并 adb 服务（端口）与直接查询（TXT 里的硬件序列号），
   换 IP 后仍能按序列号找回；`adb connect` 必须以 `connected to` 判定成功，
   `cannot resolve host` 不再被当成连接成功。
+- **向导第 0 步误判「未检测到设备」**：新版 platform-tools 的 `adb devices -l` 用空格
+  而不是制表符分隔，旧解析只认 `\tdevice`，实测设备已连接也报未检测到。改为按空白
+  切分、第二列等于 `device` 才计入，并补空格 / 制表符 / `unauthorized` 回归测试。
 - **诊断包**：概要行也脱敏（此前会带原始序列号）；`README.txt` 如实写明 zip 只含
   `diagnostics.txt` 与 `README.txt`、不含日志和配置。
 - **日志目录不再是空的**：`system.paths.logDir` 与前端「打开日志目录…」指向
@@ -60,13 +63,18 @@
 
 ### 验证
 
-- 引擎 `cargo test`：574 passed / 13 ignored / 0 failed（新增兜底、panic 护栏、朝向唤醒、
-  UTF-8、布局删除、Raw Input、键盘钩子生命周期等回归用例）。
+- 引擎 `cargo test`：575 passed / 13 ignored / 0 failed（新增兜底、panic 护栏、朝向唤醒、
+  UTF-8、布局删除、Raw Input、键盘钩子生命周期、adb devices 分隔符等回归用例）。
 - 外壳 `cargo test`：1 passed / 1 ignored / 0 failed；`cargo check` 干净。
 - 前端 `vitest run`：16 files / 90 tests passed；`tsc --noEmit` 干净；`vite build` 成功。
+- 真机（Huawei CGA-W00，无线调试 `192.168.68.129:40639`）：`devices.scan` 识别为
+  `hw:am4nbb5c23001691`；`devices.add` 自动 adb connect 并建链（3200×2136、landscape、
+  xscale 1.312）；`wizard.check` 第 0/1 步通过（uhid 可打开）；退出后无 adb forward、
+  无 scrcpy 进程残留；删除 `exit.clean` 后重启会记录「上次未正常退出」并重新写入标记。
 
-> 版本号仍为 2.0.6；下个版本发布前需同时 bump `package.json`、`src-tauri/tauri.conf.json`、
-> `src-tauri/Cargo.toml`、`padlend-core/Cargo.toml`（release.yml 会校验一致）。
+> 本版已把 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、
+> `src-tauri/Cargo.toml`、`padlend-core/Cargo.toml` 统一 bump 到 2.1.0；
+> `release.yml` 会校验四处一致，缺一处会直接失败。
 
 ## [2.0.6] — 2026-11-15
 

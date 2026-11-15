@@ -1,7 +1,7 @@
 //! 29 个 RPC 方法的实现（对应 Python service/api.py 的 handlers）。
 //!
-//! 返回值形状与 tests/fixtures/rpc_golden/simulate.ndjson 对齐；错误文案逐字
-//! 沿用 Python（gate 会比对 ok:false 的 error 文本）。
+//! 返回值形状由 serializers 与前端 DTO 约定；错误文案尽量沿用 Python 版本，
+//! 便于旧日志与用户截图对照。
 
 use std::path::Path;
 use std::sync::Arc;
@@ -692,16 +692,26 @@ fn diagnostics_export(engine: &Arc<Engine>, params: &Value) -> Result<Value, Str
 
 // -- 向导 / 日志 ---------------------------------------------------------
 
+/// 从 `adb devices -l` 输出里取在线设备序列号。
+///
+/// 不同 platform-tools 版本用制表符或空格分隔（实测 36.x 是空格），所以按
+/// 空白切分后看第二列是否为 `device`，不能只认 `\tdevice`。
+fn online_serials(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let serial = parts.next()?;
+            (parts.next() == Some("device")).then(|| serial.to_string())
+        })
+        .collect()
+}
+
 fn wizard_check(engine: &Arc<Engine>, params: &Value) -> Value {
     let step = int_param(params, "step");
     if step == 0 {
         let (code, stdout, stderr) = engine.run_adb(&["devices", "-l"]);
-        let serials: Vec<String> = stdout
-            .lines()
-            .filter(|line| line.contains("\tdevice"))
-            .map(|line| line.split_whitespace().next().unwrap_or_default().to_string())
-            .filter(|serial| !serial.is_empty())
-            .collect();
+        let serials = online_serials(&stdout);
         if stdout.contains("unauthorized") {
             return json!({
                 "ok": false,
@@ -891,6 +901,16 @@ mod tests {
             &json!({ "text": "padlend" }),
         ));
         assert!(injected["ok"].is_boolean());
+    }
+
+    #[test]
+    fn online_serials_accepts_spaces_and_tabs() {
+        let spaced = "List of devices attached\n192.168.68.129:40639   device product:CGA model:CGA_W00\n";
+        assert_eq!(online_serials(spaced), vec!["192.168.68.129:40639"]);
+        let tabbed = "List of devices attached\nSIMULATEDPAD\tdevice usb:1-1\n";
+        assert_eq!(online_serials(tabbed), vec!["SIMULATEDPAD"]);
+        let mixed = "List of devices attached\nOFFLINE\tunauthorized\n* daemon started\n";
+        assert!(online_serials(mixed).is_empty());
     }
 
     #[test]

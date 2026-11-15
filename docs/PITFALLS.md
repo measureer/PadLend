@@ -1344,3 +1344,11 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 - adb connect 只看 4 条英文失败串，cannot resolve host 会被判成功并登记链路；
   改为输出必须含 connected to，失败提示分「解析不到 / 路由不可达 / 端口拒绝」三类。
 - **教训**：解析外部文本永远按字符边界；判定成功要匹配成功标志，而不是列举已知失败。
+
+### 31.10 `adb devices -l` 的分隔符随 platform-tools 版本变化
+
+- **现象**：真机已连接，向导第 0 步仍报「未检测到设备」。旧解析用 `line.contains("\tdevice")`，
+  而实测 platform-tools 36.x 的 `adb devices -l` 用三个空格分隔 serial 与 state。
+- **修法**：按空白切分，取第二列判断是否等于 `device`；补空格 / 制表符 / `unauthorized`
+  三种固定输出测试。
+- **教训**：不要假设 adb 的列分隔符；测试 fixture 用手写 tab，会让错误实现永远绿灯。

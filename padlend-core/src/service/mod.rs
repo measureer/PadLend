@@ -1,11 +1,11 @@
-//! 业务服务层（对应 Python 的 service/）：把引擎组装起来并实现 25 个 RPC 方法。
+//! 业务服务层（对应 Python 的 service/）：把引擎组装起来并实现 29 个 RPC 方法。
 //!
 //! * engine：运行时组装（配置、注册表、Router、日志环、事实镜像）；
-//! * api：25 个方法的实现（devices/engine/layout/diagnostics/...）；
+//! * api：29 个方法的实现（devices/engine/layout/diagnostics/...）；
 //! * serializers：与 Python 逐字段一致的 DTO；
 //! * registry：设备记录 / 端点 / 去重 / 持久化；
 //! * diagnostics：诊断采集、脱敏与导出；
-//! * clockfmt：UTC 时间格式化（无 chrono 依赖）。
+//! * clockfmt：本地时间格式化（无 chrono 依赖）。
 
 use thiserror::Error;
 
