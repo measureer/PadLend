@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { comboError, comboFromEvent, comboKeys, keyNameFromCode } from '../lib/hotkeys';
+import {
+  comboError,
+  comboFromEvent,
+  comboKeys,
+  doubleTapModifier,
+  keyNameFromCode,
+  modifierNameFromCode,
+} from '../lib/hotkeys';
 
 /** 造一个最小键盘事件（只带录制控件真正读的四个修饰位）。 */
 function key(code: string, mods: Partial<{ ctrl: boolean; alt: boolean; shift: boolean; win: boolean }> = {}, value = '') {
@@ -43,6 +50,21 @@ describe('快捷键录制与校验（与引擎 parse_combo 对齐）', () => {
     expect(comboError('Ctrl+Alt')).toContain('缺少主键');
     expect(comboError('Ctrl+A+B')).toContain('只能有一个主键');
     expect(comboError('Ctrl+Alt+NumpadMultiply')).toContain('不支持的按键');
+  });
+
+  it('双击修饰键：Ctrl+Ctrl 合法，Ctrl+Alt 仍算缺主键', () => {
+    expect(doubleTapModifier('Ctrl+Ctrl')).toBe('Ctrl');
+    expect(doubleTapModifier(' alt + alt ')).toBe('Alt');
+    expect(doubleTapModifier('Ctrl+Alt')).toBeNull();
+    expect(doubleTapModifier('Ctrl+S')).toBeNull();
+    expect(comboError('Ctrl+Ctrl')).toBe('');
+    expect(comboError('Alt+Alt')).toBe('');
+    expect(comboError('Ctrl+Alt')).toContain('缺少主键');
+    expect(comboError('Ctrl+Shift')).toContain('缺少主键');
+    expect(modifierNameFromCode('ControlLeft')).toBe('Ctrl');
+    expect(modifierNameFromCode('AltRight')).toBe('Alt');
+    expect(modifierNameFromCode('MetaLeft')).toBe('Win');
+    expect(modifierNameFromCode('KeyA')).toBeNull();
   });
 
   it('键帽拆分用于渲染，不丢 + 这种主键', () => {

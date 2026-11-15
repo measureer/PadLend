@@ -14,7 +14,17 @@
 /** 修饰键的显示名（顺序即录制顺序）。 */
 export const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Win'] as const;
 
-/** 只按下修饰键时的 code（此时继续等待主键，不要中断录制）。 */
+/** 修饰键 code → 显示名（用于识别「连按两下同一个修饰键」）。 */
+export function modifierNameFromCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code.startsWith('Control')) return 'Ctrl';
+  if (code.startsWith('Alt')) return 'Alt';
+  if (code.startsWith('Shift')) return 'Shift';
+  if (code.startsWith('Meta') || code.startsWith('OS')) return 'Win';
+  return null;
+}
+
+/** 只按下修饰键时的 code（此时继续等待主键或第二次同一个键，不要中断录制）。 */
 export const MODIFIER_CODES = [
   'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight',
   'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight',
@@ -134,10 +144,24 @@ function keyKnown(name: string): boolean {
   return NAMED_KEYS.has(lower);
 }
 
+/** 组合键文本是不是「双击修饰键」写法（Ctrl+Ctrl）；是的话返回修饰键名。 */
+export function doubleTapModifier(text: string): string | null {
+  const tokens = String(text ?? '')
+    .split('+')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.length !== 2) return null;
+  const first = modifierOf(tokens[0]);
+  const second = modifierOf(tokens[1]);
+  return first && second && first === second ? first : null;
+}
+
 /** 校验组合键文本：'' 表示合法，否则是给用户看的错误文案。 */
 export function comboError(text: string): string {
   const raw = String(text ?? '').trim();
   if (!raw) return '组合键不能为空';
+  // 「Ctrl+Ctrl」这种双击写法：引擎用键盘钩子按时间窗识别，不走 RegisterHotKey。
+  if (doubleTapModifier(raw)) return '';
   const modifiers: string[] = [];
   let main = '';
   for (const part of raw.split('+')) {
@@ -155,7 +179,7 @@ export function comboError(text: string): string {
     if (main) return `组合键里只能有一个主键：${raw}`;
     main = token;
   }
-  if (!main) return '缺少主键（比如 S 或 F5）';
+  if (!main) return '缺少主键（比如 S 或 F5）；想设成双击就快速按两次同一个修饰键（Ctrl+Ctrl）';
   if (!modifiers.some((name) => name === 'Ctrl' || name === 'Alt' || name === 'Win')) {
     return '至少要有 Ctrl / Alt / Win 之一';
   }

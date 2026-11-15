@@ -104,12 +104,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
     id: 'hotkeys',
     title: '快捷键',
     icon: 'bolt',
-    description: '系统级全局热键，窗口不在前台也有效',
+    description: '系统级全局热键，窗口不在前台也有效；也可以快速连按两次同一个修饰键（如 Ctrl+Ctrl）',
     column: 'main',
     fields: [
       {
         id: 'toggle', section: 'hotkeys', key: 'toggle', label: '接管 / 交还', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+S', hint: '手动接管平板，或把控制权交还给 PC。',
+        placeholder: 'Ctrl+Alt+S', hint: '手动接管平板，或把控制权交还给 PC；设成 Ctrl+Ctrl 就是连按两下 Ctrl。',
       },
       {
         id: 'panic', section: 'hotkeys', key: 'panic', label: '急停', kind: 'hotkey',

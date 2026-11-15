@@ -47,12 +47,6 @@ export function AboutPage() {
           <h1 className="page-title">关于</h1>
           <p className="page-subtitle">版本、更新与仓库地址；检查更新只读取 GitHub 的最新发布，不会自动下载或安装。</p>
         </div>
-        <div className="page-actions">
-          <Button icon="link" onClick={() => void openUrl(RELEASES_PAGE)}>Release 页面…</Button>
-          <Button variant="primary" icon="refresh" loading={checking} onClick={() => void checkUpdates()}>
-            检查更新
-          </Button>
-        </div>
       </div>
 
       <div className="about-grid">
@@ -97,10 +91,14 @@ export function AboutPage() {
               )
             )}
             {!checking && !result && !error && (
-              <div className="muted">尚未检查；点右上角「检查更新」或下面的按钮。</div>
+              <div className="muted">尚未检查；点下面的「检查更新」即可。</div>
             )}
           </div>
           <div className="about-actions">
+            <Button variant="primary" icon="refresh" loading={checking} onClick={() => void checkUpdates()}>
+              检查更新
+            </Button>
+            <Button icon="link" onClick={() => void openUrl(RELEASES_PAGE)}>Release 页面…</Button>
             {result?.newer && (
               <Button variant="primary" icon="download" disabled={!downloadUrl} onClick={() => void openUrl(downloadUrl)}>
                 下载新版本…
@@ -121,9 +119,6 @@ export function AboutPage() {
           <div className="about-actions">
             <Button icon="link" onClick={() => void openUrl(REPO_URL)}>在浏览器打开</Button>
             <Button icon="copy" onClick={() => void copyRepo()}>复制地址</Button>
-          </div>
-          <div className="about-list">
-            <div>发布节奏：版本攒到一定程度才会发一个 GitHub Release；页面上的「最新版本」可能比你本地旧的已发布说明，属正常。</div>
           </div>
         </Card>
 

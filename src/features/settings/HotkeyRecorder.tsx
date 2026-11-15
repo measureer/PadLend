@@ -5,8 +5,18 @@
  * 保存后引擎会重装绑定，立即生效。
  */
 
-import { useEffect, useState } from 'react';
-import { comboError, comboFromEvent, comboKeys, MODIFIER_CODES } from '../../lib/hotkeys';
+import { useEffect, useRef, useState } from 'react';
+import {
+  comboError,
+  comboFromEvent,
+  comboKeys,
+  doubleTapModifier,
+  MODIFIER_CODES,
+  modifierNameFromCode,
+} from '../../lib/hotkeys';
+
+/** 连按两下同一个修饰键的判定时间窗，与引擎 DOUBLE_TAP_WINDOW 一致。 */
+const DOUBLE_TAP_MS = 400;
 
 interface HotkeyRecorderProps {
   value: string;
@@ -19,6 +29,8 @@ export function HotkeyRecorder({ value, label, placeholder, onChange }: HotkeyRe
   const [recording, setRecording] = useState(false);
   const [hint, setHint] = useState('');
   const error = recording ? '' : comboError(value);
+  // 上一次按下的修饰键：第二次在 400ms 内按同一个键就写成「Ctrl+Ctrl」。
+  const lastModifier = useRef<{ name: string; at: number } | null>(null);
 
   useEffect(() => {
     if (!recording) return undefined;
@@ -32,9 +44,25 @@ export function HotkeyRecorder({ value, label, placeholder, onChange }: HotkeyRe
         return;
       }
       if (event.code && MODIFIER_CODES.includes(event.code)) {
-        setHint('再按一个主键，比如 S 或 PageUp');
+        const name = modifierNameFromCode(event.code);
+        const now = Date.now();
+        const previous = lastModifier.current;
+        if (name && previous && previous.name === name && now - previous.at <= DOUBLE_TAP_MS) {
+          onChange(`${name}+${name}`);
+          lastModifier.current = null;
+          setHint('');
+          setRecording(false);
+          return;
+        }
+        lastModifier.current = name ? { name, at: now } : null;
+        setHint(
+          name
+            ? `再按一次就设为双击 ${name}，或者继续按一个主键（比如 S）`
+            : '再按一个主键，比如 S 或 PageUp',
+        );
         return;
       }
+      lastModifier.current = null;
       const next = comboFromEvent(event);
       if (!next) {
         setHint('这个键不能用作快捷键（试试字母、数字、F1-F12 或方向键）');
@@ -63,11 +91,13 @@ export function HotkeyRecorder({ value, label, placeholder, onChange }: HotkeyRe
         aria-label={`${label}：${value || '未设置'}，点击录入新的组合键`}
         onClick={() => {
           setHint('');
+          lastModifier.current = null;
           setRecording((current) => !current);
         }}
         onBlur={() => {
           setRecording(false);
           setHint('');
+          lastModifier.current = null;
         }}
       >
         {recording ? (
@@ -84,6 +114,9 @@ export function HotkeyRecorder({ value, label, placeholder, onChange }: HotkeyRe
         <span className="hotkey-action">{recording ? '录制中' : '点击修改'}</span>
       </button>
       {(hint || error) && <div className={`hotkey-note ${hint ? '' : 'err'}`}>{hint || error}</div>}
+      {!hint && !error && doubleTapModifier(value) && (
+        <div className="hotkey-note">快速连按两次 {doubleTapModifier(value)} 触发</div>
+      )}
     </div>
   );
 }

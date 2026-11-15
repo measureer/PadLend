@@ -30,6 +30,7 @@ use crate::tablet::simulated::{SimulatedAdb, SimulatedSession};
 use crate::win::desktop::DesktopMap;
 use crate::tablet::protocol::AndroidAction;
 use crate::win::hotkeys::{parse_combo, HotkeyAction, HotkeyBinding, HotkeyHandler, HotkeyManager};
+use crate::win::double_tap::{parse_double_tap, DoubleTapMatcher, ModifierFamily};
 use crate::win::keyboard_hook::KeyboardHook;
 use crate::win::mask::MaskConfig;
 
@@ -137,6 +138,11 @@ pub struct Engine {
     keyboard: Mutex<Option<KeyboardHook>>,
     /// 全局热键（Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停）。
     hotkeys: Mutex<Option<HotkeyManager>>,
+    /// 「双击修饰键」的绑定（例如 Ctrl+Ctrl=接管 / 交还）。
+    ///
+    /// `RegisterHotKey` 注册不了裸修饰键，这部分只能在键盘钩子回调里识别；
+    /// 钩子闭包与 `install_hotkeys` 共享同一份绑定表，保存配置后原地替换。
+    double_taps: Arc<Mutex<Vec<(ModifierFamily, HotkeyAction)>>>,
     session: OnceLock<Arc<dyn SessionPort>>,
     router: OnceLock<Arc<Router>>,
     logs: Mutex<VecDeque<LogEntry>>,
@@ -266,6 +272,7 @@ impl Engine {
             system_adb,
             keyboard: Mutex::new(None),
             hotkeys: Mutex::new(None),
+            double_taps: Arc::new(Mutex::new(Vec::new())),
             session: OnceLock::new(),
             router: OnceLock::new(),
             logs: Mutex::new(VecDeque::new()),
@@ -457,7 +464,37 @@ impl Engine {
         let Some(router) = self.router().cloned() else {
             return;
         };
+        // 双击修饰键（如 Ctrl+Ctrl）只能挂在钩子上识别：RegisterHotKey 不收裸修饰键。
+        // 回调里只做「短锁读状态 + spawn」，不动 socket、不写日志（PITFALLS 2.5）。
+        let weak_engine = Arc::downgrade(self);
+        let double_taps = Arc::clone(&self.double_taps);
+        let matcher = Mutex::new(DoubleTapMatcher::new());
         let mut hook = KeyboardHook::new(move |event: &crate::tablet::keymap::KeyEvent| {
+            if event.down {
+                let fired = matcher
+                    .try_lock()
+                    .ok()
+                    .and_then(|mut state| {
+                        state.feed(event.vk as u32, event.down, Instant::now())
+                    });
+                if let Some(family) = fired {
+                    let action = double_taps
+                        .try_lock()
+                        .ok()
+                        .and_then(|bound| {
+                            bound
+                                .iter()
+                                .find(|(candidate, _)| *candidate == family)
+                                .map(|(_, action)| *action)
+                        });
+                    if let Some(action) = action {
+                        if let Some(engine) = weak_engine.upgrade() {
+                            // 真正动作（可能走 RPC / 发键）不能跑在钩子线程上。
+                            std::thread::spawn(move || engine.fire_hotkey(action));
+                        }
+                    }
+                }
+            }
             let logical = crate::logic::events::KeyEvent {
                 vk: event.vk,
                 scan: event.scan,
@@ -488,14 +525,22 @@ impl Engine {
     fn install_hotkeys(self: &Arc<Self>) {
         // 先卸掉上一套：设置页改了快捷键要立刻生效，不能留着旧组合键占着系统。
         *lock(&self.hotkeys) = None;
+        *lock(&self.double_taps) = Vec::new();
         if self.simulate || self.no_hooks {
             return;
         }
         let cfg = self.config_clone();
         let mut bindings = Vec::new();
         let mut handlers: Vec<(i32, HotkeyHandler)> = Vec::new();
+        let mut double_taps: Vec<(ModifierFamily, HotkeyAction)> = Vec::new();
         for action in HotkeyAction::ALL {
             let combo = action.combo(&cfg.hotkeys).to_string();
+            // 「Ctrl+Ctrl」这种双击写法：RegisterHotKey 注册不了裸修饰键（按下 Ctrl 时系统在等
+            // 后续主键，不会发 WM_HOTKEY），只能交给键盘钩子按时间窗识别。
+            if let Some(family) = parse_double_tap(&combo) {
+                double_taps.push((family, action));
+                continue;
+            }
             match parse_combo(&combo) {
                 Ok((modifiers, vk)) => {
                     bindings.push(HotkeyBinding {
@@ -525,8 +570,22 @@ impl Engine {
                 }
             }
         }
-        if bindings.is_empty() {
+        *lock(&self.double_taps) = double_taps.clone();
+        let double_summary = double_taps
+            .iter()
+            .map(|(family, action)| format!("双击{}=>{}", family.label(), action.label()))
+            .collect::<Vec<_>>()
+            .join("，");
+        if bindings.is_empty() && double_taps.is_empty() {
             self.emit_log("HOTKEY", "没有可用的全局快捷键（配置全部无效）");
+            return;
+        }
+        if bindings.is_empty() {
+            // 全部配成双击：没有 RegisterHotKey 要注册，但双击仍然可用。
+            self.emit_log("HOTKEY", format!("双击快捷键已启用：{double_summary}"));
+            if lock(&self.keyboard).is_none() {
+                self.emit_log("HOTKEY", "双击快捷键需要键盘钩子，当前钩子不可用");
+            }
             return;
         }
         let mut hotkeys = HotkeyManager::new(bindings, handlers);
@@ -540,12 +599,20 @@ impl Engine {
                     .map(|action| format!("{}=>{}", action.label(), action.combo(&cfg.hotkeys)))
                     .collect::<Vec<_>>()
                     .join("，");
+                let summary = if double_summary.is_empty() {
+                    summary
+                } else if summary.is_empty() {
+                    double_summary.clone()
+                } else {
+                    format!("{summary}，{double_summary}")
+                };
                 self.emit_log("HOTKEY", format!("全局快捷键已注册：{summary}"));
                 // 被别的程序占用的组合键不会出现在 summary 里：单独报一条，
                 // 否则用户只会在设置页看到「能改但不生效」的快捷键（PITFALLS 17.1）。
                 let missing: Vec<String> = HotkeyAction::ALL
                     .iter()
                     .filter(|action| !ids.contains(&action.id()))
+                    .filter(|action| !double_taps.iter().any(|(_, bound)| bound == *action))
                     .map(|action| format!("{}（{}）", action.label(), action.combo(&cfg.hotkeys)))
                     .collect();
                 if !missing.is_empty() {
@@ -557,6 +624,9 @@ impl Engine {
                             missing.join("、")
                         ),
                     );
+                }
+                if !double_taps.is_empty() && lock(&self.keyboard).is_none() {
+                    self.emit_log("HOTKEY", "双击快捷键需要键盘钩子，当前钩子不可用");
                 }
                 *lock(&self.hotkeys) = Some(hotkeys);
             }

@@ -23,7 +23,17 @@ describe('快捷键录制控件', () => {
     fireEvent.click(screen.getByRole('button', { name: /急停/ }));
     fireEvent.keyDown(window, { code: 'ControlLeft', key: 'Control', ctrlKey: true });
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/再按一个主键/)).toBeTruthy();
+    expect(screen.getByText(/再按一次就设为双击 Ctrl/)).toBeTruthy();
+  });
+
+  it('连按两下同一个修饰键写成 Ctrl+Ctrl', () => {
+    const onChange = vi.fn();
+    render(<HotkeyRecorder value="Ctrl+Alt+S" label="接管 / 交还" onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /接管 \/ 交还/ }));
+    fireEvent.keyDown(window, { code: 'ControlLeft', key: 'Control', ctrlKey: true });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { code: 'ControlLeft', key: 'Control', ctrlKey: true });
+    expect(onChange).toHaveBeenCalledWith('Ctrl+Ctrl');
   });
 
   it('Esc 取消录制，不改动原值', () => {

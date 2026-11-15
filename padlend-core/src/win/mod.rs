@@ -3,6 +3,7 @@
 pub mod cursor_watch;
 pub mod desktop;
 pub mod dpi;
+pub mod double_tap;
 pub mod hotkeys;
 pub mod keyboard_hook;
 pub mod mask;
