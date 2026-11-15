@@ -27,8 +27,23 @@ function isIPv6(host: string): boolean {
   return groups.length <= 8 && groups.every((group) => /^[0-9a-fA-F]{1,4}$/.test(group));
 }
 
+/** RFC 1123 单段标签：1–63 字符，字母/数字/连字符，不以连字符开头或结尾。 */
+const HOSTNAME_LABEL = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
+/** 形如 a.b.c.d 的纯数字串：必须按 IPv4 严格校验，不能当普通主机名放过（999.999.999.999 不是地址）。 */
+const IPV4_SHAPE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+function isIPv4(host: string): boolean {
+  return host.split('.').every((part) => Number(part) <= 255);
+}
+
+function isHostname(host: string): boolean {
+  const name = host.endsWith('.') ? host.slice(0, -1) : host; // 允许 FQDN 末尾的根点
+  if (!name || name.length > 253) return false;
+  return name.split('.').every((label) => HOSTNAME_LABEL.test(label));
+}
+
 function isHostnameOrIPv4(host: string): boolean {
-  return /^(\d{1,3}(?:\.\d{1,3}){3}|[a-zA-Z0-9.-]+)$/.test(host);
+  return IPV4_SHAPE.test(host) ? isIPv4(host) : isHostname(host);
 }
 
 /** 返回空串表示通过；否则是给用户看的错误文案。 */
@@ -53,7 +68,9 @@ export function validateDeviceAddress(address: string, code = ""): string {
     }
     host = match[1];
     portText = match[2];
-    if (!isHostnameOrIPv4(host)) return "主机名只能包含字母、数字、点和连字符";
+    if (!isHostnameOrIPv4(host)) {
+      return "IP 地址或主机名格式不正确：IPv4 每段 0–255，主机名每段 1–63 且不能以连字符开头或结尾";
+    }
   }
 
   if (!/^\d{1,5}$/.test(portText)) return "端口必须是 1–65535 之间的数字";

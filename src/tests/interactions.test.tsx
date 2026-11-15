@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
+import { backend } from '../api/client';
 import { useAppStore } from '../store/appStore';
 
 class ResizeObserverStub {
@@ -87,5 +88,43 @@ describe('核心功能与交互（mock 后端）', () => {
     fireEvent.click(screen.getByText('保存布局', { selector: 'button' }));
     await waitFor(() => expect(screen.getAllByText(/布局已保存/).length).toBeGreaterThan(0));
     expect(useAppStore.getState().layoutDirty).toBe(false);
+  });
+
+  it('布局页「移除」走 layout.save 的 remove 契约并回退全局摆位', async () => {
+    await openDevices();
+    await waitFor(() => expect(useAppStore.getState().selectedSerial).not.toBe(''));
+    fireEvent.click(screen.getByText('连接此设备'));
+    await waitFor(() => expect(useAppStore.getState().facts).not.toBeNull(), { timeout: 4000 });
+    const facts = useAppStore.getState().facts;
+    const identity = facts?.hardwareSerial || facts?.serial || '';
+    expect(identity).not.toBe('');
+
+    nav('布局');
+    await waitFor(() => expect(screen.getByText('保存布局', { selector: 'button' })).toBeTruthy());
+    fireEvent.click(screen.getByText('保存布局', { selector: 'button' }));
+    await waitFor(() => expect(screen.getAllByText(/布局已保存/).length).toBeGreaterThan(0));
+
+    const canvas = document.querySelector('.canvas-svg');
+    expect(canvas).toBeTruthy();
+    fireEvent.contextMenu(canvas!);
+    await waitFor(() => expect(screen.getByText('移除', { selector: 'button' })).toBeTruthy());
+
+    const spy = vi.spyOn(backend, 'call');
+    try {
+      fireEvent.click(screen.getByText('移除', { selector: 'button' }));
+      await waitFor(() =>
+        expect(spy).toHaveBeenCalledWith('layout.save', {
+          identity,
+          orientation: facts?.orientation ?? '',
+          remove: true,
+        }),
+      );
+      // 存档刚保存过，删除必须真的命中并回退全局摆位（而不是只清预览）
+      await waitFor(() => expect(screen.getAllByText(/已移除该方向布局/).length).toBeGreaterThan(0));
+      expect(useAppStore.getState().layoutDirty).toBe(false);
+      expect(useAppStore.getState().placement).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

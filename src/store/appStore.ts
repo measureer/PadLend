@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { defaultConfig } from '../api/mock';
+import { APP_VERSION } from '../lib/version';
 import type { UpdateResult } from '../lib/updates';
 import type {
   Bootstrap,
@@ -81,6 +82,8 @@ interface AppStore {
   setDesktop(desktop: Desktop): void;
   setPlacement(placement: Placement | null, dirty?: boolean): void;
   setLayoutDirty(dirty: boolean): void;
+  /** 引擎确认删除当前设备/方向的布局档后：换成回退摆位并清掉未保存标记。 */
+  removeLayout(placement: Placement | null): void;
   setDevices(devices: DeviceItem[], error?: string): void;
   setSelectedSerial(serial: string): void;
   setDeviceError(text: string): void;
@@ -99,11 +102,17 @@ interface AppStore {
 }
 
 let toastId = 0;
+let logSeq = 0;
 export const MAX_LOGS = 2000;
+
+/** 给每条日志装一个前端本地序号：虚拟列表用它当 key，滚动时行不会被反复重挂载。 */
+function stampLogs(entries: LogEntry[]): LogEntry[] {
+  return entries.map((entry) => ({ ...entry, seq: ++logSeq }));
+}
 
 export const useAppStore = create<AppStore>()((set) => ({
   hydrated: false,
-  version: '1.6.0',
+  version: APP_VERSION,
   config: defaultConfig(),
   configIssues: [],
   configPath: '',
@@ -131,7 +140,7 @@ export const useAppStore = create<AppStore>()((set) => ({
   configBanner: null,
   diagnostics: { text: '', status: '尚未采集', progress: '', collecting: false },
   update: { checking: false, result: null, error: '', checkedAt: '' },
-  paths: { configPath: '', logDir: '', noticesPath: '', version: '1.6.0', license: 'Apache-2.0', appName: 'PadLend' },
+  paths: { configPath: '', logDir: '', noticesPath: '', version: APP_VERSION, license: 'Apache-2.0', appName: 'PadLend' },
 
   hydrate: (data) =>
     set({
@@ -151,7 +160,7 @@ export const useAppStore = create<AppStore>()((set) => ({
       placement: data.placement,
       layoutDirty: false,
       devices: data.devices,
-      logs: data.logs,
+      logs: stampLogs(data.logs),
     }),
   setPage: (page) => set({ page, menuOpen: false }),
   setTheme: (theme) => set({ theme }),
@@ -162,7 +171,8 @@ export const useAppStore = create<AppStore>()((set) => ({
   setDesktop: (desktop) => set({ desktop }),
   setPlacement: (placement, dirty = true) => set({ placement, layoutDirty: placement ? dirty : false }),
   setLayoutDirty: (layoutDirty) => set({ layoutDirty }),
-  setDevices: (devices, error = '') =>
+  removeLayout: (placement) => set({ placement, layoutDirty: false }),
+  setDevices: (devices, error) =>
     set((s) => {
       const previous = s.devices.find((d) => d.serial === s.selectedSerial);
       const kept =
@@ -170,7 +180,9 @@ export const useAppStore = create<AppStore>()((set) => ({
         (previous ? devices.find((d) => d.id === previous.id) : undefined);
       return {
         devices,
-        deviceError: error || s.deviceError,
+        // 不传 error 表示这次更新没带扫描结果，保留上一次的错误；
+        // 显式传 ''（扫描成功）必须能把旧错误清掉，否则错误条会一直挂着。
+        deviceError: error === undefined ? s.deviceError : error,
         selectedSerial: kept?.serial ?? devices.find((d) => d.online)?.serial ?? devices[0]?.serial ?? '',
       };
     }),
@@ -181,7 +193,7 @@ export const useAppStore = create<AppStore>()((set) => ({
   appendLogs: (entries) =>
     set((s) => {
       if (!entries.length) return s;
-      const next = [...s.logs, ...entries];
+      const next = [...s.logs, ...stampLogs(entries)];
       if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
       return { logs: next };
     }),

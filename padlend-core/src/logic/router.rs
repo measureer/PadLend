@@ -56,8 +56,8 @@ use crate::constants as C;
 use crate::win::hotkeys::HotkeyAction;
 use crate::logic::events::{KeyEvent, RawDelta};
 use crate::logic::geometry::{
-    segment_contacts_tablet, tablet_entry_point, tablet_exit_point, tablet_rect, Align, Edge,
-    EdgeSegment, MonitorInfo, Placement, Rect, TabletRect,
+    exit_offset_px, segment_contacts_tablet, tablet_entry_point, tablet_exit_point, tablet_rect,
+    Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect, TabletRect,
 };
 use crate::logic::metrics::{Metrics, NullProcessUsage, Snapshot};
 use crate::logic::state::{can_transition, State};
@@ -622,6 +622,47 @@ macro_rules! rdebug {
             eprintln!("[router] {}", format_args!($($arg)*));
         }
     };
+}
+
+/// 后台线程捕获到 panic 后的退避时长（避免 panic 忙循环把 CPU 吃满）。
+const THREAD_PANIC_BACKOFF: Duration = Duration::from_millis(150);
+
+/// 同一后台线程记录 panic 日志的最小间隔（1kHz 线程反复 panic 时不得刷屏）。
+const THREAD_PANIC_LOG_INTERVAL: Duration = Duration::from_millis(1000);
+
+/// 后台线程单轮体的 panic 护栅（P0-4）。
+///
+/// 返回 `true` 表示本轮正常结束；`false` 表示捕获了 panic（已按
+/// [`THREAD_PANIC_LOG_INTERVAL`] 限频记日志），调用方应退避后再继续下一轮。
+/// 线程的退出条件仍由 `stop_flag` 决定，panic 绝不改变它。
+fn guard_thread_step(label: &str, last_log: &mut Option<Instant>, body: impl FnOnce()) -> bool {
+    match std::panic::catch_unwind(AssertUnwindSafe(body)) {
+        Ok(()) => true,
+        Err(payload) => {
+            let now = Instant::now();
+            let report = last_log
+                .map_or(true, |last| now.duration_since(last) >= THREAD_PANIC_LOG_INTERVAL);
+            if report {
+                *last_log = Some(now);
+                eprintln!(
+                    "[router] {label}.panic detail={} continue=1",
+                    panic_detail(payload.as_ref())
+                );
+            }
+            false
+        }
+    }
+}
+
+/// 从 panic payload 提取可读文本（非字符串 payload 给占位符）。
+fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&'static str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "<non-string panic>".to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1652,18 +1693,23 @@ impl Router {
     /// sender 线程主体：1000Hz 出帧（对应 Python _sender_loop）。
     ///
     /// 节奏用真实 Instant（Python 这里也用 perf_counter 而不是注入时钟）。
+    /// P0-4：每轮体都过 guard_thread_step，任何 panic 只丢一帧，线程不会静默停摆。
     fn sender_loop(self: Arc<Self>) {
-        let hz = self.report_hz();
-        rdebug!("sender.start hz={hz}");
-        let period = 1.0 / f64::from(hz);
-        let period_duration = Duration::from_secs_f64(period);
+        rdebug!("sender.start hz={}", self.report_hz());
         let timer_active = timer_period_begin(C::TIMER_PERIOD_MS);
         let mut next_at = Instant::now();
+        let mut panicked_at: Option<Instant> = None;
         while !self.stop_flag.is_set() {
-            self.sender_frame();
-            next_at += period_duration;
+            // P1-14：每轮重读 report_hz，config.save 后无需重启线程即可生效。
+            let period = self.sender_period();
+            if !guard_thread_step("sender", &mut panicked_at, || self.sender_frame()) {
+                self.stop_flag.wait_timeout(THREAD_PANIC_BACKOFF);
+                next_at = Instant::now();
+                continue;
+            }
+            next_at += period;
             let now = Instant::now();
-            if next_at + period_duration < now {
+            if next_at + period < now {
                 next_at = now;
             } else if next_at > now {
                 self.stop_flag.wait_timeout(next_at - now);
@@ -1676,9 +1722,15 @@ impl Router {
     }
 
     /// supervisor 线程主体：每 2s 一次看护（对应 Python _supervisor_loop）。
+    ///
+    /// P0-4：tick 内部任何 panic（含锁中毒恢复路径）都只丢一次看护，线程继续跑。
     fn supervisor_loop(self: Arc<Self>) {
+        let mut panicked_at: Option<Instant> = None;
         while !self.stop_flag.is_set() {
-            self.tick_supervisor();
+            if !guard_thread_step("supervisor", &mut panicked_at, || self.tick_supervisor()) {
+                self.stop_flag.wait_timeout(THREAD_PANIC_BACKOFF);
+                continue;
+            }
             self.stop_flag
                 .wait_timeout(Duration::from_secs_f64(C::HEALTHCHECK_INTERVAL_S));
         }
@@ -2300,15 +2352,8 @@ impl Router {
             }
         };
         let now = self.clock.now();
-        if now > inner.arm_deadline {
-            let arm_px = self.cfg().motion.arm_px;
-            let slow_px = (C::ARM_SLOW_PX as i64).min((arm_px / 2).max(1));
-            if inner.arm_accum >= slow_px as f64 {
-                inner.arm_accum = 0.0;
-                return self.enter_captured(inner, events, "arm_slow");
-            }
-            self.arm_fail(inner, events, "timeout");
-            return Ok(());
+        if let Some(outcome) = self.check_arm_timeout(inner, events, now) {
+            return outcome;
         }
         let (x, y) = inner.pc_cursor.unwrap_or_else(|| self.default_cursor());
         let segments = self.segments_at(x, y);
@@ -2355,6 +2400,33 @@ impl Router {
         left.monitor_handle != right.monitor_handle
             || left.span_start != right.span_start
             || left.span_end != right.span_end
+    }
+
+    /// ARMING 观察窗超时判定（update_arm 与 supervisor tick 共用，P1-11）。
+    ///
+    /// 语义与 Python 的 _update_arm_locked 超时分支一致：观察窗已过且仍有慢推累计
+    /// （≥ slow_px）视为有意穿边，直接进 CAPTURED；否则判超时回 IDLE
+    /// （原因 `arm:timeout`）。
+    ///
+    /// 返回 `None` 表示尚未超时（或当前不在 ARMING），调用方继续正常流程；
+    /// `Some(outcome)` 已经把状态迁移做掉，update_arm 应直接返回该结果。
+    fn check_arm_timeout(
+        &self,
+        inner: &mut Inner,
+        events: &mut Vec<RouterEvent>,
+        now: f64,
+    ) -> Option<Result<(), RouterError>> {
+        if inner.state != State::Arming || now <= inner.arm_deadline {
+            return None;
+        }
+        let arm_px = self.cfg().motion.arm_px;
+        let slow_px = (C::ARM_SLOW_PX as i64).min((arm_px / 2).max(1));
+        if inner.arm_accum >= slow_px as f64 {
+            inner.arm_accum = 0.0;
+            return Some(self.enter_captured(inner, events, "arm_slow"));
+        }
+        self.arm_fail(inner, events, "timeout");
+        Some(Ok(()))
     }
 
     /// ARMING 失败：回 IDLE 并带上 arm:<原因>（对应 Python _arm_fail_locked）。
@@ -3015,12 +3087,17 @@ impl Router {
                 } else {
                     estimator.x
                 };
+                // P1-14：两个配置项都必须参与落点计算（此前只认常量 ENTRY_MARGIN_PX）。
+                let offset_px = {
+                    let cfg = self.cfg();
+                    exit_offset_px(cfg.motion.entry_margin_px, cfg.motion.boundary_inset_px)
+                };
                 exit_position = Some(tablet_exit_point(
                     &segment,
                     &monitor,
                     &tablet,
                     along,
-                    C::ENTRY_MARGIN_PX,
+                    offset_px,
                 ));
             }
         }
@@ -3245,6 +3322,11 @@ impl Router {
             .clamp(i64::from(C::MIN_REPORT_HZ), i64::from(C::MAX_REPORT_HZ)) as i32
     }
 
+    /// sender 线程每轮使用的出帧周期（每轮重读配置，P1-14：保存即生效）。
+    fn sender_period(&self) -> Duration {
+        Duration::from_secs_f64(1.0 / f64::from(self.report_hz()))
+    }
+
     // -- supervisor --------------------------------------------------------
 
     /// 一次看护周期（对应 Python _supervisor_tick，注入当前时刻便于测试）。
@@ -3293,6 +3375,17 @@ impl Router {
                     rotation_facts = self.check_rotation(&mut inner, &mut events);
                     self.check_desktop(&mut inner, &mut events);
                     self.poll_pointer_speed(&mut inner, &mut events, current);
+                    // P1-11：停在边缘不动时不会再收到 raw 事件，ARMING 超时必须在
+                    // 看护周期里兜底，语义与 update_arm 的超时分支完全一致。
+                    if inner.state == State::Arming {
+                        if let Some(outcome) =
+                            self.check_arm_timeout(&mut inner, &mut events, current)
+                        {
+                            if let Err(err) = outcome {
+                                rdebug!("supervisor.arm_timeout_failed err={err}");
+                            }
+                        }
+                    }
                     if inner.state == State::Returning && current >= inner.return_deadline {
                         self.change_state(&mut inner, &mut events, State::Idle, "debounce");
                     }
@@ -4267,6 +4360,10 @@ mod tests {
         lock_probe: Mutex<Option<Weak<Router>>>,
         /// 链路探针是否通过（默认 true；false 模拟 adb 掉线）。
         link_ok: Mutex<bool>,
+        /// 接下来多少次 send_mouse 直接 panic（P0-4 线程护栅注入用）。
+        panic_sends: AtomicI32,
+        /// 接下来多少次 health 直接 panic（P0-4 线程护栅注入用）。
+        health_panics: AtomicI32,
     }
 
     impl FakeSession {
@@ -4323,6 +4420,16 @@ mod tests {
             *lock_mutex(&self.link_ok) = ok;
         }
 
+        /// 注入 count 次 send_mouse panic（验证 sender 线程护栅）。
+        fn set_panic_sends(&self, count: i32) {
+            self.panic_sends.store(count, Ordering::SeqCst);
+        }
+
+        /// 注入 count 次 health panic（验证 supervisor 线程护栅）。
+        fn set_health_panics(&self, count: i32) {
+            self.health_panics.store(count, Ordering::SeqCst);
+        }
+
         /// 计数器快照。
         fn count(&self, counter: &AtomicI32) -> i32 {
             counter.load(Ordering::SeqCst)
@@ -4337,6 +4444,11 @@ mod tests {
 
     impl SessionPort for FakeSession {
         fn send_mouse(&self, buttons: i32, dx: i32, dy: i32, wheel: i32) -> Result<(), RouterError> {
+            let panics = self.panic_sends.load(Ordering::SeqCst);
+            if panics > 0 {
+                self.panic_sends.store(panics - 1, Ordering::SeqCst);
+                panic!("模拟 sender 线程 panic");
+            }
             let remaining = self.fail_sends.load(Ordering::SeqCst);
             if remaining > 0 {
                 self.fail_sends.store(remaining - 1, Ordering::SeqCst);
@@ -4373,6 +4485,11 @@ mod tests {
 
         fn health(&self) -> Result<Option<HealthReport>, RouterError> {
             self.health_calls.fetch_add(1, Ordering::SeqCst);
+            let panics = self.health_panics.load(Ordering::SeqCst);
+            if panics > 0 {
+                self.health_panics.store(panics - 1, Ordering::SeqCst);
+                panic!("模拟 supervisor 线程 panic");
+            }
             Ok(Some(HealthReport {
                 alive: *lock_mutex(&self.alive),
                 socket_ok: *lock_mutex(&self.socket_ok),
@@ -5535,6 +5652,105 @@ mod tests {
         )));
     }
 
+    /// P1-11：推到边缘后停手（不再有 raw 事件）也必须由 supervisor tick 结束 ARMING。
+    #[test]
+    fn supervisor_tick_ends_stuck_arming_with_timeout() {
+        let rig = make_rig(test_config());
+        rig.arm();
+        rig.clock.advance_ms(i64::from(C::ARM_WINDOW_MS) + 10);
+        rig.tick();
+        assert_eq!(rig.router.state(), State::Idle);
+        assert!(rig
+            .transitions()
+            .contains(&(State::Arming, State::Idle, "arm:timeout".to_string())));
+    }
+
+    /// P1-11：tick 的超时判定与 update_arm 同语义——慢推累计够 slow_px 仍可接管。
+    #[test]
+    fn supervisor_tick_arm_timeout_keeps_slow_capture() {
+        let rig = make_rig(test_config());
+        rig.arm();
+        rig.inner(|inner| inner.arm_accum = f64::from(C::ARM_SLOW_PX));
+        rig.clock.advance_ms(i64::from(C::ARM_WINDOW_MS) + 10);
+        rig.tick();
+        assert_eq!(rig.router.state(), State::Captured);
+        assert!(rig
+            .transitions()
+            .contains(&(State::Arming, State::Captured, "arm_slow".to_string())));
+    }
+
+    /// P1-14：sender 周期每轮都从配置读，config.save 后无需重启线程。
+    #[test]
+    fn sender_period_tracks_report_hz_config() {
+        let rig = make_rig(test_config());
+        let millis = |period: std::time::Duration| period.as_secs_f64() * 1000.0;
+        assert!((millis(rig.router.sender_period()) - 1.0).abs() < 1e-6);
+
+        let mut cfg = test_config();
+        cfg.motion.report_hz = 125;
+        rig.router.update_config(cfg);
+        assert!((millis(rig.router.sender_period()) - 8.0).abs() < 1e-6);
+
+        // 越界值按 [125, 1000] clamp（与 report_hz 同语义）。
+        let mut cfg = test_config();
+        cfg.motion.report_hz = 5;
+        rig.router.update_config(cfg);
+        assert!((millis(rig.router.sender_period()) - 8.0).abs() < 1e-6);
+    }
+
+    /// P0-4：护栅本身必须吞掉 panic 并允许下一轮继续。
+    #[test]
+    fn thread_step_guard_swallows_panic() {
+        let mut last_log = None;
+        assert!(!guard_thread_step("test", &mut last_log, || panic!("boom")));
+        assert!(last_log.is_some(), "首次 panic 应记录日志");
+        assert!(guard_thread_step("test", &mut last_log, || {}), "正常轮次返回 true");
+    }
+
+    /// P0-4：sender 线程被注入 panic 后仍继续出帧（不会永久静默停摆）。
+    #[test]
+    fn sender_loop_survives_injected_panics() {
+        let rig = make_rig(test_config());
+        rig.session.set_panic_sends(3);
+        let worker = Arc::clone(&rig.router);
+        let handle = std::thread::spawn(move || worker.sender_loop());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while rig.session.reports().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            !rig.session.reports().is_empty(),
+            "3 次 panic 之后 sender 线程仍应继续出帧"
+        );
+
+        rig.router.stop_flag.set();
+        handle.join().expect("sender 线程应正常退出");
+    }
+
+    /// P0-4：supervisor 线程被注入 panic（inner 锁同时被毒化）后仍继续看护。
+    #[test]
+    fn supervisor_loop_survives_injected_panics() {
+        let rig = make_rig(test_config());
+        rig.session.set_health_panics(2);
+        let worker = Arc::clone(&rig.router);
+        let handle = std::thread::spawn(move || worker.supervisor_loop());
+
+        // 2 次 panic 之后还要再成功看护一轮：health_calls 至少 3 次。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while rig.session.count(&rig.session.health_calls) < 3 && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            rig.session.count(&rig.session.health_calls) >= 3,
+            "supervisor 在 panic 之后应继续 tick"
+        );
+
+        rig.router.stop_flag.set();
+        handle.join().expect("supervisor 线程应正常退出");
+    }
+
     /// 角落裁决：方向明确时按方向，方向打平时按 corner_priority。
     #[test]
     fn corner_resolution_prefers_direction_then_priority() {
@@ -5652,6 +5868,42 @@ mod tests {
         rig.clock.advance_ms(60);
         rig.tick();
         assert_eq!(rig.router.state(), State::Idle);
+    }
+
+    /// P1-14：交还落点读 motion.entry_margin_px + motion.boundary_inset_px，
+    /// 不再固定传常量 ENTRY_MARGIN_PX。
+    #[test]
+    fn exit_landing_uses_configured_margins() {
+        let rig = make_rig(test_config());
+        rig.capture_manually();
+        rig.flush();
+        lock_mutex(&rig.session.cursor_sets).clear();
+        rig.router.toggle_manual();
+        assert_eq!(rig.router.state(), State::Returning);
+        assert_eq!(
+            lock_mutex(&rig.session.cursor_sets).last().copied(),
+            Some((1918, 540)),
+            "默认 margin=2 应落在 x=right-2"
+        );
+
+        // 改配置后无需重启：entry_margin 4 + boundary_inset 8 → 内缩 12px。
+        rig.clock.advance_ms(i64::from(C::DEBOUNCE_MS) + 1);
+        rig.tick();
+        assert_eq!(rig.router.state(), State::Idle);
+        rig.capture_manually();
+        rig.flush();
+        lock_mutex(&rig.session.cursor_sets).clear();
+        let mut cfg = test_config();
+        cfg.motion.entry_margin_px = 4;
+        cfg.motion.boundary_inset_px = 8;
+        rig.router.update_config(cfg);
+        rig.router.toggle_manual();
+        assert_eq!(rig.router.state(), State::Returning);
+        assert_eq!(
+            lock_mutex(&rig.session.cursor_sets).last().copied(),
+            Some((1908, 540)),
+            "4+8=12px 内缩应落在 x=right-12"
+        );
     }
 
     /// 急停：立即交还、补发全松、清键位表，之后仍可再次接管。

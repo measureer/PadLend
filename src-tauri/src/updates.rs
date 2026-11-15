@@ -174,9 +174,9 @@ pub fn latest_tag() -> Result<String, String> {
         Ok((404, _, _)) => return Err("仓库还没有发布任何 Release".into()),
         Ok((200, _, _)) => return Err("仓库还没有发布任何 Release".into()),
         Ok((status, _, _)) => {
-            eprintln!("[update] 网页端点返回 HTTP {status}，改用 REST API");
+            crate::shell_log!("[update] 网页端点返回 HTTP {status}，改用 REST API");
         }
-        Err(err) => eprintln!("[update] 网页重定向不可用：{err}"),
+        Err(err) => crate::shell_log!("[update] 网页重定向不可用：{err}"),
     }
 
     let api_path = format!("/repos/{REPO}/releases/latest");
@@ -205,11 +205,11 @@ pub fn release_details() -> Option<serde_json::Value> {
     match http_get("api.github.com", &api_path, true) {
         Ok((200, _, body)) => serde_json::from_str(&body).ok(),
         Ok((status, _, _)) => {
-            eprintln!("[update] 发布详情不可用：HTTP {status}");
+            crate::shell_log!("[update] 发布详情不可用：HTTP {status}");
             None
         }
         Err(err) => {
-            eprintln!("[update] 发布详情不可用：{err}");
+            crate::shell_log!("[update] 发布详情不可用：{err}");
             None
         }
     }

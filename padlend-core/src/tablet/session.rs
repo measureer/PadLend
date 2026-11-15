@@ -257,10 +257,11 @@ fn find_orientation(text: &str) -> Option<i32> {
                 return Some(value & 0x03);
             }
         }
-        rest = &after[after.len().min(1)..];
-        if rest.is_empty() {
-            break;
-        }
+        // 2.0.6：after 可能以多字节字符开头（adb shell 的输出会被系统本地化），
+        // 以前按字节切 `&after[1..]` 会 panic（byte index 1 is not a char boundary）。
+        // 这里按字符边界推进，语义不变：继续往后找下一个 orientation=。
+        let step = after.chars().next().map(char::len_utf8).unwrap_or(0);
+        rest = &after[step..];
     }
     None
 }
@@ -1201,12 +1202,7 @@ impl SessionPort for TabletSession {
     }
 
     fn set_capturing(&self, capturing: bool) {
-        self.core.capturing.store(capturing, Ordering::SeqCst);
-        // 2.0.6：用户把鼠标滑回电脑（交还）时立刻看一下朝向，否则刚转过屏也要
-        // 等满一个轮询周期（接管期间是 60s）才更新。
-        if !capturing {
-            self.core.orientation_wake.store(true, Ordering::SeqCst);
-        }
+        self.core.set_capturing(capturing);
     }
 }
 
@@ -1454,18 +1450,42 @@ impl SessionCore {
         self.closing.load(Ordering::SeqCst)
     }
 
+    /// 记录 Router 是否正在接管，并在交还控制权时叫醒朝向线程。
+    ///
+    /// 2.0.6：用户把鼠标滑回电脑（交还）时立刻看一下朝向，否则刚转过屏也要
+    /// 等满一个轮询周期（接管期间是 60s）才更新。
+    fn set_capturing(&self, capturing: bool) {
+        self.capturing.store(capturing, Ordering::SeqCst);
+        if !capturing {
+            self.orientation_wake.store(true, Ordering::SeqCst);
+        }
+    }
+
     /// 可中断睡眠一个朝向轮询周期；返回 true 表示要退出。
     ///
     /// 2.0.6：交还控制权时 `set_capturing(false)` 会抬起 `orientation_wake`，
     /// 这里看到就立刻返回，让下一轮查询马上跑（最多等 50ms），不用等满周期。
-    fn sleep_interruptible(&self, seconds: f64, stop: &AtomicBool) -> bool {
+    ///
+    /// 唤醒旗标必须由调用方按线程各传各的：朝向线程传 `Some(&orientation_wake)`，
+    /// adb 心跳线程传 `None`。2.0.6 初版两个线程共用同一个旗标，而心跳线程 2s 周期
+    /// 里几乎全程在这段 50ms 分片里睡，`swap(false)` 大概率把给朝向线程的唤醒吃掉，
+    /// 交还控制权后实际仍要等满 60s（P0 回归）。谁睡谁消费，别共用。
+    fn sleep_interruptible(
+        &self,
+        seconds: f64,
+        stop: &AtomicBool,
+        wake: Option<&AtomicBool>,
+    ) -> bool {
         let slices = ((seconds / 0.05).ceil() as u32).max(1);
         for _ in 0..slices {
             if stop.load(Ordering::SeqCst) || self.closing.load(Ordering::SeqCst) {
                 return true;
             }
-            if self.orientation_wake.swap(false, Ordering::SeqCst) {
-                return false;
+            // 只有带旗标的睡眠才消费它；心跳传 None，永远吃不到朝向唤醒。
+            if let Some(flag) = wake {
+                if flag.swap(false, Ordering::SeqCst) {
+                    return false;
+                }
             }
             self.sleeper.sleep(0.05);
         }
@@ -2916,7 +2936,8 @@ impl SessionCore {
     fn link_loop(&self, device: Arc<dyn AdbApi>, stop: Arc<AtomicBool>) {
         let mut last_pointer = Instant::now() - Duration::from_secs(60);
         while !stop.load(Ordering::SeqCst) {
-            if self.sleep_interruptible(LINK_PROBE_INTERVAL_S, &stop) {
+            // 心跳只是等下一轮探活，不参与朝向唤醒（None）。
+            if self.sleep_interruptible(LINK_PROBE_INTERVAL_S, &stop, None) {
                 break;
             }
             if self.closing.load(Ordering::SeqCst) {
@@ -2950,7 +2971,8 @@ impl SessionCore {
         let mut interval = ORIENTATION_POLL_S;
         let mut was_capturing = false;
         while !stop.load(Ordering::SeqCst) {
-            if self.sleep_interruptible(interval, &stop) {
+            // 交还控制权时由 set_capturing(false) 抬旗标，这里只消费自己这一份。
+            if self.sleep_interruptible(interval, &stop, Some(&self.orientation_wake)) {
                 break;
             }
             // 2.0.2 曾经在接管期间完全不查询（dumpsys 会在 system_server 主线程上排队，
@@ -3822,6 +3844,63 @@ mod tests {
         assert_eq!(orientation_interval(false), ORIENTATION_POLL_S);
         assert_eq!(orientation_interval(true), ORIENTATION_CAPTURE_POLL_S);
         assert!(ORIENTATION_CAPTURE_POLL_S > ORIENTATION_POLL_S);
+    }
+
+    #[test]
+    fn parse_orientation_handles_multibyte_text_after_the_key() {
+        // P0-5：after 以多字节字符开头时，&after[1..] 会 panic
+        // （byte index 1 is not a char boundary）。解析对象是 adb shell 输出，
+        // 本地化文案随时可能出现在 orientation= 后面。
+        assert_eq!(parse_orientation("orientation=横向"), 0);
+        assert_eq!(parse_orientation("orientation=横 1"), 0);
+        // “继续找下一个 orientation=” 的语义必须保留。
+        assert_eq!(parse_orientation("orientation=横orientation=2"), 2);
+        assert_eq!(parse_orientation("orientation=xorientation=3"), 3);
+        assert_eq!(parse_orientation("orientation=横, orientation=1"), 1);
+        // ASCII 路径与空值不变。
+        assert_eq!(parse_orientation("orientation=5"), 1);
+        assert_eq!(parse_orientation("orientation="), 0);
+        assert_eq!(parse_orientation("orientation"), 0);
+        assert_eq!(parse_orientation("orientation=横"), 0);
+    }
+
+    #[test]
+    fn releasing_control_then_waking_does_not_starve_the_orientation_loop() {
+        // P0-6：心跳线程（None）不许消费朝向唤醒；朝向线程（Some）第一片就醒。
+        let harness = harness();
+        let core = harness.session.core.as_ref();
+        let stop = AtomicBool::new(false);
+
+        core.orientation_wake.store(true, Ordering::SeqCst);
+        let before = *harness.sleeper.total.lock().expect("锁");
+        assert!(!core.sleep_interruptible(LINK_PROBE_INTERVAL_S, &stop, None));
+        let after = *harness.sleeper.total.lock().expect("锁");
+        assert!(after > before, "心跳应当照常睡满：{before} -> {after}");
+        assert!(
+            core.orientation_wake.load(Ordering::SeqCst),
+            "adb 心跳把朝向唤醒吃掉了（P0-6 回归）"
+        );
+
+        let before = *harness.sleeper.total.lock().expect("锁");
+        assert!(!core.sleep_interruptible(
+            ORIENTATION_CAPTURE_POLL_S,
+            &stop,
+            Some(&core.orientation_wake)
+        ));
+        let after = *harness.sleeper.total.lock().expect("锁");
+        assert_eq!(after, before, "有唤醒时应当第一片就返回，不进睡眠");
+        assert!(!core.orientation_wake.load(Ordering::SeqCst), "唤醒只消费一次");
+    }
+
+    #[test]
+    fn releasing_control_raises_the_orientation_wake() {
+        let harness = harness();
+        let core = harness.session.core.as_ref();
+        core.orientation_wake.store(false, Ordering::SeqCst);
+        core.set_capturing(true);
+        assert!(!core.orientation_wake.load(Ordering::SeqCst), "接管时不该叫醒");
+        core.set_capturing(false);
+        assert!(core.orientation_wake.load(Ordering::SeqCst), "交还时要叫醒");
     }
 
     #[test]

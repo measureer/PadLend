@@ -9,7 +9,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Align, Desktop, DeviceFacts, Edge, Placement } from '../../api/types';
-import { toggleManual } from '../../lib/actions';
+import { removeLayout, toggleManual } from '../../lib/actions';
 import {
   isVertical,
   monitorForSegment,
@@ -344,7 +344,16 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
             </button>
           ))}
           <div className="menu-sep" />
-          <button className="menu-item" onClick={() => { onPlacementChange(null); setCtx(null); }}>移除</button>
+          <button
+            className="menu-item"
+            title="删除本设备此方向的布局档，回退到全局摆位（只清预览不会保存）"
+            onClick={() => {
+              setCtx(null);
+              void removeLayout(facts?.hardwareSerial || facts?.serial || '', facts?.orientation || '');
+            }}
+          >
+            移除
+          </button>
           <button className="menu-item" onClick={() => { setCtx(null); void toggleManual(); }}>测试穿越</button>
         </div>
       )}

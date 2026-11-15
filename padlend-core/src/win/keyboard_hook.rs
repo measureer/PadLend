@@ -25,6 +25,16 @@
 //! 低级钩子回调没有 user data 参数，所以进程内用 [`ACTIVE`] 全局槽位把回调路由到
 //! [`HookContext`]。产品只用**一个**钩子实例；同进程装第二个会让回调都落到最后一个
 //! 实例上（Python 用绑定方法，天然支持多个）。
+//!
+//! # `HookContext` 的所有权模型（P0-3）
+//!
+//! [`KeyboardHook`] **不**持有 `HookContext`：每次 [`KeyboardHook::install`] 新建一份
+//! `Arc<HookContext>` 并移交给钩子线程；线程把裸指针写进 [`ACTIVE`]，[`ThreadCleanup`]
+//! 持有同一份 `Arc`，直到消息循环退出、`unhook` 并清空 `ACTIVE` 之后才释放。于是
+//! 「uninstall 的 join 超时 → detach 线程 → `KeyboardHook::drop`」这条旧路径上，存活
+//! 线程始终握着自己的 ctx，回调解引用的内存不会被提前释放（旧实现把 `Box<HookContext>`
+//! 放在 `KeyboardHook` 里，Drop 即释放，是 UAF）。每次 install 的 ctx 地址都不同，
+//! 旧线程收尾时也不会误清后来者的槽位。
 
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -397,9 +407,12 @@ impl KeyboardHookApi for Win32KeyboardHookApi {
 static ACTIVE: AtomicPtr<HookContext> = AtomicPtr::new(ptr::null_mut());
 
 /// 回调需要的全部状态：`on_event` 加上没有锁的计数器。
+///
+/// 每次 install 新建一份，所有权归钩子线程（[`ThreadCleanup`] 持有 Arc），
+/// 见模块文档「HookContext 的所有权模型」。
 struct HookContext {
     health: Arc<HookHealth>,
-    on_event: Box<dyn Fn(&KeyEvent) -> bool + Send + Sync>,
+    on_event: Arc<dyn Fn(&KeyEvent) -> bool + Send + Sync>,
 }
 
 /// 把事件交给 `on_event`；返回 `true` 表示吞键。
@@ -537,7 +550,9 @@ struct ThreadCleanup {
     api: Arc<dyn KeyboardHookApi>,
     health: Arc<HookHealth>,
     shared: Arc<SharedHook>,
-    ctx: usize,
+    /// 线程存活期间一直持有它（P0-3）：即使 uninstall() 超时、KeyboardHook 已被
+    /// drop，ACTIVE 指向的 HookContext 也不会被提前释放，回调不会 UAF。
+    ctx: Arc<HookContext>,
 }
 
 impl Drop for ThreadCleanup {
@@ -548,9 +563,10 @@ impl Drop for ThreadCleanup {
         if let Some(hook) = hook {
             self.api.unhook(hook);
         }
-        // 只清自己占的槽：多实例时不要踩别人的回调。
+        // 只清自己占的槽：每次 install 的 HookContext 地址都不同，
+        // 旧线程收尾时不会踩到后来者的回调槽。
         let _ = ACTIVE.compare_exchange(
-            self.ctx as *mut HookContext,
+            Arc::as_ptr(&self.ctx) as *mut HookContext,
             ptr::null_mut(),
             Ordering::AcqRel,
             Ordering::Acquire,
@@ -583,7 +599,8 @@ fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration) -> bool {
 /// `on_event` **必须非阻塞**，返回 `true` 表示吞键（例如 Win 键拦截）。
 pub struct KeyboardHook {
     api: Arc<dyn KeyboardHookApi>,
-    ctx: Box<HookContext>,
+    /// 回调的共享所有权；每次 install 克隆进新的 HookContext，由钩子线程保活。
+    on_event: Arc<dyn Fn(&KeyEvent) -> bool + Send + Sync>,
     health: Arc<HookHealth>,
     shared: Arc<SharedHook>,
     stop: Arc<StopFlag>,
@@ -607,10 +624,7 @@ impl KeyboardHook {
         let health = Arc::new(HookHealth::new());
         Self {
             api,
-            ctx: Box::new(HookContext {
-                health: Arc::clone(&health),
-                on_event: Box::new(on_event),
-            }),
+            on_event: Arc::new(on_event),
             health,
             shared: Arc::new(SharedHook::default()),
             stop: Arc::new(StopFlag::default()),
@@ -635,7 +649,12 @@ impl KeyboardHook {
         let health = Arc::clone(&self.health);
         let shared = Arc::clone(&self.shared);
         let stop = Arc::clone(&self.stop);
-        let ctx = self.ctx.as_ref() as *const HookContext as usize;
+        // 每次 install 新建一份 ctx，所有权随线程走（见模块文档的所有权模型）。
+        // 地址每次不同，旧线程收尾时不会误清后来者的 ACTIVE 槽。
+        let ctx = Arc::new(HookContext {
+            health: Arc::clone(&self.health),
+            on_event: Arc::clone(&self.on_event),
+        });
 
         let handle = std::thread::Builder::new()
             .name(HOOK_THREAD_NAME.to_string())
@@ -672,6 +691,8 @@ impl KeyboardHook {
             }
         }
         if !join_with_timeout(handle, UNINSTALL_TIMEOUT) {
+            // 线程可能还活着：ctx 由它自己持有（Arc），这里既不能等、也不会释放它；
+            // 它会在真正退出时 unhook + 清 ACTIVE，然后才释放 ctx。
             eprintln!("[keyboard_hook] uninstall_timeout");
         }
 
@@ -679,11 +700,12 @@ impl KeyboardHook {
             let _ = join_with_timeout(watchdog, JOIN_TIMEOUT);
         }
 
-        let hook = self.shared.take_hook();
         self.health.set_installed(false);
-        // 线程若异常退出，钩子可能仍挂在句柄上；尽力从当前线程卸载（与 Python 同）。
-        if let Some(hook) = hook {
-            if !self.health.thread_alive() {
+        // 正常路径上 ThreadCleanup 已经 unhook（这里 take 到 None）；只有线程异常退出、
+        // 没来得及收尾时才由当前线程兜底卸载（与 Python 同）。线程还活着（join 超时）时
+        // **不能**取走句柄——那样 ThreadCleanup 再也拿不到它来 unhook，钩子会永久泄漏。
+        if !self.health.thread_alive() {
+            if let Some(hook) = self.shared.take_hook() {
                 self.api.unhook(hook);
             }
         }
@@ -742,12 +764,16 @@ impl Drop for KeyboardHook {
 /// 钩子线程主体：建队列 → 装钩子 → 起看门狗 → 泵消息。
 fn hook_thread_main(
     api: Arc<dyn KeyboardHookApi>,
-    ctx: usize,
+    ctx: Arc<HookContext>,
     health: Arc<HookHealth>,
     shared: Arc<SharedHook>,
     stop: Arc<StopFlag>,
     ready: mpsc::Sender<Result<(), HookError>>,
 ) {
+    // 回调槽里存裸指针；只要线程活着，_cleanup 持有的 Arc 就让它一直有效。
+    let ctx_addr = Arc::as_ptr(&ctx) as usize;
+    // _cleanup 声明在最前面 → 最后 drop：消息循环退出后先 unhook + 清 ACTIVE，
+    // 再释放 ctx；uninstall() 即使 join 超时 detach，也不会有人提前释放它。
     let _cleanup = ThreadCleanup {
         api: Arc::clone(&api),
         health: Arc::clone(&health),
@@ -760,7 +786,7 @@ fn hook_thread_main(
     health.set_thread_alive(true);
 
     // 回调槽必须在 SetWindowsHookExW 之前写好：钩子一挂上就可能立刻回调。
-    ACTIVE.store(ctx as *mut HookContext, Ordering::Release);
+    ACTIVE.store(ctx_addr as *mut HookContext, Ordering::Release);
 
     let hook = match api.set_hook(api.module_handle()) {
         Ok(hook) => hook,
@@ -998,7 +1024,7 @@ mod tests {
     fn panicking_callback_is_counted_and_never_swallows() {
         let panicking = HookContext {
             health: Arc::new(HookHealth::new()),
-            on_event: Box::new(|_event| panic!("回调炸了")),
+            on_event: Arc::new(|_event| panic!("回调炸了")),
         };
         assert!(
             !deliver(&panicking, &KeyEvent::key_down(0x41)),
@@ -1008,7 +1034,7 @@ mod tests {
 
         let swallowing = HookContext {
             health: Arc::new(HookHealth::new()),
-            on_event: Box::new(|_event| true),
+            on_event: Arc::new(|_event| true),
         };
         assert!(deliver(&swallowing, &KeyEvent::key_down(0x41)));
         assert_eq!(swallowing.health.callback_errors(), 0);
@@ -1041,6 +1067,9 @@ mod tests {
         unhook_calls: AtomicU32,
         dispatched: AtomicU32,
         last_tick: Mutex<Option<u32>>,
+        /// 为 true 时 `post_thread_message(WM_QUIT)` 返回失败且不唤醒消息泵，
+        /// 用来复现「uninstall 的 join 超时」这条旧 UAF 路径。
+        block_quit: AtomicBool,
     }
 
     impl FakeApi {
@@ -1058,6 +1087,17 @@ mod tests {
 
         fn fail_set_hook(&self, code: i32) {
             *lock(&self.set_hook_fail) = Some(code);
+        }
+
+        /// 拒绝 WM_QUIT：钩子线程会一直阻塞在 `next_message`，复现 join 超时。
+        fn block_quit(&self) {
+            self.block_quit.store(true, Ordering::SeqCst);
+        }
+
+        /// 放行 WM_QUIT，让被卡住的钩子线程走完 ThreadCleanup。
+        fn allow_quit(&self) {
+            self.block_quit.store(false, Ordering::SeqCst);
+            self.push(FakeMessage::Quit);
         }
 
         fn push(&self, outcome: FakeMessage) {
@@ -1096,6 +1136,9 @@ mod tests {
 
         fn post_thread_message(&self, _thread_id: u32, msg: u32) -> bool {
             if msg == WM_QUIT {
+                if self.block_quit.load(Ordering::SeqCst) {
+                    return false;
+                }
                 self.push(FakeMessage::Quit);
             } else {
                 self.push(FakeMessage::Message(msg));
@@ -1225,6 +1268,50 @@ mod tests {
             assert!(hook.healthy());
         }
         assert_eq!(api.unhook_calls(), 1, "Drop 必须卸载钩子");
+    }
+
+    #[test]
+    fn uninstall_timeout_keeps_ctx_alive_until_thread_exits() {
+        // P0-3 回归：uninstall 的 join 超时只 detach 线程；旧实现随后在
+        // KeyboardHook::drop 里释放 Box<HookContext>，存活的钩子线程下次回调就 UAF。
+        // 现在 ctx 的所有权在钩子线程（Arc），线程退出前不会被释放；
+        // 线程退出时必须自己 unhook + 清 ACTIVE，然后才释放 ctx。
+        let api = Arc::new(FakeApi::default());
+        api.block_quit(); // 替身拒绝 WM_QUIT → 钩子线程卡在消息泵里 → join 超时
+        let probe = Arc::new(AtomicBool::new(false));
+        let captured = Arc::clone(&probe);
+        let concrete: Arc<FakeApi> = Arc::clone(&api);
+        let backend: Arc<dyn KeyboardHookApi> = concrete;
+        let mut hook = KeyboardHook::with_api(backend, move |_event| {
+            captured.load(Ordering::SeqCst)
+        });
+        hook.install().expect("安装");
+
+        hook.uninstall(); // 等满 UNINSTALL_TIMEOUT 后 detach
+        assert!(!hook.healthy(), "卸载后必须 not healthy");
+        assert!(hook.health.thread_alive(), "替身线程必须还挂在消息泵里");
+        // probe 的强引用 = 测试自己的一份 + on_event 闭包里捕获的一份。
+        assert_eq!(Arc::strong_count(&probe), 2, "线程存活期间 ctx 不能被释放");
+
+        // KeyboardHook 释放之后 ctx 仍由存活线程持有（旧实现就是在这里释放 → UAF）。
+        drop(hook);
+        assert_eq!(
+            Arc::strong_count(&probe),
+            2,
+            "uninstall 超时后 Drop 不得释放 ctx"
+        );
+
+        // 放行 WM_QUIT：线程跑完 ThreadCleanup（unhook + 清 ACTIVE）后才释放 ctx。
+        api.allow_quit();
+        assert!(
+            wait_until(|| Arc::strong_count(&probe) == 1, Duration::from_secs(2)),
+            "线程退出后 ctx 必须被释放"
+        );
+        assert_eq!(api.unhook_calls(), 1, "ThreadCleanup 必须卸载钩子");
+        assert!(
+            ACTIVE.load(Ordering::Acquire).is_null(),
+            "ThreadCleanup 必须清空 ACTIVE 槽"
+        );
     }
 
     // ---- 真实系统钩子：默认不跑 ----------------------------------------------

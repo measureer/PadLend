@@ -10,6 +10,7 @@ use std::mem::{size_of, MaybeUninit};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -20,9 +21,9 @@ use windows::Win32::UI::Input::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetWindowLongPtrW, RegisterClassExW, SetWindowLongPtrW, TranslateMessage, CS_HREDRAW,
-    CS_VREDRAW, GWLP_USERDATA, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_INPUT,
-    WNDCLASSEXW,
+    GetWindowLongPtrW, PostThreadMessageW, RegisterClassExW, SetWindowLongPtrW, TranslateMessage,
+    CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_CLOSE, WM_INPUT, WM_QUIT, WNDCLASSEXW,
 };
 
 /// Raw Input 事件计数（与 Python `--debug-raw` 的口径一致）。
@@ -54,7 +55,19 @@ static HANDLER: std::sync::Mutex<
     Option<std::sync::Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync>>,
 > = std::sync::Mutex::new(None);
 
-/// 一个已注册的 Raw Input 源；drop 时会向消息线程投递 `WM_CLOSE` 并 join。
+/// `stop()` 等消息线程退出的上限。
+///
+/// 正常路径上 `PostThreadMessageW(WM_QUIT)` 会立刻唤醒 `GetMessageW`（线程内的
+/// 窗口已经建好，队列必然存在），所以这里只兜底“线程失联”的病态情况——上限的意义
+/// 是保证 `stop()` / `Drop` 永不永久阻塞。
+pub const STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// `RegisterClassExW` 遇到“类已存在”时的 Win32 错误码。
+///
+/// 窗口类属于**进程**而不是线程：`stop()` 之后再 `start()` 会命中它。
+const ERROR_CLASS_ALREADY_EXISTS: i32 = 1410;
+
+/// 一个已注册的 Raw Input 源；drop 时会向消息线程投递 `WM_QUIT` 并有界等待它退出。
 pub struct RawInputSource {
     stats: Arc<Stats>,
     thread_id: u32,
@@ -93,8 +106,15 @@ impl RawInputSource {
 
         let thread_id = match rx.recv() {
             Ok(Ok(id)) => id,
-            Ok(Err(err)) => return Err(err),
-            Err(_) => return Err("Raw Input 线程在启动前退出".to_string()),
+            // 失败路径上线程已经发完错误并返回；join 只是回收线程栈，不会阻塞。
+            Ok(Err(err)) => {
+                let _ = join.join();
+                return Err(err);
+            }
+            Err(_) => {
+                let _ = join.join();
+                return Err("Raw Input 线程在启动前退出".to_string());
+            }
         };
 
         Ok(Self {
@@ -123,17 +143,34 @@ impl RawInputSource {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
         }
-        if let Some(join) = self.join.take() {
-            // 窗口属于消息线程，只能由它自己结束泵。
-            unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
-                    self.thread_id,
-                    WM_CLOSE,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        // 必须是 WM_QUIT：GetMessageW 收到它返回 0，消息循环才会 break。
+        // 之前投的是 WM_CLOSE——它只是普通线程消息（hwnd == NULL），会被
+        // DispatchMessageW 直接丢弃，wndproc 的 WM_CLOSE 分支永远收不到，
+        // 于是消息循环永不退出、join 永久阻塞（--debug-raw 退出即挂死）。
+        //
+        // 这里的投递对“start() 刚拿到 thread_id 就立刻 stop()”同样安全：
+        // 线程在发出 thread_id 之前已经建好窗口（消息队列随之存在），
+        // PostThreadMessageW 只把消息排队，线程回到消息泵时必然取到。
+        let posted = unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        if let Err(err) = posted {
+            // 线程已经退出（或队列被销毁）时投递会失败；此时它多半马上就能 join 回来。
+            eprintln!("[rawinput] PostThreadMessageW(WM_QUIT) 失败：{err}");
+        }
+        // 有界等待：join() 本身没有超时，线程一旦卡住 Drop 就会挂死整个进程。
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        while !join.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        if join.is_finished() {
             let _ = join.join();
+        } else {
+            // 极端病态：消息线程没在期限内退出。只能 detach（drop JoinHandle 不阻塞）；
+            // 线程仍持有 stats 的 Arc，等它自己退出时回收，不会有人从这里解引用裸指针。
+            eprintln!("[rawinput] stop_timeout");
+            drop(join);
         }
     }
 }
@@ -269,8 +306,13 @@ fn run_message_loop(
         };
         if RegisterClassExW(&wc) == 0 {
             let err = io::Error::last_os_error();
-            let _ = ready.send(Err(format!("RegisterClassExW 失败：{err}")));
-            return Err("RegisterClassExW 失败".to_string());
+            // 窗口类属于进程：stop() 之后再次 start() 会命中“类已存在”。
+            // 类名、hInstance、wndproc 都是本进程自己的，复用它是预期行为；
+            // 只有其它注册失败才是真错误。
+            if err.raw_os_error() != Some(ERROR_CLASS_ALREADY_EXISTS) {
+                let _ = ready.send(Err(format!("RegisterClassExW 失败：{err}")));
+                return Err("RegisterClassExW 失败".to_string());
+            }
         }
 
         let hwnd = CreateWindowExW(
@@ -308,6 +350,9 @@ fn run_message_loop(
 
         let mut msg = MaybeUninit::<MSG>::zeroed();
         loop {
+            // 0 = WM_QUIT（stop() 用 PostThreadMessageW 投递），-1 = 取消息失败。
+            // 线程消息（hwnd == NULL）也会被 GetMessageW 取出，所以 WM_QUIT
+            // 一定能结束这个循环；DispatchMessageW 对 hwnd == NULL 的消息是空操作。
             let ret = GetMessageW(msg.as_mut_ptr(), None, 0, 0).0;
             if ret == -1 || ret == 0 {
                 break;
@@ -317,6 +362,8 @@ fn run_message_loop(
             DispatchMessageW(&message);
         }
 
+        // 先注销设备再销毁窗口：注销之后不会再有新的 WM_INPUT，窗口属于本线程，
+        // 由本线程销毁（stop() 不再依赖 wndproc 收到 WM_CLOSE）。
         let remove = [RAWINPUTDEVICE {
             usUsagePage: 0x01,
             usUsage: 0x02,
@@ -325,8 +372,82 @@ fn run_message_loop(
         }];
         let _ = RegisterRawInputDevices(&remove, size_of::<RAWINPUTDEVICE>() as u32);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        let _ = DestroyWindow(hwnd);
     }
 
     stopped.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 回归测试
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, PM_NOREMOVE};
+
+    /// 钉住 P0-2 的 Win32 语义：`WM_CLOSE` 只是 hwnd == NULL 的普通线程消息。
+    ///
+    /// 旧实现的 stop() 投 `WM_CLOSE`，消息循环只在 `GetMessageW` 返回 0/-1 时退出，
+    /// 而 `DispatchMessageW` 对 NULL 窗口的消息不调用任何 wndproc（wndproc 里的
+    /// `WM_CLOSE → DestroyWindow` 分支永远收不到）→ join 永久阻塞。本用例不需要建窗，
+    /// 在任何有消息队列的 Windows 会话上都能跑。
+    #[test]
+    fn wm_quit_not_wm_close_terminates_thread_message_loop() {
+        unsafe {
+            // 先建立线程消息队列：没有队列时 GetMessageW 会直接返回 -1。
+            let mut msg = MSG::default();
+            let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+            let thread_id = GetCurrentThreadId();
+
+            assert!(
+                PostThreadMessageW(thread_id, WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok(),
+                "向本线程投递 WM_CLOSE 失败"
+            );
+            let ret = GetMessageW(&mut msg, None, 0, 0).0;
+            assert!(
+                ret > 0,
+                "WM_CLOSE 是普通消息：GetMessageW 返回非 0（取到消息），只有 WM_QUIT 才返回 0"
+            );
+            assert_eq!(msg.message, WM_CLOSE, "取到的消息必须是 WM_CLOSE");
+            assert!(msg.hwnd.0.is_null(), "线程消息的 hwnd 必须是 NULL");
+            // 这一步在旧实现里被当作“唤醒”，实际什么都分发不到。
+            let _ = DispatchMessageW(&msg);
+
+            assert!(PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)).is_ok());
+            assert_eq!(
+                GetMessageW(&mut msg, None, 0, 0).0,
+                0,
+                "WM_QUIT 才会让 GetMessageW 返回 0、结束消息循环"
+            );
+        }
+    }
+
+    /// 回归（真实路径）：start() 之后立刻 stop() 必须在 STOP_TIMEOUT 内 join 回来。
+    ///
+    /// 这条覆盖“thread_id 刚拿到就 stop()”的竞态：WM_QUIT 只需要排队，线程回到
+    /// 消息泵时必然取到，不会漏掉唤醒。没有交互式桌面（建窗/注册 Raw Input 失败）
+    /// 的环境会跳过——那种环境下真实路径本来就无法验证，纯 Win32 语义由上一个用例兜住。
+    #[test]
+    fn stop_after_start_returns_within_timeout() {
+        let mut source = match RawInputSource::start() {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("[rawinput][test] 跳过真实路径：无法启动 Raw Input（{err}）");
+                return;
+            }
+        };
+        let started = Instant::now();
+        source.stop();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < STOP_TIMEOUT,
+            "stop() 用了 {elapsed:?}，超过上限 {STOP_TIMEOUT:?}（消息循环没有被 WM_QUIT 唤醒）"
+        );
+        // 幂等：第二次 stop 立即返回。
+        source.stop();
+    }
 }

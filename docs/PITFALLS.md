@@ -1,7 +1,7 @@
 # PadLend 开发者陷阱（Pitfalls）
 
 > 面向维护者、贡献者和发版负责人：这里记录**已经踩过一次、且很容易再踩**的坑。
-> 普通用户排障请看 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)；架构与关键实施决策看 [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md) 和 [DESIGN.md](DESIGN.md)；版本变更看 [CHANGELOG.md](CHANGELOG.md)。
+> 普通用户排障请看 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)；架构与关键实施决策看 [DESIGN.md](DESIGN.md)（历史设计稿）与 [archive/IMPLEMENTATION_NOTES.md](archive/IMPLEMENTATION_NOTES.md)；版本变更看 [CHANGELOG.md](CHANGELOG.md)。
 
 **怎么读**
 
@@ -51,7 +51,7 @@
 - **根因**：server 参数带 `cleanup=true`，scrcpy server 启动即 `unlinkSelf` 删除远端 jar，避免在平板 `/data/local/tmp` 留垃圾。这是**预期行为**，不是 bug。
 - **修法**：不要为了「省流量」改成 `cleanup=false`；`push_if_needed` 的 md5 跳过只在文件还存在时有效；要减少重推，应尽量保持同一次 adb 连接，而不是改清理策略。
 - **如何验证 / 回归**：连接成功后 `adb shell ls /data/local/tmp/scrcpy-server-manual.jar` 应不存在；重连日志应出现一次 push；把「文件不存在」当正常分支，不要当错误。
-- **相关文件**：`constants.py:109`、`constants.py:116-128`、`tablet/server.py:136-167`、`docs/IMPLEMENTATION_NOTES.md:119`
+- **相关文件**：`padlend-core/src/constants.rs`、`padlend-core/src/tablet/server.rs`（1.x 的 `constants.py:109`、`tablet/server.py:136-167` 已随 Python 实现删除，仅作历史对照）；[archive/IMPLEMENTATION_NOTES.md](archive/IMPLEMENTATION_NOTES.md)
 - **版本**：1.1.0
 - **再犯的代价**：关掉 cleanup 会换来看似省流量的假优化，实际在平板留下 jar 和旧进程；升级后新旧版本混淆，Android 17 上更难清理。
 
@@ -1253,3 +1253,94 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
   看不出设备上跑的是另一个命令。怀疑某个 adb 查询慢时，先在设备端 `ps -A` 看真正跑的是什么。
 - 兜底路径会掩盖主路径的故障：主查询一直失败、兜底偶尔成功，表现为「时灵时不灵」，
   很难从日志看出来。主路径失败要留下明确的日志（本次一并补了「朝向查询失败/没有 Viewport 行」）。
+
+## 31. 2.0.6 之后：审计补录（未发布，2026-11-16）
+
+> 这一轮不是「某个函数写错」，而是整条链没接线：文档、配置 schema、RPC 白名单承诺的能力，
+> 实现侧只写了一半，测试又按同一份错误假设写，所以全绿。下面每条都对应一个已修的回归测试。
+
+### 31.1 exit.clean 是空的：崩溃兜底链没人调用
+
+- **现象**：强杀/崩溃后残留遮罩窗口继续锁光标，平板的 pointer_speed 与熄屏超时永不还原；
+  下次启动也不清理。
+- **根因**：cleanup_orphan_mask、unclip_on_exit、restore_pending_pointer_speed /
+  restore_pending_screen_timeout、force_cleanup 全仓零调用；register_atexit_guard 只置一个
+  没人读的 AtomicBool；exit.clean 也没有任何写入者。模块文档却写着「退出前必须调用」。
+- **修法**：Engine::open 以配置同目录的 exit.clean 为标记：启动时缺失且非首次运行 →
+  cleanup_orphan_mask + unclip_on_exit；会话建好后用后台线程 force_cleanup(None) 并恢复
+  pointer_speed / 熄屏超时。shutdown 等会话 teardown 最多 5s，清干净才写 exit.clean，
+  否则删掉标记，让下次启动强制清理。mask 内部的假 atexit 壳删除，unclip_on_exit 改由
+  engine 的启动/退出路径显式调用。
+- **如何验证 / 回归**：正常退出后 exit.clean 存在；kill 引擎再启动，日志出现
+  「上次未正常退出，已清理残留遮罩」。
+
+### 31.2 PostThreadMessage(WM_CLOSE) 唤不醒 GetMessageW
+
+- **现象**：--debug-raw 退出时进程挂住，只能强杀。
+- **根因**：rawinput 的 stop() 投 WM_CLOSE 唤醒消息循环，但循环只在 GetMessageW 返回 0/-1
+  时退出；hwnd=NULL 的线程消息又被 DispatchMessageW 丢弃，join 永久阻塞，Drop 同路径。
+- **修法**：改投 WM_QUIT，join 改 2s 有界等待；超时只 detach（线程自持 stats Arc）。
+  顺带处理 RegisterClassExW 返回 1410 时复用进程级窗口类，循环结束补 DestroyWindow。
+- **教训**：唤醒消息循环只能用 WM_QUIT；hotkeys.rs 与 keyboard_hook.rs 早就是这么写的。
+
+### 31.3 join 超时后释放回调上下文 = UAF
+
+- **现象**：键盘钩子卸载超时后，下一次按键偶尔崩溃。
+- **根因**：HookContext 由 KeyboardHook::drop 释放，但 ACTIVE 指针与钩子线程仍活；
+  停在线程里的「从当前线程 unhook」对 WH_KEYBOARD_LL 无效。
+- **修法**：ctx 改为 Arc 并由钩子线程内的 ThreadCleanup 持有；超时只 detach，不取走钩子句柄
+  （否则线程永远拿不到它 unhook）。回归测试 uninstall_timeout_keeps_ctx_alive_until_thread_exits。
+- **教训**：跨线程回调的上下文生命周期必须由回调线程持有，不能把 join 成功当作释放前提。
+
+### 31.4 一个 AtomicBool 两个睡眠者：交还唤醒被心跳吃掉
+
+- **现象**：交还控制权后，朝向仍要等满 60s 才更新，2.0.6 承诺的「50ms 内补朝向」不成立。
+- **根因**：orientation_wake 是单个 AtomicBool，adb 心跳的 sleep_interruptible 也用
+  swap(false) 消费；谁先醒谁吃掉通知，朝向线程只能等下一轮 60s。
+- **修法**：sleep_interruptible 增加 wake: Option<&AtomicBool>，只有朝向线程传 Some，
+  心跳传 None。
+- **教训**：一个通知标志只能有一个消费者；多睡眠者要用 Condvar 或每线程标志。
+
+### 31.5 UI 的「移除布局」只清预览
+
+- **现象**：右键移除后旧布局重启又回来，保存按钮还变灰。
+- **根因**：前端只 setPlacement(null) 并把 layoutDirty 清成 false，引擎又拒绝空 placement，
+  配置里的 layouts 存档从未删除。
+- **修法**：layout.save 增加 remove:true 分支（layout_remove），按 identity/orientation 删档、
+  config.save、清 layout_key、按当前事实回退到另一方向或全局摆位，返回
+  {ok, removed, config, placement}；前端用返回值刷新预览并清 dirty。
+- **教训**：任何「删除」都必须有后端持久化契约，不能用「清空当前值」冒充。
+
+### 31.6 配置校验两份，repair 静默改值
+
+- **现象**：serializers 少校验 px_per_count、entry_margin 与 9 个热键；
+  entry_margin=-5 保存提示成功但值被悄悄改回；gain=NaN 的 issue 说「已夹紧」随后又报错。
+- **修法**：config::validate_tree 成为唯一校验（serde_json::Value），Config::validate 与
+  serializers 共用；NaN 恢复默认 1.0 并明确报「不是有效数值」。
+- **教训**：同一份配置不要维护两套 validator；repair 改了值就必须让用户看见改了什么。
+
+### 31.7 诊断包说「已脱敏」，概要行却带原始序列号
+
+- **现象**：README 说 zip 有 6 个文件（实际 2 个），概要行仍输出原始 serial，
+  而生成函数注释声称已打码。
+- **修法**：to_text 入口统一 redact（含概要行），README.txt 如实写只含 diagnostics.txt
+  与 README.txt、不含日志；测试断言概要行看不到原始序列号。
+- **教训**：对外文件的安全承诺要在生成函数入口统一执行，不能依赖各段落自觉。
+
+### 31.8 发版产物带 BOM 与写死的 release notes
+
+- **现象**：2.0.6 的 SHA256SUMS.txt 首字节是 EF BB BF，sha256sum -c 首行失败；
+  release-notes.md 硬编码 2.0.6，下一个 tag 会原样发旧文案；
+  fail_on_unmatched_files:false 允许缺产物也发版。
+- **修法**：release.ps1 用 [IO.File]::WriteAllText + UTF8Encoding(false)；CI 校验四处版本
+  一致、检查 SHA256SUMS 无 BOM、从 CHANGELOG 对应版本小节生成 dist/release-notes.md、
+  缺产物直接失败。
+- **教训**：发版脚本的正确性要在 CI 里按字节验证，不能相信本地终端。
+
+### 31.9 按字节切 UTF-8，以及「没匹配到失败文案就算成功」
+
+- find_orientation 曾用 &after[1..] 跳过等号，orientation= 后首字符是多字节时直接 panic
+  （byte index 1 is not a char boundary）；改为按 char::len_utf8 步进并继续找下一个键。
+- adb connect 只看 4 条英文失败串，cannot resolve host 会被判成功并登记链路；
+  改为输出必须含 connected to，失败提示分「解析不到 / 路由不可达 / 端口拒绝」三类。
+- **教训**：解析外部文本永远按字符边界；判定成功要匹配成功标志，而不是列举已知失败。

@@ -32,7 +32,7 @@ const log = (index: number): LogEntry => ({ timestamp: '12:00:00.000', event: 'A
 
 describe('应用状态切片', () => {
   beforeEach(() => {
-    useAppStore.setState({ hydrated: false, logs: [], devices: [], selectedSerial: '', layoutDirty: false });
+    useAppStore.setState({ hydrated: false, logs: [], devices: [], selectedSerial: '', layoutDirty: false, placement: null });
   });
 
   it('bootstrap 一次性灌入配置/桌面/日志', () => {
@@ -65,6 +65,36 @@ describe('应用状态切片', () => {
     store.setSelectedSerial('192.168.1.9:5555');
     store.setDevices([device('10.0.0.9:37123', true, 'hw:1'), device('USB2', true, 'hw:2')]);
     expect(useAppStore.getState().selectedSerial).toBe('10.0.0.9:37123');
+  });
+
+  it('扫描失败的错误能被下一次成功扫描清掉，未传 error 时才保留', () => {
+    const store = useAppStore.getState();
+    store.setDeviceError('adb missing');
+    store.setDevices([device('A', true)], 'adb missing');
+    expect(useAppStore.getState().deviceError).toBe('adb missing');
+
+    store.setDevices([device('A', true)], '');
+    expect(useAppStore.getState().deviceError).toBe('');
+
+    store.setDeviceError('unauthorized');
+    store.setDevices([device('A', true)]);
+    expect(useAppStore.getState().deviceError).toBe('unauthorized');
+  });
+
+  it('移除布局后清掉未保存标记并换成回退摆位', () => {
+    const store = useAppStore.getState();
+    const placement = { monitorHandle: 1, edge: 'right' as const, spanStart: 0, spanEnd: 100, offset: 0.5, align: 'proportional' as const, cornerPriority: null };
+    store.setPlacement(placement);
+    expect(useAppStore.getState().layoutDirty).toBe(true);
+
+    const fallback = { ...placement, edge: 'left' as const };
+    useAppStore.getState().removeLayout(fallback);
+    expect(useAppStore.getState().placement).toEqual(fallback);
+    expect(useAppStore.getState().layoutDirty).toBe(false);
+
+    useAppStore.getState().removeLayout(null);
+    expect(useAppStore.getState().placement).toBeNull();
+    expect(useAppStore.getState().layoutDirty).toBe(false);
   });
 
   it('摆位预览标记 dirty，服务确认后清除', () => {

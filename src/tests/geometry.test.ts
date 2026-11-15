@@ -61,9 +61,23 @@ describe('画布几何（与 core/geometry.py 保持一致）', () => {
     expect(fallback).toHaveLength(1);
   });
 
-  it('角落按外推方向裁决', () => {
+  it('角落裁决与引擎一致：方向明确时按方向，优先边不生效', () => {
     expect(resolveCorner(right, top, [80, 0], null).edge).toBe('right');
-    expect(resolveCorner(right, top, [80, 0], 'top').edge).toBe('top');
+    // 80 vs 0 领先 100% > 15%：即使指定了优先边 top，也按拖动方向选 right（旧实现相反）
+    expect(resolveCorner(right, top, [80, 0], 'top').edge).toBe('right');
+  });
+
+  it('方向不够明确时回落到优先边，阈值是 15%', () => {
+    // right 方向得 dx=10，top 方向得 -dy=9：只领先 10% < 15%，用优先边
+    expect(resolveCorner(right, top, [10, -9], 'top').edge).toBe('top');
+    expect(resolveCorner(right, top, [10, -9], null).edge).toBe('right');
+    // 10 vs 8 领先 20% > 15%：方向明确，忽略优先边
+    expect(resolveCorner(right, top, [10, -8], 'top').edge).toBe('right');
+  });
+
+  it('反向拖动（最高分 ≤ 0）时直接按优先边', () => {
+    expect(resolveCorner(right, top, [-10, 9], 'right').edge).toBe('right');
+    expect(resolveCorner(right, top, [-10, 9], 'top').edge).toBe('top');
   });
 
   it('包围盒与留白覆盖所有显示器和平板', () => {

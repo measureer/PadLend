@@ -1,19 +1,21 @@
 # PadLend 项目设计文档
 
-> **版本提示**：本文描述的是引擎、协议与 Windows 输入链路设计，1.1.0 起仍然有效；
-> 其中涉及 Qt/PySide6 窗口、QSS、托盘与对话框的章节属于 1.0.x 旧界面，
-> 现行界面见 [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。
+> **历史文档**：本文是 1.0.x 时期（2026-11-02）的引擎、协议与 Windows 输入链路设计稿。
+> 其中 **Python 模块布局与 PySide6/Qt 界面章节已被取代**：1.7.0 起引擎是 Rust（`padlend-core`），
+> 1.1.0 起界面是 Tauri 2 + React。仍可参考的是协议（scrcpy/UHID）、Win32 输入链路与状态机设计；
+> 实现细节以 [../padlend-core](../padlend-core) 与 [../src-tauri](../src-tauri) 为准。
+> 界面外壳的演进见 [TAURI_MIGRATION.md](TAURI_MIGRATION.md)，迁移期报告见 [archive/](archive/)。
 
 | 项目 | 内容 |
 |---|---|
 | **名称** | PadLend（中文：借屏） |
-| **版本** | v1.0（可实施版） |
+| **版本** | v1.0（历史设计稿） |
 | **日期** | 2026-11-02 |
-| **状态** | ✅ 已定稿，可直接作为实施依据 |
-| **目标读者** | 实施者（人或 AI agent）/ 评审者 |
+| **状态** | 🗄️ 历史文档：Python/PySide6 实现已被 Rust 重写取代（1.7.0），仅协议与 Win32 设计部分仍作参考 |
+| **目标读者** | 评审者 / 需要理解协议与输入链路的维护者 |
 | **运行平台** | Windows 10 1809+ / Windows 11（x64）；Android 12+ 平板 |
-| **技术栈** | Python 3.11+ / PySide6 / ctypes / adb / scrcpy-server |
-| **许可** | 待定（建议 Apache-2.0） |
+| **技术栈** | 历史：Python 3.11+ / PySide6 / ctypes；现行：padlend-core（Rust）/ Tauri 2 + React |
+| **许可** | Apache-2.0 |
 
 > **一句话**：把平板变成电脑屏幕"边上的一块屏"——鼠标从电脑屏幕边缘自动滑进平板、从平板边缘自动滑回，全程不用按任何键，且平板上有**真正的系统鼠标指针**和**可用的中文键盘输入**。
 
@@ -442,7 +444,7 @@ adb shell dumpsys input | grep -c "scrcpy"     # 期望 0
 声音在平板侧被 `audio_source=output` 接管（`REMOTE_SUBMIX`），平板自身不外放。
 
 ```text
-scrcpy-server audio socket ──裸 PCM 48k/2ch/S16LE──► Python AudioRelay
+scrcpy-server audio socket ──裸 PCM 48k/2ch/S16LE──► padlend-core AudioRelay
                                                         │ 127.0.0.1 TCP + 16B PLAU 头
                                                         ▼
                                               Tauri audio.rs（cpal）

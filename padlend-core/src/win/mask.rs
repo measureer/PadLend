@@ -24,9 +24,9 @@
 //! `WM_CLOSE` 让窗口线程稍后收尾。**绝不能让遮罩继续盖着屏幕。**
 //!
 //! **`ClipCursor` 泄漏是灾难级故障**（6.6 的教训）：用户光标会被锁死在 1px 条里。
-//! 因此 `release()` 幂等、无异常、`ClipCursor(None)` 走无条件路径，并在首次 `show()`
-//! 时登记 atexit 兜底（12.3 第一层）。Rust 没有 `atexit`，对位物是 [`unclip_on_exit`]：
-//! 主程序退出前必须显式调用一次（见模块末尾说明）。
+//! 因此 `release()` 幂等、无异常、`ClipCursor(None)` 走无条件路径。Rust 没有 `atexit`
+//! 钩子，遮罩内部也**不再**登记任何全局兜底：由 engine 的启动/退出路径显式调用
+//! `cleanup_orphan_mask()` / [`unclip_on_exit`]（12.3 第一层）。
 //!
 //! 导入本模块不创建窗口、不锁光标（实施说明 2.6）：所有 Win32 调用都发生在
 //! [`CursorMask::show`] 之后，静态注册表是惰性的。
@@ -827,29 +827,17 @@ pub fn clip_rect_for_segment(
 }
 
 // ---------------------------------------------------------------------------
-// atexit 兜底（12.3 第一层）
+// 进程退出兜底（12.3 第一层）
 // ---------------------------------------------------------------------------
-
-static ATEXIT_GUARD: AtomicBool = AtomicBool::new(false);
 
 /// 进程退出前最后一道保险：永远不要让 `ClipCursor` 泄漏。
 ///
-/// Python 用 `atexit.register(_atexit_unclip)`；Rust 没有进程退出钩子，对位物是
-/// 本函数：**主程序（main.rs / 服务宿主）必须在退出前显式调用一次**。遮罩对象的
-/// [`CursorMask::release`]（以及 `Drop`）已经覆盖常规路径，本函数只兜"没走到 Drop"
-/// 的异常路径。
+/// Rust 没有 `atexit` 钩子，遮罩内部也不再登记全局兜底：**由 engine 的启动/退出路径
+/// 显式调用**（启动时 `cleanup_orphan_mask()` 清残留，退出时本函数无条件解锁）。
+/// 遮罩对象的 [`CursorMask::release`]（以及 `Drop`）已经覆盖常规路径，本函数只兜
+/// "没走到 Drop" 的异常路径。
 pub fn unclip_on_exit() {
     let _ = unsafe { ClipCursor(None) };
-}
-
-/// 首次 `show()` 时登记兜底（Python `_register_atexit_guard`）。幂等。
-fn register_atexit_guard() {
-    ATEXIT_GUARD.store(true, Ordering::SeqCst);
-}
-
-/// 兜底是否已登记（对应 pytest 里的 `mask_module._guard_registered`）。
-pub fn atexit_guard_registered() -> bool {
-    ATEXIT_GUARD.load(Ordering::SeqCst)
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,7 +1023,6 @@ impl CursorMask {
     /// 显示遮罩（每显示器一个窗口），可选地把光标锁到 `clip_rect`。
     pub fn show(&self, clip_rect: Option<Rect>) -> Result<(), MaskError> {
         let mut public = lock(&self.shared.public);
-        register_atexit_guard();
         let outcome = self.show_locked(&mut public, clip_rect);
         if outcome.is_err() {
             self.cleanup_quietly(&mut public, true);
@@ -2198,16 +2185,6 @@ mod tests {
         assert!(mask.active());
         assert!(mask.clip_owned());
         assert_eq!(api.current_clip(), Some(BAND_LEFT));
-    }
-
-    #[test]
-    fn show_registers_atexit_guard() {
-        let api = FakeMaskApi::new(&[MON_A]);
-        let mask = make_mask(&api);
-
-        mask.show(None).unwrap();
-
-        assert!(atexit_guard_registered());
     }
 
     #[test]

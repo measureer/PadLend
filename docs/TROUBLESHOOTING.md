@@ -11,20 +11,21 @@
 
 | 内容 | 位置 |
 |---|---|
-| 运行日志 | `%APPDATA%\PadLend\logs\padlend.log`（2 MB 轮转，保留 3 个） |
-| 引擎日志（Rust sidecar） | `%LOCALAPPDATA%\PadLend\service.log`（Rust 引擎的 stderr，逐次覆盖） |
-| 崩溃日志 | `%APPDATA%\PadLend\logs\crash-YYYYmmdd-HHMMSS-<pid>.log` |
-| 原生崩溃栈 | `%APPDATA%\PadLend\logs\faulthandler-*.log` |
+| 引擎日志（Rust sidecar） | `%LOCALAPPDATA%\PadLend\service.log`（引擎 stderr，每次启动重建） |
+| 外壳日志 | `%LOCALAPPDATA%\PadLend\shell.log`（外壳启动/退出/panic；超过 1 MiB 时下次启动轮转为 `shell.log.1`） |
 | 配置 | `%APPDATA%\PadLend\config.yaml` |
+| 设备记录 | `%APPDATA%\PadLend\devices.json` |
 | 退出标记 | `%APPDATA%\PadLend\exit.clean` |
 
 `%APPDATA%` 不可写时会回退到 `%LOCALAPPDATA%\PadLend` 或程序目录下的 `.padlend\`；设置了 `PADLEND_HOME` 时以它为准。
+注意：`%APPDATA%\PadLend\logs\` 是 1.x（Python）与设计文档里的日志目录，2.x 引擎与外壳都不往里写；
+`padlend.log`、`crash-*.log`、`faulthandler-*.log` 是 Python 版才有的文件。
 
 获取方式：
 
 - 托盘菜单 →「打开日志目录…」；
 - 托盘菜单 →「复制诊断信息」：复制一份不跑 adb 的静态摘要（版本、系统、jar/配置状态）；设备/UHID 详情请用下一项的完整诊断；
-- 顶栏右侧菜单（⋯）→「运行诊断…」→ 采集完成后点「导出 zip…」：诊断包内含 `diagnostics.txt`、`meta.json`、`adb-devices.txt`、`dumpsys-input.txt`、`logs/padlend-tail.log`（最近 512 KB）、有崩溃时的 `logs/crash-latest.log`，以及说明文件 `README.txt`。
+- 顶栏右侧菜单（⋯）→「运行诊断…」→ 采集完成后点「导出 zip…」：诊断包只含 `diagnostics.txt`（adb 设备、dumpsys input、pointer_speed、UHID 状态的脱敏正文）和说明文件 `README.txt`；**不含日志**，需要日志时按上表另取。
 
 **诊断包默认脱敏**：设备序列号、IP、MAC、Windows 用户名和用户目录会被替换为占位符（`<serial>` 等）。提交 issue 前仍建议打开 `diagnostics.txt` 扫一眼。
 
@@ -37,15 +38,15 @@
 当前发布未做代码签名（除非发布者用证书构建），Windows 会拦未知发布者的 exe：
 
 1. 点“更多信息”，再点“仍要运行”；
-2. 确认下载完整：用 `Get-FileHash .\PadLend-1.0.1-win64.zip -Algorithm SHA256` 与 Release 附带的 `SHA256SUMS.txt` 比对；
+2. 确认下载完整：用 `Get-FileHash .\PadLend-<版本>-win64.zip -Algorithm SHA256` 与 Release 附带的 `SHA256SUMS.txt` 比对；
 3. 若被杀软隔离，核对哈希后加白名单，或按 README 从源码构建；
-4. 不要只把 `PadLend.exe` 从 zip 里单独拖出来——它依赖同目录 `_internal\` 下的 Qt/Python 运行时，缺了会启动即报错。
+4. 不要只把 `PadLend.exe` 从 zip 里单独拖出来——它依赖同目录的 `padlend-core.exe` 与 `vendor\`，缺了会启动即报错。
 
 ### 双击没反应 / 启动后立即退出
 
-- 先看 `logs\crash-*.log` 与 `logs\padlend.log` 末尾；窗口版没有控制台，错误只进日志。
-- 确认整个 `PadLend\` 目录完整（`PadLend.exe`、`_internal\`、`vendor\` 在 `_internal\` 内）。
-- 窗口版没有控制台，从 cmd 启动也看不到 stdout；启动失败会写入 `crash-*.log`（主窗尚未初始化时另有错误弹窗）。
+- 先看 `%LOCALAPPDATA%\PadLend\shell.log` 末尾；窗口版没有控制台，错误只进日志。
+- 确认整个 `PadLend\` 目录完整：`PadLend.exe`、`padlend-core.exe` 与 `vendor\` 必须在同一目录。
+- 引擎（`padlend-core.exe`）启动失败时程序会弹「PadLend 无法启动」错误框，写明缺失项与日志路径，然后正常退出（不再静默消失）；同一原因也会写进 `shell.log`。
 
 ### 提示找不到或校验失败 scrcpy-server jar
 
@@ -197,7 +198,7 @@ adb forward tcp:1234 localabstract:scrcpy
   PadLend 没有被静音，系统默认输出设备不是已拔掉的 HDMI/蓝牙。
 - 转发的是平板**全部系统声音**（通知、通话也会进来）；受 DRM 保护的视频可能只有画面没有声音。
 - 保存设置后**断开再重连**就够，不需要重启 PadLend；如果重连还是无声，确认引擎版本——早于本修复的 Rust 引擎把配置当构造期快照，改了开关也必须重启进程。
-- 仍无声时，把 `%APPDATA%\PadLend\logs\padlend.log` 和 Windows 的输出设备型号一起提供；
+- 仍无声时，把 `%LOCALAPPDATA%\PadLend\` 下的 `service.log`、`shell.log` 和 Windows 的输出设备型号一起提供；
   当前版本没有在无声卡环境做真机试听，需要按实际设备排查。
 
 ## 3. 鼠标/指针
@@ -311,4 +312,4 @@ adb shell settings put system pointer_location 0
 
 ## 9. 真机验收
 
-验收项、环境与最近一次结果见 [VERIFICATION.md](VERIFICATION.md)。提交问题时请附：PadLend 版本（关于对话框）、Windows 版本、平板型号/Android 版本、诊断包，以及复现步骤。
+1.4.0 之前的验收项与环境记录见 [archive/VERIFICATION.md](archive/VERIFICATION.md)（历史，门禁仍是 pytest/ruff）。提交问题时请附：PadLend 版本（关于对话框）、Windows 版本、平板型号/Android 版本、诊断包，以及复现步骤。

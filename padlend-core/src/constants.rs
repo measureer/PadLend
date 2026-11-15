@@ -201,11 +201,6 @@ pub fn log_dir() -> Result<PathBuf, ConstantsError> {
     Ok(config_dir()?.join("logs"))
 }
 
-/// 正常退出标记文件：存在 = 上次正常退出；缺失 = 需要启动前强制清理（7.5 / 12.3）。
-pub fn clean_exit_marker() -> Result<PathBuf, ConstantsError> {
-    Ok(config_dir()?.join("exit.clean"))
-}
-
 // ---------------------------------------------------------------------------
 // scrcpy-server（6.1.2 / 9.5）
 // ---------------------------------------------------------------------------
@@ -698,10 +693,6 @@ mod tests {
         let base = config_dir().expect("默认配置目录应可写");
         assert_eq!(config_path().expect("config.yaml"), base.join("config.yaml"));
         assert_eq!(log_dir().expect("logs"), base.join("logs"));
-        assert_eq!(
-            clean_exit_marker().expect("exit.clean"),
-            base.join("exit.clean")
-        );
     }
 
     #[test]

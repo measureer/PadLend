@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../components/Icon';
 import { Button, Card, TextInput } from '../../components/ui';
 import { useDebouncedValue, useElementSize, useRafCallback } from '../../hooks';
+import { loadRecentLogs } from '../../lib/actions';
 import { logEventTone, metricLine } from '../../lib/format';
 import { useAppStore } from '../../store/appStore';
 
@@ -75,7 +76,7 @@ export function LogsPage() {
         </div>
         <div className="page-actions">
           <span className="badge accent">{logs.length} 条事件</span>
-          <Button icon="refresh" onClick={() => void import('../../lib/actions').then((m) => m.loadRecentLogs())}>重新载入</Button>
+          <Button icon="refresh" onClick={() => void loadRecentLogs()}>重新载入</Button>
         </div>
       </div>
 
@@ -101,8 +102,14 @@ export function LogsPage() {
             ) : (
               <>
                 <div style={{ height: start * ROW_HEIGHT }} />
-                {rows.map((entry, index) => (
-                  <LogRow key={`${start + index}-${entry.timestamp}-${entry.event}`} {...entry} />
+                {rows.map((entry) => (
+                  // key 用日志自身的稳定序号：滚动时 start 变化不会导致整段行重挂载。
+                  <LogRow
+                    key={entry.seq ?? `${entry.timestamp}|${entry.event}|${entry.message}`}
+                    timestamp={entry.timestamp}
+                    event={entry.event}
+                    message={entry.message}
+                  />
                 ))}
                 <div style={{ height: Math.max(0, (filtered.length - start - rows.length) * ROW_HEIGHT) }} />
               </>

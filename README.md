@@ -4,7 +4,7 @@
 
 一般不需要 root，不需要在平板上安装 App，也不用装驱动。PC 端通过 adb 启动 scrcpy-server，平板通过 UHID 接收虚拟鼠标和键盘输入。
 
-当前源码版本 **1.6.0**（最新发布仍为 1.2.0），Apache-2.0。1.6.0 修掉「点连接后整个界面卡死」：引擎的 RPC 请求改成每个请求独立线程，连接期间设置、移除设备、急停都还能用，连接中还可以点「取消连接」随时中止；同一台平板换了无线端口会合并回原记录，不再变成两台；Android 11 以下没有系统音频回采，开启「转发平板声音」会自动降级为只开控制通道，而不是一直连不上。1.5.0 让引擎在连不上无线端点时自己重找平板：每 10 秒静默做一次 mDNS/ARP 定位，地址变了就写回注册表与配置并自动重连；找不到时只提示一次「平板不在线」，不再无限重试已经失效的旧端口。1.4.0 新增可选的「转发平板声音」：在设置里开启并重新连接后，平板播放的媒体与系统声音会通过本机 TCP 送到 Windows 播放，平板自身静音；默认关闭，失败时自动退回只有键鼠的控制通道。1.3.0 新增设备注册表 `devices.json`：同一台平板换 IP、换端口或重启无线调试后，仍按硬件序列号认成同一台，只在这台设备的记录内自动切换端点；连接前先做 0.6 秒 TCP 预检，不再被失效的历史地址拖住 40 秒；设备地址输入支持主机名和 `[IPv6]:端口`。1.2.1 把「保持平板亮屏」从开发者选项的 `svc power stayon` 改为连接期间临时调大系统的 `screen_off_timeout`（断开还原），删除没有运行时实现的「显示指针幽灵」开关，并把首次向导从 5 步压成 3 步；adb 与 scrcpy-server 仍随包内置。1.2.0 修复托盘点「退出」只隐藏窗口、接管期按 Win 键会把开始菜单盖在遮罩下（看起来像死机），以及崩溃/强杀后遗留孤儿遮罩的问题；同时把退出清理改成同步、幂等，并补上父进程看门狗。1.1.2 修复接管交还后遮罩窗口残留，1.1.1 修复接管期间电脑屏幕上重新出现鼠标指针；1.1.0 起前端为 **Tauri 2 + React 19 + TypeScript**，业务引擎仍由 Python 服务进程承载，不再依赖 Qt/PySide6。选型理由与迁移细节见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)，引擎设计见 [docs/DESIGN.md](docs/DESIGN.md)，遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
+当前源码版本 **2.0.6**，Apache-2.0。2.0.x 修掉一批真机问题：转屏识别时灵时不灵（adb 把 `sh -c` 拆开，查询每轮超时）、接管期间转屏界面不跟随、平板越用越卡（window dump 拖死 adbd）、无线调试换端口后只能重启应用、平板掉线后界面仍显示「已连接」、指针周期性卡顿；完整记录见 [CHANGELOG](docs/CHANGELOG.md)。1.7.0 起引擎（`padlend-core`）与 Tauri 2 外壳都是 Rust，Python 实现已整体移除；1.1.0 起界面为 **Tauri 2 + React 19 + TypeScript**，不再依赖 Qt/PySide6。界面外壳的迁移记录见 [docs/TAURI_MIGRATION.md](docs/TAURI_MIGRATION.md)（历史文档，其中「业务层继续用 Python」的结论已被 1.7.0 推翻），引擎协议与 Win32 设计见 [docs/DESIGN.md](docs/DESIGN.md)（1.0.x 时期设计稿），遇到问题先看 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)，开发期踩坑见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
 ![桌面布局页](docs/screenshots/tauri-layout.png)
 
@@ -30,7 +30,7 @@
 | PC | Windows 10/11 x64，需 WebView2 Runtime（Win11 通常已内置） |
 | 平板 | Android 8.0+，且 `/dev/uhid` 可写；音频转发需 Android 11+ |
 | 连接 | USB 数据线（推荐）或无线 adb |
-| 开发 | Node.js 22+、Rust 1.77+ / MSVC、Python 3.11+（开发使用 3.13） |
+| 开发 | Node.js 22+、Rust 1.82+（MSVC 工具链 + Windows SDK）、WebView2 运行时 |
 
 已在 Honor MagicPad 3（CGA-W00，Android 17，3200×2136）上验证。其他机型只要 UHID 可用，首次连接会读取真实分辨率、朝向和输入参数，不按型号写死。
 
@@ -46,15 +46,17 @@ adb shell 'exec 3<>/dev/uhid && echo OPEN_OK'
 
 到 [GitHub Releases](https://github.com/measureer/PadLend/releases) 下载最新发布：
 
-- `PadLend-1.2.0-setup.exe`：NSIS 安装器，装到当前用户目录，不需要管理员权限。
-- `PadLend-1.2.0-win64.zip`：免安装包，解压即用。
+- `PadLend-<版本>-setup.exe`：NSIS 安装器，装到当前用户目录，不需要管理员权限。
+- `PadLend-<版本>-win64.zip`：免安装包，解压即用。
 - `SHA256SUMS.txt`：下载后建议核对。
 
+以 2.0.6 为例：
+
 ```powershell
-Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
+Get-FileHash .\PadLend-2.0.6-win64.zip -Algorithm SHA256
 ```
 
-安装器默认装到 `%LOCALAPPDATA%\Programs\PadLend`。配置和日志默认写在 `%APPDATA%\PadLend\`，升级覆盖程序目录不会丢配置。免安装包请保持 `PadLend.exe`、sidecar exe 与 `vendor\` 在同一目录。
+安装器默认装到 `%LOCALAPPDATA%\Programs\PadLend`。配置写在 `%APPDATA%\PadLend\`（`config.yaml`、`devices.json`），升级覆盖程序目录不会丢配置；日志写在 `%LOCALAPPDATA%\PadLend\`（见「日志与诊断」）。免安装包请保持 `PadLend.exe`、`padlend-core.exe` 与 `vendor\` 在同一目录。
 
 > 当前构建没有代码签名，Windows 可能提示「未知发布者」；点「更多信息 → 仍要运行」，或按 SHA-256 核对。
 
@@ -89,7 +91,7 @@ Get-FileHash .\PadLend-1.2.0-win64.zip -Algorithm SHA256
 
 ## 配置
 
-配置文件在 `%APPDATA%\PadLend\config.yaml`，设备记录在同目录的 `devices.json`（自动维护，不要手改），日志在 `logs\` 下。设置 `PADLEND_HOME` 可以换一个根目录；`%APPDATA%` 不可写时会依次回退到 `%LOCALAPPDATA%\PadLend` 和程序目录下的 `.padlend\`。
+配置文件在 `%APPDATA%\PadLend\config.yaml`，设备记录在同目录的 `devices.json`（自动维护，不要手改），日志在 `%LOCALAPPDATA%\PadLend\`（见[日志与诊断](#日志与诊断)）。设置 `PADLEND_HOME` 可以换一个根目录；`%APPDATA%` 不可写时会依次回退到 `%LOCALAPPDATA%\PadLend` 和程序目录下的 `.padlend\`。
 
 首次启动会自动生成配置。常用字段：
 
@@ -149,11 +151,10 @@ YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `c
 
 ## 日志与诊断
 
-- `%APPDATA%\PadLend\logs\padlend.log`：运行日志，2 MB 轮转，保留 3 个文件。
-- `logs\crash-YYYYmmdd-HHMMSS-<pid>.log`：未捕获异常的 traceback、版本和启动参数。
-- `logs\faulthandler-*.log`：原生崩溃时的全线程栈。
-- 托盘菜单的「打开日志目录…」可以直接打开上述目录。
-- 顶栏 `⋯` →「运行诊断…」会采集 adb 设备、dumpsys input、pointer_speed、UHID 状态和最近 512 KB 日志，并可导出 zip。序列号、IP、MAC、用户名和用户目录默认打码。
+- 引擎日志：`%LOCALAPPDATA%\PadLend\service.log`（Rust 引擎的 stderr，每次启动重建）。
+- 外壳日志：`%LOCALAPPDATA%\PadLend\shell.log`（Tauri 外壳的启动/退出/panic 记录；单文件超过 1 MiB 时下次启动轮转为 `shell.log.1`）。
+- 托盘菜单的「打开日志目录…」直接打开 `%LOCALAPPDATA%\PadLend`。
+- 顶栏 `⋯` →「运行诊断…」会采集 adb 设备、dumpsys input、pointer_speed 和 UHID 状态，并可导出 zip。zip 里只有两个文件：`diagnostics.txt`（脱敏正文）与 `README.txt`（说明）；不含日志，需要日志时按上面的路径另取。序列号、IP、MAC、用户名和用户目录默认打码。
 - 托盘菜单的「复制诊断信息」只复制版本、系统、jar 状态等静态摘要，不会跑 adb。
 
 ## 常见问题
@@ -197,11 +198,11 @@ PadLend/
 
 1.7.0 起 Python 实现（`core/`、`win/`、`tablet/`、`service/`、`padlend-service.exe`）已整体移除，仓库里只剩 Rust 引擎与 Tauri 外壳两套代码。
 
-> `docs/DESIGN.md` 等历史文档描述的是引擎与协议设计，仍然有效；其中涉及 Qt 窗口/控件的章节属于 1.0.x 旧界面，已由 `docs/TAURI_MIGRATION.md` 取代。
+> `docs/DESIGN.md` 是 1.0.x 时期的设计稿：协议与 Win32 输入链路章节仍有参考价值，Python/PySide6 模块布局与 Qt 章节已被 1.7.0 的 Rust 实现和 Tauri 2 外壳取代。迁移期的 B2/可行性/验收报告已归档到 [docs/archive/](docs/archive/)。
 
 ## 从源码构建
 
-依赖：Node 20+、Rust 1.77+（MSVC 工具链 + Windows SDK）、WebView2 运行时。
+依赖：Node 22+、Rust 1.82+（引擎 `rust-version`；外壳为 1.77.2，构建整个仓库按 1.82 装）、MSVC 工具链 + Windows SDK、WebView2 运行时。
 
 ```powershell
 npm ci

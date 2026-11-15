@@ -1,7 +1,12 @@
 # PadLend 前端迁移：PySide6 → Tauri 2 + React/TypeScript
 
-> 版本基线：源码 1.0.5 → 发布为 **1.1.0**。本文说明选型理由、目标架构、主要改动、
-> 视觉/性能/架构优化结果，以及验证结论与后续构建步骤。1.1.0 已删除全部旧 Qt 代码。
+> **历史文档（2026-11）**：版本基线是源码 1.0.5 → 发布为 **1.1.0**。本文记录界面
+> （PySide6 → Tauri 2 + React）的选型理由、目标架构、主要改动与优化结果。
+>
+> ⚠️ 文中「业务层继续用 Python、不必用 Rust 重写」的结论**已被 1.7.0 推翻**：现在引擎
+> （`padlend-core`）和外壳都是 Rust，`core/`、`tablet/`、`win/` 等 Python 模块已整体删除。
+> 本文只剩 Tauri/React 选型与界面迁移的参考价值；引擎现状见 [DESIGN.md](DESIGN.md)（历史设计稿）
+> 与 [../README.md](../README.md)，迁移期报告见 [archive/](archive/)。
 
 ---
 

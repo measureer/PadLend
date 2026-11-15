@@ -142,7 +142,11 @@ $lines = foreach ($file in $files) {
     Write-Step ("sha256 {0}…  {1}" -f $hash.Substring(0, 16), $file.Name)
     "$hash  $($file.Name)"
 }
-$lines | Set-Content -Path (Join-Path $Dist "SHA256SUMS.txt") -Encoding utf8
+# 必须写成无 BOM 的 UTF-8：Windows PowerShell 5.1 的 `-Encoding utf8` 会加 EF BB BF，
+# 首行因此变成 "<BOM><hash>  <name>"，sha256sum -c / certutil 等按行解析的工具会报格式错误
+# （2.0.6 的发版产物就带着这个 BOM）。不要改回 Set-Content。
+$sumsPath = Join-Path $Dist "SHA256SUMS.txt"
+[IO.File]::WriteAllText($sumsPath, (($lines -join "`r`n") + "`r`n"), [Text.UTF8Encoding]::new($false))
 
 Write-Step "完成：$AppName $Version"
 Get-ChildItem $Dist -File | Select-Object Name, Length | Format-Table -AutoSize

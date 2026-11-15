@@ -32,6 +32,14 @@ pub fn log_path() -> PathBuf {
     base.join("PadLend").join("shell.log")
 }
 
+/// 日志目录（shell.log 与引擎 service.log 所在）。托盘「打开日志目录…」打开它。
+pub fn log_dir() -> PathBuf {
+    log_path()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 /// 启动时调用一次：建目录、必要时轮转、写一行版本头。
 pub fn init(version: &str) {
     let path = log_path();

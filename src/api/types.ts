@@ -84,7 +84,7 @@ export interface DeviceItem {
   remembered: boolean;
   located: string;
   locatedDetail: string;
-  /** 最后一次成功连接的 UTC ISO 时间；从未成功时为空。 */
+  /** 最后一次成功连接的本地时间（ISO 秒，无时区后缀）；从未成功时为空。 */
   lastSeen: string;
 }
 
@@ -104,6 +104,8 @@ export interface LogEntry {
   timestamp: string;
   event: string;
   message: string;
+  /** 前端本地自增序号（虚拟列表 key）；引擎不下发，由 store 追加。 */
+  seq?: number;
 }
 
 export interface PlacementCfg {

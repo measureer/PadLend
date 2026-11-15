@@ -40,10 +40,10 @@ pub fn set_tray_state(captured: bool, connected: bool, device: String, app: AppH
 /// 用系统默认程序打开文件或目录（配置、日志目录、第三方许可）。
 ///
 /// 1.7.5 起改由外壳直接调用插件 Rust API：前端走 `plugin:opener|open_path` 时会先过
-/// capability 的 path scope，而能力清单里只声明了 `opener:allow-open-path`（无 scope 条目，
+/// capability 的 path scope，当时清单里只有字符串 `opener:allow-open-path`（无 scope 条目，
 /// 见 Tauri 的 ACL："without any pre-configured scope"），于是任何路径都被拒，前端只收到
 /// 一个裸字符串错误，最终提示成「无法打开：undefined」——「打开配置…」「打开日志目录…」
-/// 两个托盘菜单项因此完全不可用。
+/// 两个托盘菜单项因此完全不可用。该权限现已从清单删除，路径由本命令自行校验。
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     let target = std::path::PathBuf::from(&path);

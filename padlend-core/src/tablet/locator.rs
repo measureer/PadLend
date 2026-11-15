@@ -321,38 +321,71 @@ fn parse_ipv4_at(bytes: &[u8], index: usize) -> Option<(String, usize)> {
 /// 发现无线调试服务，保留 TXT 里的 serial/model。
 ///
 /// adb mdns services 的原始行没有 TXT 字段，但能给出当前端口；直接 mDNS
-/// 查询（Windows 上更常见）则能拿到硬件序列号。两路都失败时返回空。
+/// 查询（Windows 上更常见）则能拿到硬件序列号。
+///
+/// P1-15：两路必须合并，不能「adb 有结果就直接返回」。`adb mdns services` 的输出
+/// 只有「实例名 / 服务类型 / 地址」三列，硬件序列号只存在于直接 mDNS 查询的 TXT
+/// 记录里；旧实现在 adb 那一路一旦有结果就提前返回，构造出的 `MdnsService.serial`
+/// 永远是空串，`locate_with` 里「换 IP 后按硬件序列号找回」于是永不命中
+/// （PITFALLS 1.6 记录过同一个 bug，见 locator.py:153）。现在两路都跑：同 ip:port
+/// 用 TXT 补全 serial/model，只有 adb 那一路才有的候选原样保留。
+///
+/// 代价：adb 有结果时也要等一次直接查询（最多 timeout 秒）。调用点在断线重定位的
+/// 10s 循环里（service/engine.rs 的 relocate_wireless），不在热路径上。
 pub fn discovered_mdns(
     adb_mdns: Option<&dyn Fn() -> Vec<String>>,
     timeout: f64,
 ) -> Vec<MdnsService> {
+    discovered_mdns_with(adb_mdns, timeout, &mdns::discover)
+}
+
+/// [discovered_mdns] 的可注入版本：discover 是直接 mDNS 查询（测试替换成假查询）。
+fn discovered_mdns_with(
+    adb_mdns: Option<&dyn Fn() -> Vec<String>>,
+    timeout: f64,
+    discover: &dyn Fn(f64) -> Vec<MdnsService>,
+) -> Vec<MdnsService> {
+    let mut found: Vec<MdnsService> = Vec::new();
     if let Some(query) = adb_mdns {
         let lines = query();
-        let pairs = parse_mdns(&lines, Some(ADB_CONNECT_SERVICE));
-        if !pairs.is_empty() {
-            return pairs
-                .into_iter()
-                .map(|(ip, port)| MdnsService {
+        for (ip, port) in parse_mdns(&lines, Some(ADB_CONNECT_SERVICE)) {
+            push_mdns_service(
+                &mut found,
+                MdnsService {
                     ip,
                     port,
                     ..MdnsService::default()
-                })
-                .collect();
+                },
+            );
         }
     }
-
-    let services = mdns::discover(timeout);
-    let mut found: Vec<MdnsService> = Vec::new();
-    let mut seen: Vec<(String, u16)> = Vec::new();
-    for item in services {
-        let pair = (item.ip.clone(), item.port);
-        if seen.contains(&pair) {
-            continue;
-        }
-        seen.push(pair);
-        found.push(item);
+    for item in discover(timeout) {
+        push_mdns_service(&mut found, item);
     }
     found
+}
+
+/// 按 ip:port 去重；重复时用后到的 TXT 信息补全前一条（serial/model/target/name）。
+fn push_mdns_service(found: &mut Vec<MdnsService>, item: MdnsService) {
+    if let Some(existing) = found
+        .iter_mut()
+        .find(|other| other.ip == item.ip && other.port == item.port)
+    {
+        if existing.serial.is_empty() {
+            existing.serial = item.serial;
+        }
+        if existing.model.is_empty() {
+            existing.model = item.model;
+        }
+        if existing.name.is_empty() {
+            existing.name = item.name;
+        }
+        if existing.target.is_empty() {
+            existing.target = item.target;
+        }
+        return;
+    }
+    found.push(item);
 }
 
 /// 兼容旧调用方：只返回 (ip, port)。
@@ -882,21 +915,132 @@ mod tests {
     }
 
     #[test]
-    fn discovered_services_prefers_adb_output() {
-        let lines = || vec!["adb-ABC._adb-tls-connect._tcp\t192.168.1.8:41234".to_string()];
-        assert_eq!(
-            discovered_services(Some(&lines), 1.2),
-            vec![("192.168.1.8".to_string(), 41234)]
-        );
+    fn discovered_mdns_fills_the_hardware_serial_from_the_direct_query() {
+        // P1-15：adb mdns services 的输出没有 TXT，serial 只能由直接 mDNS 查询补。
+        // 旧实现只要 adb 那一路有结果就提前返回，serial 永远是空串，
+        // locate_with 的「按硬件序列号找回」永不命中。
+        let lines = || {
+            vec![
+                "adb-AM4NBB5C23001691-xn14x2._adb-tls-connect._tcp\t192.168.1.8:41234".to_string(),
+            ]
+        };
+        let direct = |_timeout: f64| {
+            vec![MdnsService {
+                ip: "192.168.1.8".to_string(),
+                port: 41234,
+                name: "adb-AM4NBB5C23001691-xn14x2._adb-tls-connect._tcp".to_string(),
+                serial: "AM4NBB5C23001691".to_string(),
+                model: "CGA-W00".to_string(),
+                ..MdnsService::default()
+            }]
+        };
+        let found = discovered_mdns_with(Some(&lines), 1.2, &direct);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].serial, "AM4NBB5C23001691");
+        assert_eq!(found[0].model, "CGA-W00");
+        assert_eq!(found[0].port, 41234);
     }
 
     #[test]
-    fn discovered_mdns_keeps_hardware_serial() {
-        // 直接 mDNS 分支会真的发组播，这里只在 adb 输出为空时验证去重逻辑：
-        // 用空列表让它走 discover（可能为空），断言不 panic 且不超过上限。
-        let empty = || Vec::new();
-        let found = discovered_mdns(Some(&empty), 0.15);
-        assert!(found.len() <= 64);
+    fn discovered_mdns_keeps_candidates_from_both_sources_without_duplicates() {
+        let lines = || vec!["adb-ABC._adb-tls-connect._tcp\t192.168.1.8:41234".to_string()];
+        let direct = |_timeout: f64| {
+            vec![
+                MdnsService {
+                    ip: "192.168.1.8".to_string(),
+                    port: 41234,
+                    serial: "HW1".to_string(),
+                    ..MdnsService::default()
+                },
+                MdnsService {
+                    ip: "192.168.1.8".to_string(),
+                    port: 44803,
+                    serial: "HW1".to_string(),
+                    ..MdnsService::default()
+                },
+                MdnsService {
+                    ip: "192.168.1.8".to_string(),
+                    port: 44803,
+                    serial: "HW1".to_string(),
+                    ..MdnsService::default()
+                },
+            ]
+        };
+        let found = discovered_mdns_with(Some(&lines), 1.2, &direct);
+        let pairs: Vec<(String, u16)> = found
+            .iter()
+            .map(|item| (item.ip.clone(), item.port))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("192.168.1.8".to_string(), 41234),
+                ("192.168.1.8".to_string(), 44803)
+            ]
+        );
+        assert!(found.iter().all(|item| item.serial == "HW1"));
+    }
+
+    #[test]
+    fn discovered_services_falls_back_to_the_direct_query() {
+        // Windows 上 adb mdns 常常没有守护进程：adb 那一路为空也要能发现。
+        let empty_lines = || Vec::new();
+        let direct = |_timeout: f64| {
+            vec![MdnsService {
+                ip: "192.168.1.9".to_string(),
+                port: 37000,
+                serial: "HW9".to_string(),
+                ..MdnsService::default()
+            }]
+        };
+        let found = discovered_mdns_with(Some(&empty_lines), 1.2, &direct);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].serial, "HW9");
+    }
+
+    #[test]
+    fn discovered_mdns_dedupes_when_the_direct_query_is_empty() {
+        let lines = || {
+            vec![
+                "adb-ABC._adb-tls-connect._tcp\t192.168.1.8:41234".to_string(),
+                "adb-ABC._adb-tls-connect._tcp\t192.168.1.8:41234".to_string(),
+            ]
+        };
+        let empty = |_timeout: f64| Vec::new();
+        let found = discovered_mdns_with(Some(&lines), 0.15, &empty);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].serial.is_empty());
+    }
+
+    #[test]
+    fn locate_uses_the_txt_serial_from_a_merged_discovery() {
+        // 端到端回归：adb mdns 只给 ip:port，直接查询补出硬件序列号，
+        // 换 IP 后 locate_with 才能按序列号找回（旧实现在这里永远匹配不到）。
+        let lines = || vec!["adb-ABC._adb-tls-connect._tcp\t192.168.1.8:41234".to_string()];
+        let direct = |_timeout: f64| {
+            vec![MdnsService {
+                ip: "10.0.0.5".to_string(),
+                port: 5555,
+                serial: "HW1".to_string(),
+                ..MdnsService::default()
+            }]
+        };
+        let services = discovered_mdns_with(Some(&lines), 1.2, &direct);
+        let lookup = || services.clone();
+        let tcp = |ip: &str, port: u16, _timeout: f64| (ip, port) == ("10.0.0.5", 5555);
+        let found = locate_with(
+            "192.168.1.8:37495",
+            "",
+            "HW1",
+            None,
+            Some(&lookup),
+            None,
+            1.5,
+            &tcp,
+        );
+        assert_eq!(found.status, Some(LocateStatus::Moved));
+        assert_eq!(found.address, "10.0.0.5:5555");
+        assert!(found.detail.contains("硬件序列号"));
     }
 
     #[test]

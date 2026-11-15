@@ -35,7 +35,23 @@ describe('validateDeviceAddress', () => {
   it('拒绝空地址和非法主机名', () => {
     expect(validateDeviceAddress('')).toContain('请填写');
     expect(validateDeviceAddress('bad_host:5555')).toContain('主机名');
-    expect(validateDeviceAddress('pad..local:5555')).toBe('');
+    // 空标签不是合法主机名（旧白名单正则把它放过去了）
+    expect(validateDeviceAddress('pad..local:5555')).toContain('主机名');
+  });
+
+  it('IPv4 每段必须在 0..255 内', () => {
+    expect(validateDeviceAddress('999.999.999.999:5555')).toContain('主机名');
+    expect(validateDeviceAddress('192.168.1.256:5555')).toContain('主机名');
+    expect(validateDeviceAddress('192.168.1.23:5555')).toBe('');
+    expect(validateDeviceAddress('255.255.255.255:5555')).toBe('');
+    expect(validateDeviceAddress('0.0.0.0:5555')).toBe('');
+  });
+
+  it('主机名按 RFC 1123 逐段校验', () => {
+    expect(validateDeviceAddress('-a.local:5555')).toContain('主机名');
+    expect(validateDeviceAddress('a-.local:5555')).toContain('主机名');
+    expect(validateDeviceAddress(`${'a'.repeat(64)}.local:5555`)).toContain('主机名');
+    expect(validateDeviceAddress('tablet.local.:5555')).toBe('');
   });
 
   it('拒绝非法 IPv6 与缺端口方括号', () => {

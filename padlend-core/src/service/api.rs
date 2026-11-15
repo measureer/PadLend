@@ -1,4 +1,4 @@
-//! 25 个 RPC 方法的实现（对应 Python service/api.py 的 handlers）。
+//! 29 个 RPC 方法的实现（对应 Python service/api.py 的 handlers）。
 //!
 //! 返回值形状与 tests/fixtures/rpc_golden/simulate.ndjson 对齐；错误文案逐字
 //! 沿用 Python（gate 会比对 ok:false 的 error 文本）。
@@ -61,7 +61,6 @@ fn dispatch(engine: &Arc<Engine>, method: &str, params: &Value) -> Result<Value,
         "engine.panic" => Ok(engine_panic(engine)),
         "engine.reconnect" => Ok(engine_reconnect(engine)),
         "engine.inject_clipboard" => Ok(engine_inject_clipboard(engine, params)),
-    "engine.android_key" => engine_android_key(engine, params),
         // -- 指针校准（2.0.0）---------------------------------------------
         "pointer.calibrate_begin" => pointer_calibrate_begin(engine),
         "pointer.calibrate_state" => Ok(pointer_calibrate_state(engine)),
@@ -104,12 +103,25 @@ fn config_path_text(engine: &Engine) -> String {
     engine.config_path().display().to_string()
 }
 
+/// 真实日志目录：外壳把引擎 stderr 重定向到 %LOCALAPPDATA%\PadLend\service.log
+/// （src-tauri/src/bridge.rs），shell.log 也在同目录。历史设计里的 config_dir/logs
+/// 在 2.x 没有任何写入者，前端的「打开日志目录…」不能打开那个空目录。
+fn log_dir_text() -> String {
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        return std::path::PathBuf::from(base)
+            .join("PadLend")
+            .display()
+            .to_string();
+    }
+    C::log_dir().map(|path| path.display().to_string()).unwrap_or_default()
+}
+
 // -- app / config --------------------------------------------------------
 
 fn system_paths(engine: &Engine) -> Value {
     json!({
         "configPath": config_path_text(engine),
-        "logDir": C::log_dir().map(|path| path.display().to_string()).unwrap_or_default(),
+        "logDir": log_dir_text(),
         "noticesPath": C::app_dir().join("THIRD_PARTY_NOTICES.md").display().to_string(),
         "version": C::VERSION,
         "license": C::LICENSE,
@@ -387,7 +399,11 @@ fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String>
         }
     }
     if removed {
-        engine.save_registry();
+        // 写盘失败（磁盘满、目录只读）以前被 save_registry 的 bool 吞掉：界面显示删掉了，
+        // 重启后记录又回来。这里把原因交给事件日志，至少用户能在诊断里看到（P1-26）。
+        if let Err(err) = engine.with_registry(|registry| registry.save_checked()) {
+            engine.emit_log("DEVICE", format!("保存设备记录失败：{err}"));
+        }
         engine.remove_located(&serial);
     }
     if removed_current || current == serial {
@@ -422,6 +438,15 @@ fn layout_initial(engine: &Arc<Engine>) -> Value {
 }
 
 fn layout_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
+    // `remove:true` 走独立分支 —— 删除某设备某方向的存档只需要
+    // identity + orientation，不再要求带一个完整的 placement 对象。
+    if params
+        .get("remove")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return layout_remove(engine, params);
+    }
     let data = params.get("placement").cloned().unwrap_or(Value::Null);
     if !data.is_object() {
         return Err("没有可保存的布局".to_string());
@@ -491,6 +516,77 @@ fn layout_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
     }))
 }
 
+/// 删除一台设备某个方向的布局存档（`layout.save` + `remove:true`）。
+///
+/// 删掉的可能正是当前生效的那条：先无条件清掉 `layout_key`，再按"现在的事实"
+/// 重算一次 —— 有设备就走 `apply_layout_for_facts`（同设备另一方向还在就切过去，
+/// 都没有就回退全局 `placement`）；没设备（模拟/已断开）就直接回退全局摆位。
+fn layout_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
+    let mut identity = text_param(params, "identity");
+    if identity.is_empty() {
+        identity = engine.layout_identity(None);
+    }
+    if identity.is_empty() {
+        return Err("没有可删除的布局：请先连接平板或指定设备".to_string());
+    }
+    let mut bucket = text_param(params, "orientation");
+    if bucket.is_empty() {
+        bucket = engine.orientation_bucket(None);
+    }
+    let bucket_text = if bucket == "portrait" { "竖屏" } else { "横屏" };
+
+    let path = engine.config_path().to_path_buf();
+    let removed = engine.with_config(|config| config.layouts.remove(&identity, &bucket));
+    let problems = engine.with_config(|config| {
+        let mut problems = Vec::new();
+        if removed {
+            if let Err(err) = config.save(&path) {
+                problems.push(err.to_string());
+            }
+        }
+        problems
+    });
+    if !problems.is_empty() {
+        return Err(problems.join("；"));
+    }
+
+    engine.set_layout_key("", "");
+    match engine.facts() {
+        Some(facts) => engine.apply_layout_for_facts(&facts),
+        None => {
+            let global = engine.with_config(|config| config.placement.clone());
+            if let Some(placement) = engine.placement_from_config(&global, false) {
+                engine.set_placement_value(placement.clone());
+                engine.emit(
+                    "placement",
+                    json!({
+                        "placement": S::placement_dict(Some(&placement)),
+                        "dirty": false,
+                        "reason": "global",
+                    }),
+                );
+            }
+        }
+    }
+
+    let config = engine.config_dict()?;
+    engine.emit("config", json!({ "config": config.clone(), "issues": [] }));
+    engine.emit_log(
+        "PLACE",
+        format!(
+            "布局已移除（{bucket_text}）：{identity}{}",
+            if removed { "" } else { "（原本没有存档）" }
+        ),
+    );
+    let placement = engine.placement();
+    Ok(json!({
+        "ok": true,
+        "removed": removed,
+        "config": config,
+        "placement": S::placement_dict(placement.as_ref()),
+    }))
+}
+
 // -- 引擎 ----------------------------------------------------------------
 
 pub(crate) fn engine_toggle(engine: &Arc<Engine>) -> Value {
@@ -527,21 +623,6 @@ fn engine_inject_clipboard(engine: &Arc<Engine>, params: &Value) -> Value {
         }
     }
     json!({ "ok": ok })
-}
-
-/// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量。
-///
-/// 与全局快捷键走同一条路径（`Engine::press_android`）：不依赖接管状态、不需要键盘转发。
-fn engine_android_key(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
-    let name = params
-        .get("action")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let Some(action) = crate::tablet::protocol::AndroidAction::parse(name) else {
-        return Err(format!("不支持的平板动作：{name}"));
-    };
-    let ok = engine.press_android(action);
-    Ok(json!({ "ok": ok, "action": action.as_str(), "label": action.label() }))
 }
 
 fn engine_state(engine: &Arc<Engine>) -> Value {
@@ -704,6 +785,10 @@ mod tests {
         assert_eq!(object.len(), 6);
         assert!(object.contains_key("configPath"));
         assert!(object.contains_key("noticesPath"));
+        assert!(
+            value["logDir"].as_str().map(|text| !text.is_empty()).unwrap_or(false),
+            "logDir 必须指向真实日志目录（外壳的 service.log/shell.log 所在）"
+        );
         assert_eq!(value["license"], "Apache-2.0");
         assert_eq!(value["appName"], "PadLend");
     }

@@ -50,7 +50,7 @@ export const LOCATED_LABELS: Record<string, string> = {
   offline: '不在线',
 };
 
-/** 只取 UTC 日期，避免不同系统时区让同一条记录显示成两天。 */
+/** 只取日期部分：引擎下发的是本地时间字符串，直接切片即可。 */
 export function formatLastSeen(value: string): string {
   const day = value.slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';

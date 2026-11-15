@@ -23,6 +23,9 @@
 //! - YAML 1.1 的 merge key（`<<: *defaults`）不生效：PyYAML 会合并锚点内容，
 //!   这里会把 `<<` 当成普通未知字段。
 //! - 文首 UTF-8 BOM 已对齐：PyYAML 忽略它，这里在读入前同样剥掉一个 BOM。
+//! - `motion.gain` 为 NaN（YAML `.nan`）：Python 的 `min(max(nan, 0.25), 3.0)` 仍是 NaN，
+//!   清理文案却写"已夹紧"；这里改为恢复默认 1.0 并在 `issues` 里如实说明（NaN 会污染
+//!   后续指针倍率计算）。
 //! - 日志：Python 版用 `logging` 记录 `cfg.invalid` 等；本模块不引入日志依赖，
 //!   同等信息通过 `issues()` 暴露给界面。
 
@@ -36,6 +39,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value as JsonValue;
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::constants as C;
@@ -296,6 +300,31 @@ impl LayoutsCfg {
     /// 丢弃某设备的全部摆位（Python 的 `drop`，改名避开 `Drop::drop`）。
     pub fn remove_device(&mut self, serial: &str) {
         self.devices.remove(&normalize_layout_key(serial));
+    }
+
+    /// 删除某设备某方向的摆位；返回是否真的删掉了一条。
+    ///
+    /// 与 `set` 用同一套归一化（设备身份走 `normalize_layout_key`、方向去空白转小写），
+    /// 方向只认 `landscape` / `portrait`（Python 的 `drop` 同款）。设备的两个方向都
+    /// 空了就把设备条目一起删掉，避免 YAML 里留下 `<serial>: {}` 这种空壳。
+    pub fn remove(&mut self, serial: &str, orientation: &str) -> bool {
+        let key = normalize_layout_key(serial);
+        let bucket = py_strip(orientation).to_lowercase();
+        if key.is_empty() || !LAYOUT_ORIENTATIONS.contains(&bucket.as_str()) {
+            return false;
+        }
+        let removed = match self.devices.get_mut(&key) {
+            Some(profiles) => profiles.remove(&bucket).is_some(),
+            None => false,
+        };
+        if !removed {
+            return false;
+        }
+        let empty = self.devices.get(&key).map(|profiles| profiles.is_empty()).unwrap_or(false);
+        if empty {
+            self.devices.remove(&key);
+        }
+        true
     }
 }
 
@@ -811,6 +840,11 @@ impl Config {
         if !(self.motion.px_per_count == 0.0 || (1.0..=10.0).contains(&self.motion.px_per_count)) {
             problems.push("motion.px_per_count 必须是 0 或 1.0..10.0".to_string());
         }
+        // repair 会把负值恢复默认，validate 也必须能报出来（P1-24：以前只有
+        // repair 会改，validate 说"合法"，两份契约对不上）。
+        if self.motion.entry_margin_px < 0 {
+            problems.push("motion.entry_margin_px 不能为负".to_string());
+        }
 
         if py_strip(&self.keyboard.layout).is_empty() {
             problems.push("keyboard.layout 不能为空".to_string());
@@ -905,12 +939,21 @@ impl Config {
                 ));
                 motion.report_hz = i64::from(nearest);
             }
-            if !(0.25..=3.0).contains(&motion.gain) {
+            if !motion.gain.is_finite() {
+                // Python 的 min(max(nan,0.25),3.0) 仍是 nan：旧文案写"已夹紧到
+                // [0.25,3.0]"，但值根本没变，而且 NaN 会让后续指针换算全变 NaN。
+                // 这里改成恢复默认，让行为和文案一致（有意偏离 Python，见模块文档）。
+                found.push(format!(
+                    "motion.gain={} 不是有效数值，已恢复默认 {}",
+                    py_float_repr(motion.gain),
+                    py_float_repr(motion_defaults.gain)
+                ));
+                motion.gain = motion_defaults.gain;
+            } else if !(0.25..=3.0).contains(&motion.gain) {
                 found.push(format!(
                     "motion.gain={} 越界，已夹紧到 [0.25,3.0]",
                     py_float_repr(motion.gain)
                 ));
-                // NaN 时 Python 的 min(max(...)) 仍是 NaN（比较全为 False），照抄。
                 motion.gain = py_min_f64(py_max_f64(motion.gain, 0.25), 3.0);
             }
             if motion.arm_px < 1 {
@@ -1351,6 +1394,171 @@ fn placement_problems(placement: &PlacementCfg, prefix: &str) -> Vec<String> {
         problems.push(format!("{prefix}.span_end 必须大于 span_start"));
     }
     problems
+}
+
+/// 对"补丁后的 JSON 树"做与 [`Config::validate`] 同口径的只读校验。
+///
+/// `config_save` 的顺序是：补丁合并进 `to_dict()` 的树 → 校验 → `Config::from_mapping`
+/// （后者会 `repair`，把越界值改掉）。所以校验必须在树还"坏"着的时候完成，不能先
+/// 构造成 `Config` 再调 `validate()` —— repair 会把问题吞掉。
+///
+/// 这份逻辑以前在 `service/serializers.rs` 里手抄了一份，漏了 `px_per_count`、
+/// `entry_margin_px` 和 7 个"操作平板"热键（P1-23/24）。现在只保留这一份，
+/// 文案与 `Config::validate` 逐字一致。
+pub fn validate_tree(tree: &JsonValue) -> Vec<String> {
+    let mut problems: Vec<String> = Vec::new();
+
+    if let Some(port) = tree_i64(tree.get("device").and_then(|value| value.get("server_port"))) {
+        if !(1024..=65535).contains(&port) {
+            problems.push("device.server_port 必须在 1024..65535".to_string());
+        }
+    }
+    if let Some(placement) = tree.get("placement") {
+        problems.extend(placement_tree_problems(placement, "placement"));
+    }
+    if let Some(devices) = tree
+        .get("layouts")
+        .and_then(|value| value.get("devices"))
+        .and_then(JsonValue::as_object)
+    {
+        for (serial, profiles) in devices {
+            let Some(profiles) = profiles.as_object() else {
+                continue;
+            };
+            for (orientation, profile) in profiles {
+                problems.extend(placement_tree_problems(
+                    profile,
+                    &format!("layouts.devices.{serial}.{orientation}"),
+                ));
+            }
+        }
+    }
+
+    let motion = tree.get("motion");
+    if let Some(clamp) = tree_i64(motion.and_then(|value| value.get("hid_clamp"))) {
+        if !(1..=i64::from(C::HID_CLAMP)).contains(&clamp) {
+            problems.push("motion.hid_clamp 必须在 1..127".to_string());
+        }
+    }
+    if let Some(hz) = tree_i64(motion.and_then(|value| value.get("report_hz"))) {
+        if !C::REPORT_HZ_CHOICES
+            .iter()
+            .any(|choice| i64::from(*choice) == hz)
+        {
+            problems.push("motion.report_hz 必须是 125/250/500/1000 之一".to_string());
+        }
+    }
+    if let Some(gain) = tree_f64(motion.and_then(|value| value.get("gain"))) {
+        if !(0.25..=3.0).contains(&gain) {
+            problems.push("motion.gain 必须在 0.25..3.0".to_string());
+        }
+    }
+    for (field, message) in [
+        ("arm_px", "motion.arm_px 必须 ≥1"),
+        ("arm_window_ms", "motion.arm_window_ms 必须 ≥1"),
+        ("exit_overflow_px", "motion.exit_overflow_px 必须 ≥1"),
+        ("edge_band_px", "motion.edge_band_px 必须 ≥1"),
+    ] {
+        if let Some(value) = tree_i64(motion.and_then(|section| section.get(field))) {
+            if value < 1 {
+                problems.push(message.to_string());
+            }
+        }
+    }
+    for (field, message) in [
+        ("debounce_ms", "motion.debounce_ms 不能为负"),
+        ("boundary_inset_px", "motion.boundary_inset_px 不能为负"),
+    ] {
+        if let Some(value) = tree_i64(motion.and_then(|section| section.get(field))) {
+            if value < 0 {
+                problems.push(message.to_string());
+            }
+        }
+    }
+    if let Some(value) = tree_f64(motion.and_then(|value| value.get("px_per_count"))) {
+        if !(value == 0.0 || (1.0..=10.0).contains(&value)) {
+            problems.push("motion.px_per_count 必须是 0 或 1.0..10.0".to_string());
+        }
+    }
+    if let Some(value) = tree_i64(motion.and_then(|value| value.get("entry_margin_px"))) {
+        if value < 0 {
+            problems.push("motion.entry_margin_px 不能为负".to_string());
+        }
+    }
+
+    if let Some(layout) = tree
+        .get("keyboard")
+        .and_then(|value| value.get("layout"))
+        .and_then(JsonValue::as_str)
+    {
+        if py_strip(layout).is_empty() {
+            problems.push("keyboard.layout 不能为空".to_string());
+        }
+    }
+
+    // 9 个热键都要查：以前只查 toggle/panic，用户清空 back/home/... 会被 repair
+    // 静默补回默认值，界面上看不出"这次修改没生效"（P1-23）。
+    let hotkeys = tree.get("hotkeys");
+    for (key, _) in hotkey_pairs(&HotkeyCfg::default()) {
+        if let Some(value) = hotkeys
+            .and_then(|section| section.get(key))
+            .and_then(JsonValue::as_str)
+        {
+            if py_strip(value).is_empty() {
+                problems.push(format!("hotkeys.{key} 不能为空"));
+            }
+        }
+    }
+    problems
+}
+
+/// 摆位树的校验（文案与 [`placement_problems`] 一致）。
+fn placement_tree_problems(placement: &JsonValue, prefix: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    if let Some(edge) = placement.get("edge").and_then(JsonValue::as_str) {
+        if !PLACEMENT_EDGES.contains(&edge) {
+            problems.push(format!("{prefix}.edge 必须是 left/right/top/bottom"));
+        }
+    }
+    if let Some(align) = placement.get("align").and_then(JsonValue::as_str) {
+        if !ALIGNS.contains(&align) {
+            problems.push(format!("{prefix}.align 必须是 proportional/center/one_to_one"));
+        }
+    }
+    if let Some(corner) = placement.get("corner_priority").and_then(JsonValue::as_str) {
+        if !corner.is_empty() && !PLACEMENT_EDGES.contains(&corner) {
+            problems.push(format!("{prefix}.corner_priority 必须是合法边或空"));
+        }
+    }
+    if let Some(offset) = tree_f64(placement.get("offset")) {
+        if !(0.0..=1.0).contains(&offset) {
+            problems.push(format!("{prefix}.offset 必须在 0.0..1.0"));
+        }
+    }
+    let start = tree_i64(placement.get("span_start"));
+    let end = tree_i64(placement.get("span_end"));
+    if let (Some(start), Some(end)) = (start, end) {
+        if end <= start {
+            problems.push(format!("{prefix}.span_end 必须大于 span_start"));
+        }
+    }
+    problems
+}
+
+fn tree_i64(value: Option<&JsonValue>) -> Option<i64> {
+    match value {
+        Some(JsonValue::Number(number)) => number
+            .as_i64()
+            .or_else(|| number.as_f64().map(|value| value as i64)),
+        _ => None,
+    }
+}
+
+fn tree_f64(value: Option<&JsonValue>) -> Option<f64> {
+    match value {
+        Some(JsonValue::Number(number)) => number.as_f64(),
+        _ => None,
+    }
 }
 
 /// 摆位越界就地修复，问题追加到 `found`（顺序与 Python `_repair_placement` 一致）。
@@ -2020,6 +2228,55 @@ mod tests {
     }
 
     #[test]
+    fn validate_reports_negative_entry_margin() {
+        let mut cfg = Config::default();
+        cfg.motion.entry_margin_px = -1;
+        assert!(cfg
+            .validate()
+            .contains(&"motion.entry_margin_px 不能为负".to_string()));
+    }
+
+    #[test]
+    fn validate_tree_covers_shared_fields_and_all_hotkeys() {
+        let mut tree = Config::default().to_dict().expect("to_dict");
+        assert!(validate_tree(&tree).is_empty(), "{:?}", validate_tree(&tree));
+        // px_per_count 以前只有 Config::validate 查，补丁树漏查；entry_margin_px 两边都不查。
+        tree["motion"]["px_per_count"] = Json::from(20.0);
+        tree["motion"]["entry_margin_px"] = Json::from(-5);
+        // 9 个热键以前只查 toggle/panic，清空 back/home/... 会被 repair 静默补回默认值。
+        for key in [
+            "toggle",
+            "panic",
+            "back",
+            "home",
+            "recents",
+            "notifications",
+            "power",
+            "volume_up",
+            "volume_down",
+        ] {
+            tree["hotkeys"][key] = Json::from("  ");
+        }
+        let problems = validate_tree(&tree);
+        assert!(problems.contains(&"motion.px_per_count 必须是 0 或 1.0..10.0".to_string()));
+        assert!(problems.contains(&"motion.entry_margin_px 不能为负".to_string()));
+        for key in [
+            "back",
+            "home",
+            "recents",
+            "notifications",
+            "power",
+            "volume_up",
+            "volume_down",
+        ] {
+            assert!(
+                problems.contains(&format!("hotkeys.{key} 不能为空")),
+                "{key}: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
     fn legacy_entry_guard_is_ignored_and_removed_on_save() {
         let (temp, cfg) = load_text(
             "guard",
@@ -2344,13 +2601,16 @@ mod tests {
 
     // -- Python 值语义 / 边界 ----------------------------------------------
     #[test]
-    fn nan_gain_matches_python() {
-        // Python: min(max(nan, 0.25), 3.0) 仍是 nan —— 照抄这个语义。
+    fn nan_gain_is_replaced_and_reported() {
+        // Python 的 min(max(nan, 0.25), 3.0) 仍是 nan；这里有意不复刻：清理文案说"已夹紧"
+        // 但值其实没变，NaN 还会污染后续指针倍率计算。改为恢复默认值并如实说明（P1-24）。
         let (_temp, cfg) = load_text("nan", "version: 1\nmotion:\n  gain: .nan\n");
-        assert!(cfg.issues().contains(&"motion.gain=nan 越界，已夹紧到 [0.25,3.0]".to_string()));
-        assert!(cfg.motion.gain.is_nan());
-        // NaN 参与比较恒为 False，所以 validate 会报"越界"（与 Python 一致）。
-        assert!(cfg.validate().contains(&"motion.gain 必须在 0.25..3.0".to_string()));
+        assert!(cfg
+            .issues()
+            .contains(&"motion.gain=nan 不是有效数值，已恢复默认 1.0".to_string()));
+        assert_eq!(cfg.motion.gain, 1.0);
+        // 修好之后 validate 不应再报 gain 越界（以前修复文案与校验结论自相矛盾）。
+        assert!(!cfg.validate().contains(&"motion.gain 必须在 0.25..3.0".to_string()));
     }
 
     #[test]

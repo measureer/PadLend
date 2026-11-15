@@ -203,6 +203,40 @@ export async function saveLayout(placement: Placement): Promise<void> {
   }
 }
 
+/**
+ * 删除当前设备当前方向的布局档，引擎会清掉 config.layouts 里这一格并回退到全局摆位（P1-8）。
+ * 只清前端预览是不够的：那样按钮会变回 disabled，旧布局重启后原样回来。
+ */
+export async function removeLayout(identity: string, orientation: string): Promise<void> {
+  const s = store();
+  try {
+    const result = await backend.call<{
+      ok: boolean;
+      removed: boolean;
+      config: Config;
+      placement?: Placement | null;
+    }>(RPC.layoutSave, { identity, orientation, remove: true });
+    s.setConfig(result.config);
+    // 引擎可以不带回退摆位；那就再读一次当前摆位，别在界面上留下已经失效的旧预览。
+    const placement = result.placement !== undefined ? result.placement : await readPlacement();
+    s.removeLayout(placement ?? null);
+    if (result.removed) s.pushToast('已移除该方向布局，回退到全局摆位');
+    else s.pushToast('当前方向没有自定义布局', 'warn');
+  } catch (error) {
+    s.pushToast((error as Error).message, 'err');
+  }
+}
+
+/** 读取引擎当前生效的摆位（layout.initial）；失败时保留界面上的值。 */
+async function readPlacement(): Promise<Placement | null> {
+  try {
+    const result = await backend.call<{ placement?: Placement | null }>(RPC.layoutInitial);
+    return result?.placement !== undefined ? result.placement : store().placement;
+  } catch {
+    return store().placement;
+  }
+}
+
 export async function saveConfig(patch: Partial<Config>, successText = '设置已保存'): Promise<boolean> {
   const s = store();
   try {
@@ -222,9 +256,15 @@ export async function saveConfig(patch: Partial<Config>, successText = '设置�
 
 export async function toggleTheme(): Promise<void> {
   const s = store();
-  const next: Theme = s.theme === 'dark' ? 'light' : 'dark';
+  const previous = s.theme;
+  const next: Theme = previous === 'dark' ? 'light' : 'dark';
   applyTheme(next); // CSS 变量切换，不需要重渲染任何业务组件
-  await saveConfig({ ui: { ...s.config.ui, theme: next } }, '主题已切换');
+  const ok = await saveConfig({ ui: { ...s.config.ui, theme: next } }, '主题已切换');
+  // 保存失败时必须回滚 DOM 与 store，否则界面和 config.ui.theme 分叉，重启后跳回旧主题。
+  if (!ok) {
+    applyTheme(previous);
+    s.pushToast('主题未保存，已恢复原主题', 'warn');
+  }
 }
 
 export async function toggleManual(): Promise<void> {

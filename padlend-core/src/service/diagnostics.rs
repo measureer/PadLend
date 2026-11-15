@@ -1,8 +1,9 @@
 //! 对应 `core/diagnostics.py`：诊断采集、脱敏、报告文本与导出。
 //!
 //! 与 Python 的已知差异（见报告）：
-//! * `diagnostics.export` 导出的是**纯文本** `.txt`（Python 是 zip）。冻结契约只要求
-//!   `{"path": str}`；Rust 侧没有 zip 实现也不允许加依赖，宁可导出可读文本也不写假 zip。
+//! * `diagnostics.export` 导出的是**不压缩（stored）的 zip**（Python 用 DEFLATE）：
+//!   不引第三方依赖也能被资源管理器正常打开。包内只有 `README.txt` 与
+//!   `diagnostics.txt`，不含 Python 版的 `logs/` 与 `meta.json`（README 里已写明）。
 //! * 报告里 `Python：x.y` 一行换成 `运行时：Rust x.y`。
 
 use std::fs;
@@ -243,7 +244,11 @@ impl DiagnosticsReport {
         lines.push("配置：config.yaml（位于应用配置目录）".to_string());
         lines.push(String::new());
         lines.push("== 概要 ==".to_string());
-        lines.extend(self.summary());
+        // 概要里第一行带 entry.serial（"设备：<serial>（state）"），必须和正文走同一套
+        // 脱敏；以前直接 extend，序列号从概要漏了出去（P1-12）。
+        for line in self.summary() {
+            lines.push(redact(&line, &serials));
+        }
         if !self.errors.is_empty() {
             lines.push(String::new());
             lines.push("== 错误 ==".to_string());
@@ -301,13 +306,17 @@ impl DiagnosticsReport {
     pub fn export(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
         let target_dir = match directory {
             Some(path) => path.to_path_buf(),
-            None => desktop_dir(),
+            None => default_export_dir(),
         };
         fs::create_dir_all(&target_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
         let stamp = clockfmt::Stamp::now().compact();
         let path = target_dir.join(format!("padlend-diagnostics-{stamp}.zip"));
 
+        // 文案必须和实际写进去的文件一致：这里只放 README.txt 与 diagnostics.txt，
+        // 不包含系统日志 / 崩溃日志 / 配置（Python 版才带 logs/ 与 meta.json）。
         let readme = "PadLend 诊断包\n\
+包内文件：README.txt（本说明）、diagnostics.txt（脱敏后的诊断报告正文）。\n\
+未包含内容：系统日志、崩溃日志、config.yaml。需要时请另行提供。\n\
 已自动隐藏：设备序列号、IP/MAC 地址、Windows 用户名与用户目录路径。\n\
 如仍看到隐私内容，请先自行删除再分享。\n";
         let report = self.to_text();
@@ -412,9 +421,10 @@ pub fn static_summary() -> String {
     report.to_text()
 }
 
-/// 桌面目录（Windows：`%USERPROFILE%\Desktop`；取不到时退回临时目录）。
-pub fn desktop_dir() -> PathBuf {
-    // 默认导出到「下载」而不是桌面：桌面是用户自己的地盘，诊断包每次一坨很难受。
+/// 默认导出目录：优先 `%USERPROFILE%\Downloads`，其次 `Desktop`，最后临时目录。
+///
+/// 不直接放桌面：诊断包每次一坨，桌面是用户自己的地盘。
+pub fn default_export_dir() -> PathBuf {
     if let Ok(home) = std::env::var("USERPROFILE") {
         let home = PathBuf::from(home);
         let downloads = home.join("Downloads");
@@ -638,6 +648,15 @@ mod tests {
             text.contains("<serial>\tdevice"),
             "adb devices 段应打码：{text}"
         );
+        // P1-12：概要行（"设备：<serial>（state）"）以前没走脱敏。
+        assert!(
+            text.contains("设备：<serial>（device）"),
+            "概要行也应打码：{text}"
+        );
+        assert!(
+            !text.contains("SIMULATEDPAD"),
+            "报告正文不得出现原始序列号：{text}"
+        );
     }
 
     #[test]
@@ -665,6 +684,11 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("diagnostics.txt"));
         assert!(text.contains("README.txt"));
+        // README 文案必须与实际写入的文件一致（以前含糊其辞，用户以为有日志）。
+        assert!(text.contains("包内文件"), "README 必须列出实际文件：{text}");
+        assert!(text.contains("未包含内容"), "README 必须说明缺什么：{text}");
+        // 打包内容里同样不能有原始序列号。
+        assert!(!text.contains("SIMULATEDPAD"), "zip 内不得出现原始序列号");
         let _ = fs::remove_dir_all(&dir);
     }
 

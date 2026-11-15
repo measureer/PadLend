@@ -1,6 +1,6 @@
 //! RPC 方法表与分派（对应 Python service/api.py 的 call()）。
 //!
-//! 25 个方法的实现在 crate::service::api；运行期通过全局 OnceLock 拿到 Engine。
+//! 29 个方法的实现在 crate::service::api；运行期通过全局 OnceLock 拿到 Engine。
 
 use std::sync::{Arc, OnceLock};
 

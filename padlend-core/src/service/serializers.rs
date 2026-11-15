@@ -260,7 +260,8 @@ pub fn apply_config_patch(config: &mut Config, patch: &Value) -> Vec<String> {
 
     // from_mapping 会把越界值修回默认（Python Config 的 _repair）；为了像 Python
     // config_save 一样先报校验问题，这里对补丁后的树做一次只读校验。
-    problems.extend(validate_tree(&tree));
+    // 树校验统一放在 config.rs（与 Config::validate 同一套文案，只有一份实现）。
+    problems.extend(crate::config::validate_tree(&tree));
 
     let yaml = json_to_yaml(&tree);
     if let Some(mapping) = yaml.as_mapping() {
@@ -269,150 +270,6 @@ pub fn apply_config_patch(config: &mut Config, patch: &Value) -> Vec<String> {
         problems.push("配置根节点必须是映射".to_string());
     }
     problems
-}
-
-/// 对补丁后的 JSON 树做与 Config::validate 同文案的校验（只读）。
-fn validate_tree(tree: &Value) -> Vec<String> {
-    let mut problems: Vec<String> = Vec::new();
-    let device = tree.get("device");
-    if let Some(port) = tree_i64(device.and_then(|value| value.get("server_port"))) {
-        if !(1024..=65535).contains(&port) {
-            problems.push("device.server_port 必须在 1024..65535".to_string());
-        }
-    }
-    if let Some(placement) = tree.get("placement") {
-        problems.extend(placement_tree_problems(placement, "placement"));
-    }
-    if let Some(devices) = tree
-        .get("layouts")
-        .and_then(|value| value.get("devices"))
-        .and_then(Value::as_object)
-    {
-        for (serial, profiles) in devices {
-            let Some(profiles) = profiles.as_object() else {
-                continue;
-            };
-            for (orientation, profile) in profiles {
-                problems.extend(placement_tree_problems(
-                    profile,
-                    &format!("layouts.devices.{serial}.{orientation}"),
-                ));
-            }
-        }
-    }
-    let motion = tree.get("motion");
-    if let Some(clamp) = tree_i64(motion.and_then(|value| value.get("hid_clamp"))) {
-        if !(1..=127).contains(&clamp) {
-            problems.push("motion.hid_clamp 必须在 1..127".to_string());
-        }
-    }
-    if let Some(hz) = tree_i64(motion.and_then(|value| value.get("report_hz"))) {
-        if !crate::constants::REPORT_HZ_CHOICES
-            .iter()
-            .any(|choice| i64::from(*choice) == hz)
-        {
-            problems.push("motion.report_hz 必须是 125/250/500/1000 之一".to_string());
-        }
-    }
-    if let Some(gain) = tree_f64(motion.and_then(|value| value.get("gain"))) {
-        if !(0.25..=3.0).contains(&gain) {
-            problems.push("motion.gain 必须在 0.25..3.0".to_string());
-        }
-    }
-    for (field, message) in [
-        ("arm_px", "motion.arm_px 必须 ≥1"),
-        ("arm_window_ms", "motion.arm_window_ms 必须 ≥1"),
-        ("exit_overflow_px", "motion.exit_overflow_px 必须 ≥1"),
-        ("edge_band_px", "motion.edge_band_px 必须 ≥1"),
-    ] {
-        if let Some(value) = tree_i64(motion.and_then(|section| section.get(field))) {
-            if value < 1 {
-                problems.push(message.to_string());
-            }
-        }
-    }
-    for (field, message) in [
-        ("debounce_ms", "motion.debounce_ms 不能为负"),
-        ("boundary_inset_px", "motion.boundary_inset_px 不能为负"),
-    ] {
-        if let Some(value) = tree_i64(motion.and_then(|section| section.get(field))) {
-            if value < 0 {
-                problems.push(message.to_string());
-            }
-        }
-    }
-    if let Some(layout) = tree
-        .get("keyboard")
-        .and_then(|value| value.get("layout"))
-        .and_then(Value::as_str)
-    {
-        if layout.trim().is_empty() {
-            problems.push("keyboard.layout 不能为空".to_string());
-        }
-    }
-    for (field, message) in [
-        ("toggle", "hotkeys.toggle 不能为空"),
-        ("panic", "hotkeys.panic 不能为空"),
-    ] {
-        if let Some(value) = tree
-            .get("hotkeys")
-            .and_then(|section| section.get(field))
-            .and_then(Value::as_str)
-        {
-            if value.trim().is_empty() {
-                problems.push(message.to_string());
-            }
-        }
-    }
-    problems
-}
-
-fn placement_tree_problems(placement: &Value, prefix: &str) -> Vec<String> {
-    let mut problems = Vec::new();
-    if let Some(edge) = placement.get("edge").and_then(Value::as_str) {
-        if !crate::config::PLACEMENT_EDGES.contains(&edge) {
-            problems.push(format!("{prefix}.edge 必须是 left/right/top/bottom"));
-        }
-    }
-    if let Some(align) = placement.get("align").and_then(Value::as_str) {
-        if !crate::config::ALIGNS.contains(&align) {
-            problems.push(format!("{prefix}.align 必须是 proportional/center/one_to_one"));
-        }
-    }
-    if let Some(corner) = placement.get("corner_priority").and_then(Value::as_str) {
-        if !corner.is_empty() && !crate::config::PLACEMENT_EDGES.contains(&corner) {
-            problems.push(format!("{prefix}.corner_priority 必须是合法边或空"));
-        }
-    }
-    if let Some(offset) = tree_f64(placement.get("offset")) {
-        if !(0.0..=1.0).contains(&offset) {
-            problems.push(format!("{prefix}.offset 必须在 0.0..1.0"));
-        }
-    }
-    let start = tree_i64(placement.get("span_start"));
-    let end = tree_i64(placement.get("span_end"));
-    if let (Some(start), Some(end)) = (start, end) {
-        if end <= start {
-            problems.push(format!("{prefix}.span_end 必须大于 span_start"));
-        }
-    }
-    problems
-}
-
-fn tree_i64(value: Option<&Value>) -> Option<i64> {
-    match value {
-        Some(Value::Number(number)) => number
-            .as_i64()
-            .or_else(|| number.as_f64().map(|value| value as i64)),
-        _ => None,
-    }
-}
-
-fn tree_f64(value: Option<&Value>) -> Option<f64> {
-    match value {
-        Some(Value::Number(number)) => number.as_f64(),
-        _ => None,
-    }
 }
 
 /// `layouts.devices` 显式重建：只认 landscape/portrait，非法字段静默丢弃。
@@ -557,6 +414,34 @@ mod tests {
     #[test]
     fn facts_dict_is_null_when_disconnected() {
         assert_eq!(facts_dict(None), Value::Null);
+    }
+
+    #[test]
+    fn config_patch_reports_problems_from_shared_tree_validator() {
+        // 补丁树校验统一走 crate::config::validate_tree：这里以前手抄的一份漏了
+        // px_per_count、entry_margin_px 和 7 个热键（P1-23/24）。
+        let mut config = Config::default();
+        let patch = json!({
+            "motion": {"px_per_count": 20.0, "entry_margin_px": -3},
+            "hotkeys": {"back": "   ", "volume_up": ""},
+        });
+        let problems = apply_config_patch(&mut config, &patch);
+        assert!(
+            problems.contains(&"motion.px_per_count 必须是 0 或 1.0..10.0".to_string()),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&"motion.entry_margin_px 不能为负".to_string()),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&"hotkeys.back 不能为空".to_string()),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&"hotkeys.volume_up 不能为空".to_string()),
+            "{problems:?}"
+        );
     }
 
     #[test]

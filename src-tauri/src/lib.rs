@@ -28,7 +28,7 @@ pub fn run() {
         shell_log::write_line(&format!("PANIC {info}"));
         previous_hook(info);
     }));
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -55,8 +55,18 @@ pub fn run() {
                 }
             };
             // setup 闭包返回 Box<dyn Error>；String 不是 Error，显式转成 io::Error。
-            let bridge = bridge::Bridge::start(handle.clone(), audio_port)
-                .map_err(std::io::Error::other)?;
+            // 启动失败必须让用户看见（见 run() 末尾的错误框）：release 是 panic = "abort"，
+            // 在这里 unwrap/expect 会让进程静默消失，用户只看到「双击没反应」。
+            let bridge = match bridge::Bridge::start(handle.clone(), audio_port) {
+                Ok(bridge) => bridge,
+                Err(e) => {
+                    shell_log::write_line(&format!("业务引擎启动失败，无法继续：{e}"));
+                    return Err(std::io::Error::other(format!(
+                        "业务引擎（padlend-core.exe）未能启动：{e}"
+                    ))
+                    .into());
+                }
+            };
             app.manage(bridge);
             app.manage(Arc::new(AtomicBool::new(false)));
             if let Err(e) = tray::install(&handle) {
@@ -92,6 +102,52 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("启动 PadLend 外壳失败");
+        .run(tauri::generate_context!());
+    // 不 panic：panic = "abort" 下进程直接消失，用户拿不到任何线索。错误写 shell.log，
+    // 再用系统错误框说明「缺 padlend-core.exe / 重新安装」，然后正常退出。
+    if let Err(err) = result {
+        let detail = format!("{err}");
+        shell_log::write_line(&format!("外壳启动失败，程序即将退出：{detail}"));
+        show_startup_error(&detail);
+    }
+}
+
+/// 启动失败时的用户可见提示。
+///
+/// 只声明 user32!MessageBoxW，不引入新依赖：GUI 进程没有控制台，eprintln! 等于扔进虚空。
+#[cfg(windows)]
+fn show_startup_error(detail: &str) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut std::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            u_type: u32,
+        ) -> i32;
+    }
+    const MB_ICONERROR: u32 = 0x0000_0010;
+    let message = format!(
+        "PadLend 无法启动。\n\n{detail}\n\n请确认安装包完整：PadLend.exe 同目录应有 padlend-core.exe（免安装包还需 vendor 目录），或重新安装 PadLend。\n\n日志：{}",
+        shell_log::log_path().display()
+    );
+    let text: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    let caption: Vec<u16> = "PadLend 启动失败"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: 两个字符串都以 NUL 结尾且在调用期间存活；空句柄表示没有父窗口。
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_ICONERROR,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn show_startup_error(detail: &str) {
+    eprintln!("PadLend 无法启动：{detail}");
 }

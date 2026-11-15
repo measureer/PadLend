@@ -497,32 +497,36 @@ impl Registry {
         registry
     }
 
-    /// 原子写回 `devices.json`；返回是否成功。
-    pub fn save(&mut self) -> bool {
+    /// 原子写回 `devices.json`；失败时返回可展示的中文原因。
+    pub fn save_checked(&mut self) -> Result<(), String> {
         let payload = json!({
             "version": SCHEMA_VERSION,
             "devices": self.devices.iter().map(DeviceRecord::to_dict).collect::<Vec<_>>(),
         });
-        let text = match serde_json::to_string_pretty(&payload) {
-            Ok(text) => format!("{text}\n"),
-            Err(_) => return false,
-        };
+        let text = serde_json::to_string_pretty(&payload)
+            .map(|text| format!("{text}\n"))
+            .map_err(|err| format!("设备记录序列化失败：{err}"))?;
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() {
-                let _ = fs::create_dir_all(parent);
+                fs::create_dir_all(parent)
+                    .map_err(|err| format!("创建设备记录目录 {} 失败：{err}", parent.display()))?;
             }
         }
         let temporary = self.path.with_extension("json.tmp");
-        if fs::write(&temporary, text).is_err() {
-            return false;
-        }
-        if fs::rename(&temporary, &self.path).is_err() {
+        fs::write(&temporary, text)
+            .map_err(|err| format!("写入 {} 失败：{err}", temporary.display()))?;
+        if let Err(err) = fs::rename(&temporary, &self.path) {
             let _ = fs::remove_file(&temporary);
-            return false;
+            return Err(format!("替换 {} 失败：{err}", self.path.display()));
         }
         self.existed = true;
         self.needs_rebuild = false;
-        true
+        Ok(())
+    }
+
+    /// 原子写回 `devices.json`；返回是否成功（失败原因见 [`Self::save_checked`]）。
+    pub fn save(&mut self) -> bool {
+        self.save_checked().is_ok()
     }
 
     /// 按 id 或 serial 查找。
@@ -1179,6 +1183,22 @@ mod tests {
         assert_eq!(loaded.devices[0].macs, vec!["88:a4:79:1a:2b:3c".to_string()]);
         assert!(loaded.issues.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_failure_reports_reason_instead_of_silently_false() {
+        let blocker = std::env::temp_dir().join(format!(
+            "padlend-registry-blocked-{}.json",
+            std::process::id()
+        ));
+        fs::write(&blocker, "占位：让 devices.json 的父路径变成文件").expect("写占位文件");
+        let mut registry = Registry::new(blocker.join("devices.json"));
+        let err = registry
+            .save_checked()
+            .expect_err("父路径是文件时必须报错");
+        assert!(err.contains("创建设备记录目录"), "错误要说明原因：{err}");
+        assert!(!registry.save(), "save 保留旧的布尔接口");
+        let _ = fs::remove_file(&blocker);
     }
 
     #[test]

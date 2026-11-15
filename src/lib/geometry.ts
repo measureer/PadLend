@@ -99,7 +99,16 @@ export function nearbySegments(
   return within.length ? within : scored.slice(0, 1);
 }
 
-/** 角落裁决：按外推方向与优先边选择该贴哪条边。 */
+/** 方向足够明确的阈值：最高分要领先次高分 15% 以上（与引擎 CORNER_DIRECTION_RATIO 一致）。 */
+export const CORNER_DIRECTION_RATIO = 0.15;
+
+/**
+ * 角落裁决：规则以引擎 `DesktopMap::resolve_corner` 为准，两边算出的吸附边必须一致。
+ * 1. 拖动方向足够明确（最高分 > 0 且领先次高分 15% 以上）→ 按方向；
+ * 2. 否则用优先边（Shift 切换或保存的 corner_priority）；
+ * 3. 再否则取最高分（同分保持输入顺序）。
+ * 注意顺序：方向明确时优先边不生效，旧实现先看 priority，和引擎正好相反。
+ */
 export function resolveCorner(
   first: Segment,
   second: Segment,
@@ -110,13 +119,19 @@ export function resolveCorner(
     const [nx, ny] = OUTWARD[segment.edge];
     return delta[0] * nx + delta[1] * ny;
   };
-  const sorted = [first, second].sort((a, b) => score(b) - score(a));
-  if (priority && (sorted[0].edge === priority || sorted[1].edge === priority)) {
-    return sorted.find((s) => s.edge === priority) ?? sorted[0];
+  const scored = [first, second]
+    .map((segment) => ({ segment, score: score(segment) }))
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const nextScore = scored[1]?.score ?? 0;
+  if (best.score > 0 && (best.score - nextScore) / Math.max(best.score, 1) > CORNER_DIRECTION_RATIO) {
+    return best.segment;
   }
-  const [bestScore, nextScore] = [score(sorted[0]), score(sorted[1])];
-  if (bestScore > 0 && (bestScore - nextScore) / Math.max(bestScore, 1) > 0.15) return sorted[0];
-  return sorted[0];
+  if (priority) {
+    const preferred = scored.find((item) => item.segment.edge === priority);
+    if (preferred) return preferred.segment;
+  }
+  return best.segment;
 }
 
 export function unionRect(rects: Rect[]): Rect {

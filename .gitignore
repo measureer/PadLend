@@ -7,6 +7,12 @@ dist/
 # WorkBuddy IDE workspace
 .workbuddy/
 
+# Python 缓存（1.7.0 前的实现已删除；仅防止旧工作区误提交字节码/测试缓存）
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
 # Tauri 2 / React 前端
 node_modules/
 src-tauri/target/

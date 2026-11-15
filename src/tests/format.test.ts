@@ -23,7 +23,7 @@ describe('状态与格式化', () => {
     expect(parseLogLine('裸文本')).toEqual({ timestamp: '', event: '', message: '裸文本' });
   });
 
-  it('最后在线只取 UTC 日期，坏值不显示', () => {
+  it('最后在线只取日期部分，坏值不显示', () => {
     expect(formatLastSeen('2026-11-12T23:30:00+00:00')).toBe('2026-11-12');
     expect(formatLastSeen('')).toBe('');
     expect(formatLastSeen('not-a-date')).toBe('');

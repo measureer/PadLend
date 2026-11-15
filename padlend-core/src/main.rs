@@ -18,25 +18,22 @@ use padlend_core::{rpc, win, VERSION};
 #[derive(Debug, Default)]
 struct Args {
     debug_raw: bool,
-    serve: bool,
     duration_s: f64,
     json: bool,
     simulate: bool,
     no_hooks: bool,
-    log_level: String,
     config: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args {
-        log_level: "info".to_string(),
-        ..Default::default()
-    };
+    let mut args = Args::default();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--debug-raw" => args.debug_raw = true,
-            "--serve" => args.serve = true,
+            // 兼容旧参数：2.0.6 起 --serve 就是默认行为（只有 --debug-raw 才分叉），
+            // 保留接受但不再记录状态 —— 以前 args.serve 从头到尾没人读。
+            "--serve" => {},
             "--json" => args.json = true,
             "--simulate" => args.simulate = true,
             "--no-hooks" => args.no_hooks = true,
@@ -53,8 +50,7 @@ fn parse_args() -> Result<Args, String> {
                      --serve                NDJSON RPC 服务（默认）\n\
                      --simulate             使用内存假平板\n\
                      --no-hooks             不安装 Raw Input / 键盘钩子\n\
-                     --config <路径>        指定 config.yaml\n\
-                     --log-level <级别>     debug|info|warning|error"
+                     --config <路径>        指定 config.yaml"
                 );
                 std::process::exit(0);
             }
@@ -65,14 +61,8 @@ fn parse_args() -> Result<Args, String> {
             "--config" => {
                 args.config = Some(it.next().ok_or("--config 缺少参数")?);
             }
-            "--log-level" => {
-                args.log_level = it.next().ok_or("--log-level 缺少参数")?;
-            }
             other => return Err(format!("未知参数：{other}")),
         }
-    }
-    if !args.debug_raw {
-        args.serve = true;
     }
     Ok(args)
 }
@@ -102,7 +92,6 @@ fn main() -> ExitCode {
         };
     }
 
-    let _ = &args.log_level;
     // 与 Python main.py 一致：--simulate 或 PADLEND_SIMULATE 为真即模拟。
     // **默认必须是真实设备**——生产与调试行为不能靠构建类型分叉，否则本地调试时
     // 一切"正常"而发布版连的是真平板。门禁与演示由 tools/rpc_trace.py 显式设

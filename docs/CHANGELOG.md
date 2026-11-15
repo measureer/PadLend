@@ -2,6 +2,72 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [未发布] — 2026-11-16
+
+### 修复
+
+- **崩溃 / 强制结束后的兜底链真正接线**：`exit.clean` 现在由引擎在启动时读取、正常退出时写入。
+  上次不是正常退出（且非首次运行）时，启动会先 `cleanup_orphan_mask()` + `unclip_on_exit()`，
+  会话建好后在后台 `force_cleanup()` 并恢复平板的 `pointer_speed` 与熄屏超时；退出时等会话
+  teardown 最多 5 秒，清干净才写标记，否则让下次启动继续强制清理。此前这条链上的函数
+  （`cleanup_orphan_mask`、`restore_pending_*`、`force_cleanup`、`unclip_on_exit`）全仓零调用，
+  遮罩内的 atexit 兜底也只置了一个没人读的标志。
+- **`--debug-raw` 退出挂死、键盘钩子卸载后 UAF**：Raw Input 线程改用 `WM_QUIT` 唤醒并做 2 秒
+  有界 join（`WM_CLOSE` 是 hwnd=NULL 的线程消息，`GetMessageW` 不会返回 0）；键盘钩子的
+  `HookContext` 改由钩子线程内的 `Arc` 持有，超时只 detach，不再提前释放上下文。
+- **两条常驻线程 panic 即永久静默**：`sender_loop` / `supervisor_loop` 每轮用 `catch_unwind`
+  包住，panic 限频记日志并退避，不再让「指针突然不动 / 不再自动重连」而无任何提示。
+- **朝向识别的两处硬伤**：`find_orientation` 不再按字节切 UTF-8（`orientation=` 后首字符为
+  多字节时会 panic）；交还控制权的唤醒标志只由朝向线程消费，不再被 adb 心跳 sleeping 抢走，
+  2.0.6 承诺的「50ms 内补朝向」才成立。
+- **布局「移除」真正落盘**：`layout.save` 新增 `remove:true` 分支，删除该设备该方向的存档、
+  保存配置并按当前事实回退到另一方向或全局摆位；前端用返回值刷新预览。旧实现只清前端预览，
+  重启后布局复活，保存按钮还会变灰。
+- **配置项真正生效**：`report_hz` 在发送线程每轮重读；退出落点同时使用 `entry_margin_px` 与
+  `boundary_inset_px`（此前落点用常量、`boundary_inset_px` 只存在于只被测试调用的死实现）。
+- **配置校验合成一份**：`config::validate_tree` 统一 Rust 的两套校验（补上 `px_per_count`、
+  `entry_margin_px` 与 9 个热键）；`gain=NaN` 恢复默认 1.0 并明确报「不是有效数值」，
+  不再出现「issue 说已夹紧、validate 又拒绝」的矛盾。
+- **`--no-hooks` / `--simulate` 不再安装 Raw Input**；ARMING 超时在 tick 里也会检查，
+  推到边缘后停手不会永远卡在 `arming`。
+- **RPC 与设备注册表**：每个 RPC 请求的并发上限改为 32，关停最多等在飞请求 1.5 秒；
+  `registry.save_checked()` 把写盘失败交给事件日志，不再出现「界面显示已保存、重启回退」；
+  自动重定位的「找不到平板」提示不会再因为计数越过阈值而永远不触发。
+- **无线设备身份**：mDNS 发现合并 adb 服务（端口）与直接查询（TXT 里的硬件序列号），
+  换 IP 后仍能按序列号找回；`adb connect` 必须以 `connected to` 判定成功，
+  `cannot resolve host` 不再被当成连接成功。
+- **诊断包**：概要行也脱敏（此前会带原始序列号）；`README.txt` 如实写明 zip 只含
+  `diagnostics.txt` 与 `README.txt`、不含日志和配置。
+- **日志目录不再是空的**：`system.paths.logDir` 与前端「打开日志目录…」指向
+  `%LOCALAPPDATA%\PadLend`（`service.log` / `shell.log` 的真实位置），托盘菜单同样直接打开它。
+- **外壳启动失败可见**：sidecar 缺失时不再 `.expect` + `panic=abort` 静默消失，而是写
+  `shell.log` 并弹「PadLend 无法启动」错误框；`updates.rs` 的 `eprintln!` 改走外壳日志。
+- **发版**：`SHA256SUMS.txt` 写无 BOM UTF-8（2.0.6 的产物带 EF BB BF，首行校验会失败）；
+  发布正文从 `CHANGELOG` 的对应版本小节生成，不再硬编码版本；CI 校验四处版本一致、
+  检查校验文件无 BOM，并在缺产物时直接失败。
+- **前端**：设备扫描成功会清掉旧的错误条；主题保存失败回滚 DOM 与 store；
+  角落裁决与引擎统一为「方向明确（15%）优先、否则 priority」；IPv4/主机名严格校验；
+  日志列表使用稳定序号 key；版本号统一从 `package.json` 读取。
+
+### 清理
+
+- 删除零接线的 `win/cursor_watch.rs`（850 行）与 `win/desktop.rs` 里只被测试调用的
+  `entry_point` / `exit_position`（生产唯一实现是 `logic::geometry`）；删除遮罩内的假 atexit 壳。
+- `.gitignore` 补充 `__pycache__/`、`*.py[cod]`、`.pytest_cache/`、`.ruff_cache/`，
+  并移除已跟踪的 pyc；删除与 `128x128@2x.png` 同字节的重复图标。
+- 12 份过期迁移/可行性/验收文档移入 `docs/archive/`；README、TROUBLESHOOTING、DESIGN、
+  TAURI_MIGRATION 的版本、依赖、日志与诊断说明改为当前实现。
+
+### 验证
+
+- 引擎 `cargo test`：574 passed / 13 ignored / 0 failed（新增兜底、panic 护栏、朝向唤醒、
+  UTF-8、布局删除、Raw Input、键盘钩子生命周期等回归用例）。
+- 外壳 `cargo test`：1 passed / 1 ignored / 0 failed；`cargo check` 干净。
+- 前端 `vitest run`：16 files / 90 tests passed；`tsc --noEmit` 干净；`vite build` 成功。
+
+> 版本号仍为 2.0.6；下个版本发布前需同时 bump `package.json`、`src-tauri/tauri.conf.json`、
+> `src-tauri/Cargo.toml`、`padlend-core/Cargo.toml`（release.yml 会校验一致）。
+
 ## [2.0.6] — 2026-11-15
 
 ### 修复

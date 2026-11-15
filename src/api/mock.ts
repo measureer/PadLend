@@ -12,7 +12,9 @@ import type {
   LogEntry,
   Metrics,
   Placement,
+  PlacementCfg,
 } from './types';
+import { APP_VERSION } from '../lib/version';
 
 export type EventHandler = (payload: unknown) => void;
 
@@ -27,11 +29,13 @@ export function defaultConfig(): Config {
       known: ['192.168.1.23:5555'],
       macs: { '192.168.1.23:5555': 'a4:ef:39:1c:22:08' },
     },
+    // 与 padlend-core 的 PlacementCfg::default() 一致：monitor 空 = 主屏，span 0..1600。
+    // 演示用的实时摆位是另一份（MockBackend.placement），按演示桌面单独算。
     placement: {
-      monitor: 'DISPLAY2',
+      monitor: '',
       edge: 'right',
       span_start: 0,
-      span_end: 1080,
+      span_end: 1600,
       offset: 0.5,
       align: 'proportional',
       corner_priority: 'right',
@@ -116,6 +120,47 @@ const DESKTOP = {
   boundingBox: { left: 0, top: 0, right: 4480, bottom: 1600, width: 4480, height: 1600 },
 };
 
+/** 画布 Placement → config 里的存档格式（对应引擎 apply_placement_to_config）。 */
+function placementToConfig(placement: Placement): PlacementCfg {
+  const monitor = DESKTOP.monitors.find((item) => item.handle === placement.monitorHandle);
+  return {
+    monitor: monitor?.device ?? '',
+    edge: placement.edge,
+    span_start: placement.spanStart,
+    span_end: placement.spanEnd,
+    offset: placement.offset,
+    align: placement.align,
+    corner_priority: placement.cornerPriority ?? '',
+  };
+}
+
+/**
+ * 引擎里的 config.placement 是「全局摆位」：monitor 存接口名（空 = 主屏），
+ * span 是段坐标。删除某方向的自定义布局后要回退到它，这里换算成画布用的 Placement。
+ */
+function placementFromConfig(cfg: Config['placement']): Placement | null {
+  const monitor =
+    DESKTOP.monitors.find((item) => Boolean(cfg.monitor) && (item.device === cfg.monitor || item.name === cfg.monitor)) ??
+    DESKTOP.monitors.find((item) => item.primary) ??
+    DESKTOP.monitors[0];
+  if (!monitor) return null;
+  const edge = (['left', 'right', 'top', 'bottom'] as const).find((value) => value === cfg.edge) ?? 'right';
+  const segments = DESKTOP.segments.filter((item) => item.monitorHandle === monitor.handle);
+  const segment = segments.find((item) => item.edge === edge) ?? segments[0];
+  if (!segment) return null;
+  const align = (['proportional', 'center', 'one_to_one'] as const).find((value) => value === cfg.align) ?? 'proportional';
+  const corner = (['left', 'right', 'top', 'bottom'] as const).find((value) => value === cfg.corner_priority) ?? null;
+  return {
+    monitorHandle: segment.monitorHandle,
+    edge: segment.edge,
+    spanStart: segment.spanStart,
+    spanEnd: segment.spanEnd,
+    offset: Math.min(1, Math.max(0, cfg.offset)),
+    align,
+    cornerPriority: corner,
+  };
+}
+
 const FACTS: DeviceFacts = {
   serial: 'R58M3C0ABCDE',
   model: 'HONOR MagicPad 3',
@@ -195,7 +240,7 @@ export class MockBackend {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
-    this.pushLog('APP', 'PadLend 1.6.0 业务服务已就绪（演示模式）');
+    this.pushLog('APP', `PadLend ${APP_VERSION} 业务服务已就绪（演示模式）`);
     this.pushLog('DEVICE', '扫描设备：1 台设备');
     this.pushLog('STATE', 'idle → idle（启动）');
   }
@@ -261,7 +306,7 @@ export class MockBackend {
 
   private snapshot(): Bootstrap {
     return {
-      version: '1.6.0',
+      version: APP_VERSION,
       config: this.config,
       configIssues: [],
       configPath: '%APPDATA%\\PadLend\\config.yaml',
@@ -356,17 +401,50 @@ export class MockBackend {
         result = { placement: this.placement };
         break;
       case 'layout.save': {
+        // 与引擎新增的契约一致：remove:true 表示删除该设备该方向的布局档并回退全局摆位。
+        if (params.remove === true) {
+          const identity = String(params.identity ?? '');
+          const orientation = String(params.orientation ?? '');
+          // 引擎 layout_remove 在没有 identity（未连接设备、也没有当前布局）时直接报错。
+          if (!identity) throw new Error('没有可删除的布局：请先连接平板或指定设备');
+          const bucketOrientation = orientation === 'landscape' || orientation === 'portrait' ? orientation : '';
+          const devices = { ...this.config.layouts.devices };
+          const removed = Boolean(bucketOrientation && devices[identity]?.[bucketOrientation]);
+          if (removed && bucketOrientation) {
+            const bucket = { ...devices[identity] };
+            delete bucket[bucketOrientation];
+            if (Object.keys(bucket).length) devices[identity] = bucket;
+            else delete devices[identity];
+            this.config = { ...this.config, layouts: { devices } };
+            this.placement = placementFromConfig(this.config.placement) ?? this.placement;
+          }
+          this.emit('placement', { placement: this.placement, dirty: false, reason: 'removed' });
+          this.emit('config', { config: this.config, issues: [] });
+          this.pushLog('PLACE', removed ? '布局已移除：回退全局摆位' : '布局未变：当前方向没有自定义布局');
+          result = { ok: true, removed, config: this.config, placement: this.placement };
+          break;
+        }
         this.placement = params.placement as Placement;
+        // 与引擎一致：identity + orientation 都明确时写入该设备该方向的存档，
+        // 没设备时只更新全局 placement（删除存档的前提是它真的存在）。
+        const identity = String(params.identity ?? '');
+        const orientation = String(params.orientation ?? '');
+        const devices = { ...this.config.layouts.devices };
+        if (identity && (orientation === 'landscape' || orientation === 'portrait')) {
+          devices[identity] = { ...devices[identity], [orientation]: placementToConfig(this.placement) };
+        }
+        const saved = placementToConfig(this.placement);
         this.config = {
           ...this.config,
+          layouts: { devices },
           placement: {
             ...this.config.placement,
-            edge: this.placement.edge,
-            span_start: this.placement.spanStart,
-            span_end: this.placement.spanEnd,
-            offset: this.placement.offset,
-            align: this.placement.align,
-            corner_priority: this.placement.cornerPriority ?? '',
+            edge: saved.edge,
+            span_start: saved.span_start,
+            span_end: saved.span_end,
+            offset: saved.offset,
+            align: saved.align,
+            corner_priority: saved.corner_priority,
           },
         };
         this.emit('placement', { placement: this.placement, dirty: false, reason: 'saved' });
@@ -413,7 +491,7 @@ export class MockBackend {
         break;
       case 'diagnostics.run': {
         this.diagnosticsText = [
-          'PadLend 1.6.0 诊断报告',
+          `PadLend ${APP_VERSION} 诊断报告`,
           '（设备序列号、IP/MAC、用户名与用户目录路径已自动打码）',
           '',
           '== 概要 ==',
@@ -434,14 +512,14 @@ export class MockBackend {
         result = { path: 'C:\\Users\\<user>\\Desktop\\padlend-diagnostics-demo.zip' };
         break;
       case 'diagnostics.static':
-        result = { text: 'PadLend 1.6.0 · Windows · jar 已就绪（未运行 adb 采集）' };
+        result = { text: `PadLend ${APP_VERSION} · Windows · jar 已就绪（未运行 adb 采集）` };
         break;
       case 'system.paths':
         result = {
           configPath: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\config.yaml',
-          logDir: 'C:\\Users\\<user>\\AppData\\Roaming\\PadLend\\logs',
+          logDir: 'C:\\Users\\<user>\\AppData\\Local\\PadLend',
           noticesPath: 'C:\\Program Files\\PadLend\\THIRD_PARTY_NOTICES.md',
-          version: '1.6.0',
+          version: APP_VERSION,
           license: 'Apache-2.0',
           appName: 'PadLend',
         };
@@ -497,7 +575,7 @@ export class MockBackend {
   async openUrl(): Promise<void> {}
   async checkUpdate(): Promise<{ tag: string; release: unknown }> {
     // 浏览器预览：假装 GitHub 上最新就是当前版本，避免走真网络。
-    return { tag: 'v2.0.1', release: null };
+    return { tag: `v${APP_VERSION}`, release: null };
   }
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}

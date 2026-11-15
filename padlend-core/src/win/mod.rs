@@ -1,6 +1,5 @@
 //! Win32 薄封装。1:1 对应 Python 侧的 `win/` 包。
 
-pub mod cursor_watch;
 pub mod desktop;
 pub mod dpi;
 pub mod double_tap;

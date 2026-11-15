@@ -66,7 +66,8 @@ export function connectEvents(): () => void {
     }),
     backend.on('devices', (payload) => {
       const p = payload as { devices: DeviceItem[]; error?: string };
-      s().setDevices(p.devices ?? [], p.error ?? '');
+      // error 缺省时不传（保留旧错误）；引擎的 devices 事件总是带 error，成功时是空串。
+      s().setDevices(p.devices ?? [], p.error);
     }),
     backend.on('placement', (payload) => {
       const p = payload as { placement: Placement | null; dirty: boolean };

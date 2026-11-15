@@ -29,12 +29,20 @@ jobs:
             src-tauri -> target
             padlend-core -> target
 
-      - name: Verify tag matches tauri.conf.json version
+      # 版本号在四处各写一遍，发版前必须一致；tag 与版本只在 tag 事件里比对。
+      - name: Verify version consistency and tag
         shell: pwsh
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          if ("v$($conf.version)" -ne $env:GITHUB_REF_NAME) {
+          $cargoShell = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $cargoCore = (Select-String -Path padlend-core/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $versions = @($conf.version, $cargoShell, $cargoCore, $pkg) | Select-Object -Unique
+          if ($versions.Count -ne 1) {
+            Write-Error "版本不一致：tauri.conf.json=$($conf.version) src-tauri/Cargo.toml=$cargoShell padlend-core/Cargo.toml=$cargoCore package.json=$pkg"
+            exit 1
+          }
+          if (($env:GITHUB_REF -like 'refs/tags/*') -and ("v$($conf.version)" -ne $env:GITHUB_REF_NAME)) {
             Write-Error "tag $env:GITHUB_REF_NAME does not match tauri.conf.json version $($conf.version)"
             exit 1
           }
@@ -56,7 +64,49 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem dist -File | Select-Object Name, Length
+          # 校验和文件必须是纯 UTF-8：PS 5.1 的 -Encoding utf8 会写 BOM，首行校验会失效。
+          $sums = [IO.File]::ReadAllBytes('dist\SHA256SUMS.txt')
+          if ($sums.Length -ge 3 -and $sums[0] -eq 0xEF -and $sums[1] -eq 0xBB -and $sums[2] -eq 0xBF) {
+            Write-Error "dist\SHA256SUMS.txt 带 UTF-8 BOM"
+            exit 1
+          }
           Get-Content dist\SHA256SUMS.txt
+
+      # 发布正文从 CHANGELOG 对应版本小节生成：不要在仓库里维护带版本号的手写文案，
+      # 否则下一个 tag 发布会把旧版本的说明原样发出去（2.0.6 起就踩过）。
+      - name: Write release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $lines = @(Get-Content docs/CHANGELOG.md)
+          $pattern = '^## \[' + [regex]::Escape($version) + '\]'
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $pattern) { $start = $i; break }
+          }
+          if ($start -lt 0) {
+            Write-Error "CHANGELOG.md 里没有 $version 的小节"
+            exit 1
+          }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^## \[') { $end = $i; break }
+          }
+          $section = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
+          $body = @(
+            "# PadLend $version",
+            "",
+            $section,
+            "",
+            "## 下载",
+            "",
+            "- 安装包：PadLend-$version-setup.exe（NSIS，当前用户安装，不需要管理员权限）",
+            "- 免安装：PadLend-$version-win64.zip",
+            "- 校验值见 SHA256SUMS.txt"
+          ) -join "`n"
+          [IO.File]::WriteAllText((Join-Path dist 'release-notes.md'), $body + "`n", [Text.UTF8Encoding]::new($false))
+          Write-Host "release notes: $((Get-Content dist/release-notes.md).Count) 行"
 
       - name: Publish GitHub Release
         # 手动触发只构建产物，不发布：只有 tag 才能创建 Release。
@@ -65,9 +115,9 @@ jobs:
         with:
           draft: false
           prerelease: false
-          body_path: .github/release-notes.md
+          body_path: dist/release-notes.md
           generate_release_notes: false
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           files: |
             dist/PadLend-*-win64.zip
             dist/PadLend-*-setup.exe

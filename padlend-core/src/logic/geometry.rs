@@ -739,10 +739,21 @@ pub fn tablet_entry_point(
     }
 }
 
+/// 出口落点距边线的像素数：`max(1, entry_margin_px) + max(0, boundary_inset_px)`。
+///
+/// Python 在调用 `tablet_exit_point` 前用同一公式算 offset；这里收敛成一个函数，
+/// 让 `motion.entry_margin_px` 与 `motion.boundary_inset_px` 两个配置项只有一份
+/// 生效规则（win 侧遗留的 `DesktopMap::exit_position` 也应改用本函数）。
+pub fn exit_offset_px(entry_margin_px: i64, boundary_inset_px: i64) -> i32 {
+    let margin = entry_margin_px.max(1);
+    let inset = boundary_inset_px.max(0);
+    margin.saturating_add(inset).clamp(1, i64::from(i32::MAX)) as i32
+}
+
 /// 平板入口边上的点 → PC 落点（1:1 几何，已夹到显示器与段范围内）。
 ///
-/// `offset_px` 是落点距边线的像素数（Python 由
-/// `max(1, ENTRY_MARGIN_PX) + BOUNDARY_INSET_PX` 算好后传进来）；落点永远在
+/// `offset_px` 是落点距边线的像素数（调用方用 [`exit_offset_px`] 由
+/// `motion.entry_margin_px` + `motion.boundary_inset_px` 算好后传入）；落点永远在
 /// 桌面内部，因为 Windows 不允许把光标留在所有显示器之外。
 pub fn tablet_exit_point(
     segment: &EdgeSegment,
@@ -1278,6 +1289,26 @@ mod tests {
         assert_eq!(
             tablet_exit_point(&right, &monitor, &tablet, 1067.5, 2),
             (1918, 540)
+        );
+    }
+
+    /// `entry_margin_px` / `boundary_inset_px` 合成出口 offset（两个配置项都必须生效）。
+    #[test]
+    fn exit_offset_clamps_and_combines_both_configs() {
+        assert_eq!(exit_offset_px(2, 0), 2);
+        assert_eq!(exit_offset_px(4, 8), 12);
+        assert_eq!(exit_offset_px(0, 0), 1, "至少 1px，落点必须在桌面内部");
+        assert_eq!(exit_offset_px(-5, 0), 1);
+        assert_eq!(exit_offset_px(1, -8), 1);
+        assert_eq!(exit_offset_px(i64::MAX, i64::MAX), i32::MAX, "不得溢出");
+
+        // 与 tablet_exit_point 的落点一致：右边缘内缩 12px → x = right-12。
+        let monitor = display1();
+        let right = single_segment(Edge::Right);
+        let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
+        assert_eq!(
+            tablet_exit_point(&right, &monitor, &tablet, 1067.5, exit_offset_px(4, 8)),
+            (1908, 540)
         );
     }
 

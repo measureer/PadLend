@@ -4,10 +4,10 @@
 //! * 持有配置、设备注册表、日志环形缓冲、事实镜像、摆位缓存；
 //! * 组装 Router（Session + Desktop + Mask）并注入回调；
 //! * `--simulate` 时用 `SimulatedSession` + `SimulatedAdb` + 无操作遮罩，**不碰 adb**；
-//! * 给 `service::api` 提供 25 个方法所需的最小操作面。
+//! * 给 `service::api` 提供 RPC 方法所需的最小操作面。
 //!
-//! 与 Python 的偏差：时间戳是 UTC（无 chrono）、simulate 下遮罩换成 `NoopMask`
-//! （不建窗、不锁光标）。
+//! 与 Python 的偏差：时间戳用本地时间（`clockfmt` 走 `GetLocalTime`，与 UI 一致；
+//! 注释里曾误写成 UTC）；simulate 下遮罩换成 `NoopMask`（不建窗、不锁光标）。
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -147,6 +147,9 @@ pub struct Engine {
     /// 钩子闭包与 `install_hotkeys` 共享同一份绑定表，保存配置后原地替换。
     double_taps: Arc<Mutex<Vec<(ModifierFamily, HotkeyAction)>>>,
     session: OnceLock<Arc<dyn SessionPort>>,
+    /// 真实模式的会话（保留具体类型：退出/启动兜底要用 restore_pending_*，
+    /// 这两个方法不在 SessionPort 上）；simulate 下为空。
+    tablet: OnceLock<Arc<TabletSession>>,
     router: OnceLock<Arc<Router>>,
     logs: Mutex<VecDeque<LogEntry>>,
     facts: Mutex<Option<DeviceFacts>>,
@@ -201,6 +204,24 @@ impl Engine {
                 .map_err(|err| crate::service::ServiceError::ConfigPath(err.to_string()))?,
         };
         let first_run = !config_path.exists();
+        let start_router = options.start_router.unwrap_or(true);
+        // 退出兜底（DESIGN 12.3）：exit.clean 存在 = 上次正常退出；缺失 = 崩溃/被杀。
+        // 启动时先把它删掉表示"本次运行中"，异常退出就会留下"缺失"供下次识别。
+        let marker_path = config_path.with_file_name("exit.clean");
+        let mut previous_clean = true;
+        if start_router && !options.simulate {
+            previous_clean = marker_path.exists();
+            let _ = std::fs::remove_file(&marker_path);
+            if !previous_clean && !first_run {
+                if let Some(pid) = crate::win::mask::cleanup_orphan_mask() {
+                    eprintln!("[engine] 上次未正常退出，已清理残留遮罩进程 pid={pid}");
+                }
+                crate::win::mask::unclip_on_exit();
+                eprintln!("[engine] 上次未正常退出：已解除光标裁剪并清理孤儿遮罩");
+            }
+        }
+        // 上次异常退出：等会话建好后还要在平板上强制清理（pkill/摘转发/还原设置）。
+        let stale_run = start_router && !options.simulate && !previous_clean && !first_run;
         let cfg = Config::load(&config_path);
         if first_run {
             let _ = cfg.save(&config_path);
@@ -277,6 +298,7 @@ impl Engine {
             hotkeys: Mutex::new(None),
             double_taps: Arc::new(Mutex::new(Vec::new())),
             session: OnceLock::new(),
+            tablet: OnceLock::new(),
             router: OnceLock::new(),
             logs: Mutex::new(VecDeque::new()),
             facts: Mutex::new(None),
@@ -300,6 +322,23 @@ impl Engine {
 
         engine.init_router(&cfg, engine.adb.clone())?;
 
+        // 崩溃遗留的 pointer_speed / 熄屏超时：有状态文件才发 adb 命令（无文件立即返回）。
+        // 放后台线程：设备暂时离线时不能让启动卡在 adb 超时上。
+        if start_router && !options.simulate {
+            if let Some(session) = engine.tablet.get().cloned() {
+                let _ = thread::Builder::new()
+                    .name("padlend-restore-pending".to_string())
+                    .spawn(move || {
+                        if stale_run {
+                            // 上次崩溃/被杀：杀平板上的残留服务端、摘转发、还原 pointer_speed。
+                            session.force_cleanup(None);
+                        }
+                        session.restore_pending_pointer_speed();
+                        session.restore_pending_screen_timeout();
+                    });
+            }
+        }
+
         let initial = engine.placement_from_config(&cfg.placement, false);
         if let Some(placement) = &initial {
             if let Some(router) = engine.router.get() {
@@ -312,7 +351,7 @@ impl Engine {
         }
         *lock(&engine.metrics) = engine.current_metrics_value();
 
-        if options.start_router.unwrap_or(true) {
+        if start_router {
             // auto_connect 的首次连接由 Router::start() 里的 supervisor 线程完成，
             // **不经过** devices.connect；如果只在 devices.connect 里 enable_facts()，
             // supervisor 自己连上之后 poll_facts_once 会一直被 facts_ready=false 挡掉，
@@ -366,6 +405,8 @@ impl Engine {
                 .candidates(candidates)
                 .verify_facts(verify)
                 .build();
+            // 保留具体类型：退出/启动兜底要用 restore_pending_*（不在 SessionPort 上）。
+            let _ = self.tablet.set(built.clone());
             built
         };
         let _ = self.session.set(session.clone());
@@ -378,6 +419,16 @@ impl Engine {
         self.router
             .set(router)
             .map_err(|_| crate::service::ServiceError::Init("Router 已经初始化过".to_string()))?;
+
+        // --no-hooks 的承诺是"不安装 Raw Input / 键盘钩子"（--help / README），
+        // 但这里原先无条件启动 Raw Input：--no-hooks 只挡了键盘钩子，鼠标事件照收。
+        if self.simulate || self.no_hooks {
+            eprintln!(
+                "[engine] 跳过 Raw Input（simulate={} no_hooks={}）",
+                self.simulate, self.no_hooks
+            );
+            return Ok(());
+        }
 
         // 服务模式必须自己启动 Raw Input。Python 的 Runtime 会起它，Rust 版最初漏了这一步：
         // 接管能成功（入口脉冲靠会话直接发），但 PC 侧鼠标位移永远进不到 Router，
@@ -696,7 +747,7 @@ impl Engine {
         }
     }
 
-    /// 操作平板（快捷键与 RPC 共用）；返回是否成功。
+    /// 操作平板（快捷键入口）；返回是否成功。
     pub fn android_key(&self, action: HotkeyAction) -> bool {
         let Some(android) = Self::android_action_of(action) else {
             return false;
@@ -704,7 +755,7 @@ impl Engine {
         self.press_android(android)
     }
 
-    /// 直接执行一个安卓动作（`engine.android_key` RPC 的入口）。
+    /// 直接执行一个安卓动作（热键与指针校准共用）；`engine.android_key` RPC 已移除。
     pub fn press_android(&self, action: AndroidAction) -> bool {
         let Some(router) = self.router() else {
             self.emit_log("KEY", "引擎未启动，无法操作平板");
@@ -1476,7 +1527,10 @@ impl Engine {
                     registry.adopt_live_endpoint(&serial, &entry.model, &live_serials)
                 };
                 if adopted.is_some() {
-                    let _ = self.save_registry();
+                    // 写盘失败不能静默：界面会显示"记录已更新"，重启却回退（P1-26）。
+                    if let Err(err) = self.with_registry(|registry| registry.save_checked()) {
+                        self.emit_log("DEVICE", format!("保存设备记录失败：{err}"));
+                    }
                     self.emit_log(
                         "DEVICE",
                         format!("设备记录已更新：同一台平板的新无线地址 {serial}"),
@@ -1764,11 +1818,12 @@ impl Engine {
             }
             return;
         }
-        let misses = self.relocate_misses.fetch_add(1, Ordering::SeqCst) + 1;
         if online > 0 {
             // 局域网里还有别的端点在线：继续按注册表重试，不打扰用户。
+            // 必须在计数前返回：否则计数越过 3（提示阈值）后，提示永远等不到。
             return;
         }
+        let misses = self.relocate_misses.fetch_add(1, Ordering::SeqCst) + 1;
         if misses == AUTO_RELOCATE_HINTS {
             self.emit_log(
                 "DEVICE",
@@ -1822,9 +1877,44 @@ impl Engine {
         if let Some(router) = self.router.get() {
             router.stop();
         }
+        // 会话 teardown：pkill 服务端、移除 adb forward、还原 pointer_speed / 熄屏超时。
+        // 之前退出只停 Router，平板上被改过的设置永远不还原（P0 兜底链空洞）。
+        // 设备离线时这些 adb 命令可能各等十几秒，而外壳只等 8s 就 taskkill：
+        // 最多等 5s；超时按"没清干净"处理（不写 exit.clean，下次启动强制清理）。
+        let session_clean = if let Some(session) = self.session.get() {
+            let session = session.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = thread::Builder::new()
+                .name("padlend-session-teardown".to_string())
+                .spawn(move || {
+                    session.stop();
+                    let _ = tx.send(());
+                });
+            match spawned {
+                Ok(_) => rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+                Err(_) => false,
+            }
+        } else {
+            true
+        };
         // 最后再关 adb 链路：会话 teardown 已经 pkill 掉服务端、移掉 forward。
         self.release_adb_connections();
         self.mask_release();
+        if !self.simulate {
+            // 兜底：即使 release 走完，也确保不残留 ClipCursor。
+            crate::win::mask::unclip_on_exit();
+            // 正常退出标记：下次启动看到它才跳过孤儿清理。
+            if session_clean {
+                if let Err(err) =
+                    std::fs::write(self.config_path.with_file_name("exit.clean"), b"clean\n")
+                {
+                    eprintln!("[engine] 写正常退出标记失败：{err}");
+                }
+            } else {
+                eprintln!("[engine] 会话清理超时：不写正常退出标记，下次启动将强制清理");
+                let _ = std::fs::remove_file(self.config_path.with_file_name("exit.clean"));
+            }
+        }
     }
 
     /// `app.bootstrap` 的完整快照（Python `PadLendService.snapshot`）。

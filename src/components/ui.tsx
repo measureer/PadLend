@@ -1,7 +1,7 @@
 /** 基础组件库：所有页面共用同一套交互与视觉，杜绝重复样式代码。 */
 
 import { memo, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import type { AppState } from '../api/types';
+import type { AppState, ToastMessage } from '../api/types';
 import { STATE_TONES, stateLabel } from '../lib/format';
 import { useAppStore } from '../store/appStore';
 import { Icon, type IconName } from './Icon';
@@ -338,20 +338,26 @@ export function Modal({ title, subtitle, footer, wide, onClose, children }: Moda
   );
 }
 
+/** 每条 toast 自己计时：列表变化不会重置其它 toast 的 3.8s（旧实现会无限续命）。 */
+const Toast = memo(function Toast({ toast, onDismiss }: { toast: ToastMessage; onDismiss: (id: number) => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => onDismiss(toast.id), 3800);
+    return () => window.clearTimeout(timer);
+  }, [toast.id, onDismiss]);
+  return (
+    <div className={`toast ${toast.tone}`} onClick={() => onDismiss(toast.id)}>
+      {toast.text}
+    </div>
+  );
+});
+
 export function ToastStack() {
   const toasts = useAppStore((s) => s.toasts);
   const dismiss = useAppStore((s) => s.dismissToast);
-  useEffect(() => {
-    if (!toasts.length) return;
-    const timers = toasts.map((toast) => window.setTimeout(() => dismiss(toast.id), 3800));
-    return () => timers.forEach(window.clearTimeout);
-  }, [toasts, dismiss]);
   return (
     <div className="toast-stack" aria-live="polite">
       {toasts.map((toast) => (
-        <div key={toast.id} className={`toast ${toast.tone}`} onClick={() => dismiss(toast.id)}>
-          {toast.text}
-        </div>
+        <Toast key={toast.id} toast={toast} onDismiss={dismiss} />
       ))}
     </div>
   );

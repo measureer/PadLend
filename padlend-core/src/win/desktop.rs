@@ -40,7 +40,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::MONITORINFOF_PRIMARY;
 
-use crate::constants::{BOUNDARY_INSET_PX, CORNER_DIRECTION_RATIO, ENTRY_MARGIN_PX};
+use crate::constants::CORNER_DIRECTION_RATIO;
 use crate::logic::geometry::ALL_EDGES;
 use crate::win::dpi;
 
@@ -156,20 +156,6 @@ fn edge_index(edge: Edge) -> u8 {
 
 /// 与 Python `_clamp` 同语义的浮点夹取（NaN 会原样传播，因为两个比较都不成立）。
 fn clamp(value: f64, low: f64, high: f64) -> f64 {
-    if value < low {
-        low
-    } else if value > high {
-        high
-    } else {
-        value
-    }
-}
-
-/// 与 Python `_clamp_int` 同语义：`high < low` 时返回 `low`。
-fn clamp_int(value: i64, low: i64, high: i64) -> i64 {
-    if high < low {
-        return low;
-    }
     if value < low {
         low
     } else if value > high {
@@ -635,106 +621,12 @@ impl DesktopMap {
         }
         Some(best)
     }
-
-    // -- 沿边映射 -----------------------------------------------------------
-
-    /// 平板贴边那条边的长度：垂直 PC 边用平板高，水平 PC 边用平板宽。
-    fn tablet_along_size(edge: Edge, tablet_w: i32, tablet_h: i32) -> i32 {
-        if edge.is_vertical() {
-            tablet_h
-        } else {
-            tablet_w
-        }
-    }
-
-    /// PC 侧沿边坐标 → 平板入口点（t4/t5 的 `P0`，6.3.5）。
-    ///
-    /// 平板贴边方向（用户给定）：PC 右边 → 平板左缘 `x=0`；PC 左边 → 平板右缘
-    /// `x=W-1`；PC 上边 → 平板下缘 `y=H-1`；PC 下边 → 平板上缘 `y=0`。返回平板
-    /// 像素坐标（浮点，供 `warp_to` 使用）。
-    pub fn entry_point(
-        &self,
-        pl: &Placement,
-        pc_along: i32,
-        tablet_w: i32,
-        tablet_h: i32,
-    ) -> (f64, f64) {
-        let seg = pl.segment;
-        let t_size = Self::tablet_along_size(seg.edge, tablet_w, tablet_h);
-        let along = pc_to_tablet_along(pc_along, &seg, t_size);
-        match seg.edge {
-            Edge::Right => (0.0, along),
-            Edge::Left => (tablet_w.saturating_sub(1).max(0) as f64, along),
-            Edge::Top => (along, tablet_h.saturating_sub(1).max(0) as f64),
-            Edge::Bottom => (along, 0.0),
-        }
-    }
-
-    /// 平板侧沿边坐标 → PC 虚拟桌面落点（t9 的 `SetCursorPos`，6.3.5）。
-    ///
-    /// `entry_margin_px` / `boundary_inset_px` 缺省取 `ENTRY_MARGIN_PX` /
-    /// `BOUNDARY_INSET_PX`。落点距边线 `max(1, entry_margin) + boundary_inset` 像素，
-    /// 位于桌面**内部**（Windows 不允许把光标留在所有显示器之外，1px 是边界像素）；
-    /// 例如默认值在 right 边得到 `x=right-2`，left 边得到 `x=left+1`。落点还会夹到
-    /// 显示器与段范围内，避免极端布局越界。
-    pub fn exit_position(
-        &self,
-        pl: &Placement,
-        tablet_along: f64,
-        tablet_w: i32,
-        tablet_h: i32,
-        entry_margin_px: Option<i32>,
-        boundary_inset_px: Option<i32>,
-    ) -> Result<(i32, i32), DesktopError> {
-        let seg = pl.segment;
-        if !self.segment_exists(&seg) {
-            return Err(DesktopError::SegmentGone {
-                edge: seg.edge.as_str(),
-                span_start: seg.span_start,
-                span_end: seg.span_end,
-            });
-        }
-        let monitor = self
-            .monitor_by_handle(seg.monitor_handle)
-            .ok_or(DesktopError::MonitorGone {
-                handle: seg.monitor_handle,
-            })?;
-        if monitor.rect.empty() {
-            let device = if monitor.device.is_empty() {
-                monitor.handle.to_string()
-            } else {
-                monitor.device.clone()
-            };
-            return Err(DesktopError::EmptyMonitorRect { device });
-        }
-
-        let t_size = Self::tablet_along_size(seg.edge, tablet_w, tablet_h);
-        let along = clamp_int(
-            tablet_to_pc_along(tablet_along, &seg, t_size) as i64,
-            seg.span_start as i64,
-            seg.span_start.max(seg.span_end.saturating_sub(1)) as i64,
-        ) as i32;
-
-        let margin = entry_margin_px.unwrap_or(ENTRY_MARGIN_PX);
-        let inset = boundary_inset_px.unwrap_or(BOUNDARY_INSET_PX);
-        let offset = (margin.max(1) + inset.max(0)) as i64;
-
-        let rect = monitor.rect;
-        let (left, right) = (rect.left as i64, rect.right as i64);
-        let (top, bottom) = (rect.top as i64, rect.bottom as i64);
-        let (x, y) = match seg.edge {
-            Edge::Right => (clamp_int(right - offset, left, right - 1) as i32, along),
-            Edge::Left => (clamp_int(left + offset - 1, left, right - 1) as i32, along),
-            Edge::Top => (along, clamp_int(top + offset - 1, top, bottom - 1) as i32),
-            Edge::Bottom => (along, clamp_int(bottom - offset, top, bottom - 1) as i32),
-        };
-        Ok((x, y))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{BOUNDARY_INSET_PX, ENTRY_MARGIN_PX};
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -834,15 +726,6 @@ mod tests {
 
     fn placement(seg: EdgeSegment) -> Placement {
         Placement::new(seg, 0.5, Align::Proportional, None).expect("默认摆位合法")
-    }
-
-    fn entry(map: &DesktopMap, pl: &Placement, pc_along: i32) -> (f64, f64) {
-        map.entry_point(pl, pc_along, TABLET_W, TABLET_H)
-    }
-
-    fn exit(map: &DesktopMap, pl: &Placement, tablet_along: f64) -> (i32, i32) {
-        map.exit_position(pl, tablet_along, TABLET_W, TABLET_H, None, None)
-            .expect("落点应有效")
     }
 
     fn approx(value: f64, expected: f64) {
@@ -1214,93 +1097,19 @@ mod tests {
         assert_eq!(tablet_to_pc_along(50.0, &right, 1), 1079);
     }
 
-    // -- 入口 / 出口坐标 -----------------------------------------------------
+    // -- 错误文案 -----------------------------------------------------------
 
+    /// E301/E900 的文案与错误码逐字对齐 Python。入口/出口坐标的计算唯一实现在
+    /// `logic::geometry`（router 走那条路），`DesktopMap` 不再重复一份。
     #[test]
-    fn entry_and_exit_single_screen() {
-        let map = map_of("single");
-        let by_edge = segments_by_edge(&map);
-
-        let right = placement(by_edge[&Edge::Right]);
-        assert_eq!(entry(&map, &right, 540), (0.0, 1067.5));
-        assert_eq!(exit(&map, &right, 1067.5), (1918, 540));
-        assert_eq!(exit(&map, &right, -1.0), (1918, 0));
-        assert_eq!(exit(&map, &right, 10_000.0), (1918, 1079));
-
-        let left = placement(by_edge[&Edge::Left]);
-        assert_eq!(entry(&map, &left, 540), (3199.0, 1067.5));
-        assert_eq!(exit(&map, &left, 1067.5), (1, 540));
-
-        let top = placement(by_edge[&Edge::Top]);
-        assert_eq!(entry(&map, &top, 960), (1599.5, 2135.0));
-        assert_eq!(exit(&map, &top, 1599.5), (960, 1));
-
-        let bottom = placement(by_edge[&Edge::Bottom]);
-        assert_eq!(entry(&map, &bottom, 960), (1599.5, 0.0));
-        assert_eq!(exit(&map, &bottom, 1599.5), (960, 1078));
-    }
-
-    #[test]
-    fn exit_position_margin_and_inset_overrides() {
-        let map = map_of("single");
-        let right = placement(segments_by_edge(&map)[&Edge::Right]);
-        let case = |margin: Option<i32>, inset: Option<i32>| {
-            map.exit_position(&right, 1067.5, TABLET_W, TABLET_H, margin, inset)
-                .expect("落点应有效")
+    fn desktop_error_messages_and_codes() {
+        let gone = DesktopError::SegmentGone {
+            edge: "right",
+            span_start: 0,
+            span_end: 1080,
         };
-        assert_eq!(case(Some(1), None), (1919, 540));
-        assert_eq!(case(Some(0), None), (1919, 540));
-        assert_eq!(case(Some(-5), None), (1919, 540));
-        assert_eq!(case(None, Some(8)), (1910, 540));
-
-        let left = placement(segments_by_edge(&map)[&Edge::Left]);
-        let case_left = |margin: Option<i32>, inset: Option<i32>| {
-            map.exit_position(&left, 1067.5, TABLET_W, TABLET_H, margin, inset)
-                .expect("落点应有效")
-        };
-        assert_eq!(case_left(Some(1), None), (0, 540));
-        assert_eq!(case_left(None, Some(8)), (9, 540));
-    }
-
-    #[test]
-    fn entry_and_exit_on_merged_multi_monitor_segments() {
-        let map = map_of("dual_horizontal");
-        let by_edge = segments_by_edge(&map);
-
-        let top = placement(by_edge[&Edge::Top]);
-        assert_eq!((top.segment.span_start, top.segment.span_end), (0, 3840));
-        assert_eq!(entry(&map, &top, 960), (799.75, 2135.0));
-        assert_eq!(exit(&map, &top, 799.75), (960, 1));
-        assert_eq!(exit(&map, &top, 3199.0), (3839, 1));
-
-        let right = placement(by_edge[&Edge::Right]);
-        assert_eq!(right.segment.span_end, 1080);
-        assert_eq!(entry(&map, &right, 540), (0.0, 1067.5));
-        // 右侧外轮廓属于副屏（x=3840），落点必须跑到 3838 而不是 1918。
-        assert_eq!(exit(&map, &right, 1067.5), (3838, 540));
-    }
-
-    #[test]
-    fn exit_position_negative_coordinates() {
-        let map = map_of("negative");
-        let by_edge = segments_by_edge(&map);
-        let right = placement(by_edge[&Edge::Right]);
-        let left = placement(by_edge[&Edge::Left]);
-        assert_eq!(exit(&map, &right, 1067.5), (1918, 540));
-        assert_eq!(exit(&map, &left, 1067.5), (-1919, 540));
-    }
-
-    #[test]
-    fn exit_position_rejects_stale_monitor() {
-        let map = map_of("single");
-        let stale = placement(EdgeSegment::new(99, Edge::Right, 0, 1080).expect("合法段"));
-        let err = map
-            .exit_position(&stale, 0.0, TABLET_W, TABLET_H, None, None)
-            .expect_err("陈旧段必须报错");
-        assert_eq!(err.code(), "E301");
-        assert_eq!(err.to_string(), "段 right [0, 1080) 已不存在");
-
-        // 另外两条防御分支的文案（状态由显示器列表构建，正常构造下走不到）。
+        assert_eq!(gone.code(), "E301");
+        assert_eq!(gone.to_string(), "段 right [0, 1080) 已不存在");
         assert_eq!(
             DesktopError::MonitorGone {
                 handle: 0x1_0000_0001

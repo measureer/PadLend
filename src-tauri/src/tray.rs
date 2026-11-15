@@ -72,6 +72,17 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 app.exit(0);
                 return;
             }
+            if action == "open-logs" {
+                // 不走前端：引擎的 system.paths.logDir 是 %APPDATA%\PadLend\logs（历史设计，
+                // 2.x 没有任何写入者），真实日志在 %LOCALAPPDATA%\PadLend 下的 shell.log 与
+                // service.log。由外壳直接打开真实目录，避免用户拿到一个空目录。
+                let dir = crate::shell_log::log_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                if let Err(err) = crate::commands::open_path(dir.display().to_string()) {
+                    crate::shell_log::write_line(&format!("打开日志目录失败：{err}"));
+                }
+                return;
+            }
             // 这些菜单项打开的是应用内的对话框：窗口收在托盘里时如果不先亮出来，
             // 用户点了会觉得「没反应」（对话框确实渲染了，只是没人看得见）。
             if matches!(action.as_str(), "about" | "wizard" | "run-diagnostics") {

@@ -763,9 +763,6 @@ fn candidate_paths(explicit: Option<&Path>) -> Vec<PathBuf> {
     if let Some(path) = which(C::ADB_EXE) {
         candidates.push(path);
     }
-    if let Some(path) = which("adb") {
-        candidates.push(path);
-    }
     for key in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
         if let Some(root) = std::env::var_os(key) {
             if !root.is_empty() {
@@ -1354,19 +1351,30 @@ impl Adb {
             .trim()
             .to_string();
         let lowered = text.to_lowercase();
-        let failed = text.is_empty()
-            || [
-                "failed to connect",
-                "cannot connect",
-                "unable to connect",
-                "no route to host",
-            ]
-            .iter()
-            .any(|marker| lowered.contains(marker));
-        if failed {
-            return Err(AdbError::offline(format!(
-                "连接 {target} 失败：{text}（确认平板与电脑在同一 Wi-Fi、且已开启无线调试）"
-            )));
+        // P1-30：以前只认 4 条英文失败特征，`cannot resolve host` / `Connection
+        // refused` / `adb: connect error` 这类文案会被判成功，于是把一条从未建立的
+        // 连接登记进 adb_links，退出时再对它 disconnect。这里改成和 pair 一致：
+        // 必须看到 `connected to` 才算成功（`connected to x` / `already connected to x`），
+        // 失败特征只用来挑更具体的排查提示。
+        if text.is_empty() || !lowered.contains("connected to") {
+            let hint = if lowered.contains("cannot resolve host")
+                || lowered.contains("unknown host")
+                || lowered.contains("name or service not known")
+            {
+                "（解析不到这个地址：确认 IP/主机名没写错）"
+            } else if lowered.contains("no route to host") {
+                "（路由不可达：确认平板与电脑在同一 Wi-Fi）"
+            } else if lowered.contains("connection refused")
+                || lowered.contains("failed to connect")
+                || lowered.contains("cannot connect")
+                || lowered.contains("unable to connect")
+                || lowered.contains("connect error")
+            {
+                "（端口拒绝连接：平板上的无线调试可能已关闭或换了端口）"
+            } else {
+                "（确认平板与电脑在同一 Wi-Fi、且已开启无线调试）"
+            };
+            return Err(AdbError::offline(format!("连接 {target} 失败：{text}{hint}")));
         }
         // 1.7.2：这条链路是 PadLend 建的，断开/退出时必须由 PadLend 关掉，
         // 否则平板会一直挂在 adb devices 里（用户以为「无线调试没断开」）。
@@ -1924,6 +1932,84 @@ adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp device product:CGA-W00 mod
             .connect("   ", 20.0)
             .expect_err("空地址必须拒绝");
         assert_eq!(error.code, AdbErrorCode::DeviceOffline);
+    }
+
+    #[test]
+    fn connect_requires_the_connected_to_line() {
+        // P1-30：以前只认 4 条失败特征，这些文案会被判成功，并把一条从未建立的
+        // 连接登记进 adb_links（退出时再 disconnect 它）。
+        let cases = [
+            (
+                1,
+                "cannot resolve host 'pad.local' and port 5555: Name or service not known\n",
+            ),
+            (
+                1,
+                "failed to connect to '192.168.1.8:37495': Connection refused\n",
+            ),
+            (
+                1,
+                "adb: connect error for 192.168.1.8:37495: protocol fault (couldn't read status)\n",
+            ),
+            (0, "something unexpected\n"),
+        ];
+        for (code, text) in cases {
+            let runner = ScriptRunner::new(vec![rc(code, text)]);
+            let error = fake_adb(runner)
+                .connect("192.168.1.8:37495", 20.0)
+                .expect_err("没有 connected to 就必须失败");
+            assert_eq!(error.code, AdbErrorCode::DeviceOffline, "text={text:?}");
+            assert!(error.detail.contains("连接 192.168.1.8:37495 失败"));
+        }
+    }
+
+    #[test]
+    fn connect_failure_hints_match_the_output() {
+        let resolve = ScriptRunner::new(vec![rc(
+            1,
+            "cannot resolve host 'pad.local' and port 5555: Name or service not known\n",
+        )]);
+        let error = fake_adb(resolve)
+            .connect("pad.local:5555", 20.0)
+            .expect_err("应当失败");
+        assert!(error.detail.contains("解析不到"), "{}", error.detail);
+
+        let refused = ScriptRunner::new(vec![rc(
+            1,
+            "failed to connect to '192.168.1.8:37495': Connection refused\n",
+        )]);
+        let error = fake_adb(refused)
+            .connect("192.168.1.8:37495", 20.0)
+            .expect_err("应当失败");
+        assert!(error.detail.contains("端口拒绝连接"), "{}", error.detail);
+    }
+
+    #[test]
+    fn connect_counts_already_connected_as_success() {
+        let runner = ScriptRunner::new(vec![rc(
+            0,
+            "already connected to 192.168.1.8:37495\n",
+        )]);
+        let text = fake_adb(runner)
+            .connect("192.168.1.8:37495", 20.0)
+            .expect("already connected 也算成功");
+        assert!(text.contains("already connected"));
+    }
+
+    #[test]
+    fn candidate_paths_never_look_for_a_bare_adb_name_on_windows() {
+        // P1-30：which("adb") 只拼原样文件名，Windows 上永远不是文件；
+        // which(C::ADB_EXE)（adb.exe）已经覆盖过，这一路是 shutil.which 的残留。
+        let candidates = candidate_paths(None);
+        assert!(candidates
+            .iter()
+            .any(|path| path.file_name().and_then(|name| name.to_str()) == Some(C::ADB_EXE)));
+        if cfg!(windows) {
+            assert!(candidates.iter().all(|path| path
+                .file_name()
+                .and_then(|name| name.to_str())
+                != Some("adb")));
+        }
     }
 
     #[test]
