@@ -2,6 +2,34 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.0.5] — 2026-11-15
+
+### 修复
+
+- **平板越用越卡、adbd 掉线（2.0.2 引入）**：朝向轮询每 2 秒跑一次
+  `dumpsys window displays | grep -m1 mDisplayRotation`。输出看着只有几十字节，代价全在
+  那份 window dump 上 —— 同一台 HONOR CGA-W00（Android 17 / 3200x2136）实测 **851ms 起步，
+  忙时 4.7s / 7.7s / 13.4s**，而同样信息的 `dumpsys input` Viewport 行只要 **65–150ms**。
+  引擎 5 秒超时只杀掉本地 adb 客户端，平板上的 dump 还在继续跑；2 秒后又发一条，
+  几轮下来就是好几份 window dump 同时抢 WindowManager 锁（住在 system_server 里），
+  平板越来越卡，直到 adbd 被拖死、无线调试端口跟着变。
+  现在改成设备端 `dumpsys input | grep -m1 'Viewport.*orientation='`（只回一行），
+  轮询周期 2s → 15s，失败翻倍退避（15 → 30 → 60s），连续 3 次拿不到才退回完整 dump。
+
+- **无线调试换端口后只能重启应用**：平板上 adbd 一重启（无线调试自己掉一次线也算），端口就换一个；
+  引擎的 mDNS 虽然找到了新地址并写回配置，但**会话是在连接时按旧 serial 建好的**，重连只会一直
+  撞那个死地址，用户只能重启 PadLend。现在重定位成功后会 `set_requested_serial` 并把新地址交给
+  `Router::connect_device` 重建会话，几秒内自动接上。
+
+
+### 验证
+
+- 引擎 `cargo test`：lib 562 + rawinput 1 + tablet 5 全绿（旧的 ROTATION_* 解析与两条用例已删，
+  换成 Viewport 行的解析用例）。
+- 真机对照（同一台平板、同一时刻）：`dumpsys window displays` 851ms / 1140ms / 8664ms，
+  `dumpsys input` 64–150ms，`settings get` 59–92ms。
+- 新版空闲时每 15 秒才有一次 adb 查询；`/proc/loadavg` 与 `/proc/pressure/io` 无跳变。
+
 ## [2.0.4] — 2026-11-15
 
 ### 修复

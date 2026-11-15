@@ -150,9 +150,14 @@ const LINK_PROBE_INTERVAL_S: f64 = 2.0;
 const LINK_PROBE_TIMEOUT_S: f64 = 2.5;
 /// 朝向轮询周期（秒）。
 ///
-/// 2.0.2：1.0 → 2.0。旋转是低频事件，而每次轮询都要走一趟 adb；把间距拉长、
-/// 再配合下面的廉价查询，才不会和鼠标报文抢带宽。
-const ORIENTATION_POLL_S: f64 = 2.0;
+/// 2.0.2：1.0 → 2.0，当时以为「只问显示旋转」很便宜。
+/// 2.0.5：2.0 → 15.0。实测同一台平板（HONOR CGA-W00，3200x2136）：
+/// `dumpsys window displays` 851ms 起步，忙时 4.7s / 7.7s / 13.4s；而
+/// `dumpsys input` 只要 65–150ms。2s 一轮根本追不上 dump 本身，本地 5s 超时
+/// 只杀掉 adb 客户端、平板上的 dump 还在跑，下一轮又发一条 —— 几轮就堆成
+/// 好几份 window dump 抢 WindowManager 锁，system_server 越拖越慢。
+/// 旋转是低频事件，15s 一次足够，连续失败还会翻倍退避。
+const ORIENTATION_POLL_S: f64 = 15.0;
 /// 朝向监听重启等待（秒）。
 const ORIENTATION_RESTART_S: f64 = 2.0;
 /// 候选地址 TCP 探测超时（秒）。
@@ -161,16 +166,18 @@ const CANDIDATE_PROBE_TIMEOUT_S: f64 = 0.6;
 const CANDIDATE_CONNECT_TIMEOUT_S: f64 = 4.0;
 /// 旧版朝向监听脚本（1.x 时代在平板上常驻一条 adb shell 循环）。
 ///
-/// 2.0.2 起不再使用：改成 PC 侧每 2s 跑一次 ORIENTATION_ROTATION_SH。
+/// 2.0.2 起不再使用：改成 PC 侧按 ORIENTATION_POLL_S 跑一次 ORIENTATION_VIEWPORT_SH。
 pub const ORIENTATION_SCRIPT: &str = "while true; do dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='; sleep 1; done";
 
-/// 廉价的朝向查询：只问窗口管理器当前的显示旋转。
+/// 廉价的朝向查询：从 InputDispatcher 的 Viewport 行里取 orientation=。
 ///
-/// dumpsys input 会拿住 InputReader 的锁、还要把整份 dump（几十 KB）传回 PC，
-/// 每秒一次足以让注入的鼠标报文排队，表现为指针一顿一顿。这里只读
-/// WindowManager 的显示状态，输出几十字节，不碰输入栈。
-pub const ORIENTATION_ROTATION_SH: &str =
-    "dumpsys window displays 2>/dev/null | grep -m1 -o 'mDisplayRotation=ROTATION_[0-9]*'";
+/// 2.0.2 用的是 `dumpsys window displays | grep mDisplayRotation`，看着「输出只有
+/// 几十字节」，代价其实全在那个 window dump 上：HONOR CGA-W00 实测 851ms 起步、
+/// 忙时 4.7–13.4s，而且全程拿 WindowManager 的锁；`dumpsys input` 同样信息只要
+/// 65–150ms（不是 PITFALLS §24 里说的「几十 KB 会拖慢输入」的量级，那次是 1s
+/// 一轮的问题）。这里在设备端就 grep 掉，只回一行几十字节。
+pub const ORIENTATION_VIEWPORT_SH: &str =
+    "dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='";
 
 /// 从 "Override size: 1200x2000" 这类行里解析宽高。
 fn parse_size_value(text: &str) -> Option<(i32, i32)> {
@@ -264,25 +271,6 @@ pub fn parse_orientation(text: &str) -> i32 {
     0
 }
 
-
-/// 解析 mDisplayRotation=ROTATION_90 这类输出 → 0/1/2/3。
-///
-/// 与 dumpsys input 的 Viewport orientation 同一套编号（90 度 = 1），
-/// 正好对上 oriented_size 的奇偶判断。
-pub fn parse_display_rotation(text: &str) -> Option<i32> {
-    let marker = "ROTATION_";
-    let index = text.find(marker)?;
-    let rest = &text[index + marker.len()..];
-    let digits: String = rest.chars().take_while(|value| value.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let degrees: i32 = digits.parse().ok()?;
-    if degrees % 90 != 0 {
-        return None;
-    }
-    Some((degrees / 90) % 4)
-}
 
 /// 朝向为奇数时交换宽高（对应 oriented_size）。
 pub fn oriented_size(width: i32, height: i32, orientation: i32) -> (i32, i32) {
@@ -2922,13 +2910,15 @@ impl SessionCore {
     /// 朝向轮询线程。
     ///
     /// 2.0.2：从「每 1s 跑一次完整 dumpsys input」改成「每 2s 只问显示旋转」。
-    /// 旧实现在平板上会锁住 InputReader 并把整份 dump 传回 PC，实测每秒一次，
-    /// 正好对上平板侧鼠标报文每 ~1s 卡 100ms 再成串追赶的抖动。
-    /// 廉价查询连续失败 3 次（老设备/窗口管理器输出变了）才退回旧的 dumpsys input。
+    /// 2.0.5：那一步问错了地方 —— `dumpsys window displays` 实测 851ms 起步、
+    /// 忙时 4.7–13.4s，而 `dumpsys input` 的 Viewport 行只要 65–150ms。周期也从
+    /// 2s 拉到 15s，拿不到结果时翻倍退避（15 → 30 → 60s），避免平板忙的时候把
+    /// 查询堆成一串。连续 3 次拿不到 Viewport 行才退回完整 dump。
     fn orientation_loop(&self, device: Arc<dyn AdbApi>, stop: Arc<AtomicBool>) {
-        let mut cheap_failures = 0u32;
+        let mut viewport_failures = 0u32;
+        let mut interval = ORIENTATION_POLL_S;
         while !stop.load(Ordering::SeqCst) {
-            if self.sleep_interruptible(ORIENTATION_POLL_S, &stop) {
+            if self.sleep_interruptible(interval, &stop) {
                 break;
             }
             // 2.0.2：接管期间完全不查询。dumpsys 不论查什么都会在 system_server 的
@@ -2937,22 +2927,24 @@ impl SessionCore {
             if self.capturing.load(Ordering::SeqCst) {
                 continue;
             }
-            let mut updated = false;
-            match device.shell(&["sh", "-c", ORIENTATION_ROTATION_SH], C::ADB_SHELL_TIMEOUT) {
-                Ok(text) => match parse_display_rotation(&text) {
-                    Some(orientation) => {
-                        cheap_failures = 0;
-                        self.apply_orientation_value(orientation);
-                        updated = true;
-                    }
-                    None => cheap_failures = cheap_failures.saturating_add(1),
-                },
-                Err(_) => cheap_failures = cheap_failures.saturating_add(1),
+            let mut applied = false;
+            match device.shell(&["sh", "-c", ORIENTATION_VIEWPORT_SH], C::ADB_SHELL_TIMEOUT) {
+                Ok(text) if text.contains("orientation=") => {
+                    self.apply_orientation(&text);
+                    applied = true;
+                }
+                _ => viewport_failures = viewport_failures.saturating_add(1),
             }
-            if updated || cheap_failures < 3 {
+            if applied {
+                viewport_failures = 0;
+                interval = ORIENTATION_POLL_S;
                 continue;
             }
-            cheap_failures = 0;
+            interval = (interval * 2.0).min(ORIENTATION_POLL_S * 4.0);
+            if viewport_failures < 3 {
+                continue;
+            }
+            viewport_failures = 0;
             match device.shell(&["dumpsys", "input"], C::ADB_SHELL_TIMEOUT) {
                 Ok(text) => self.apply_orientation(&text),
                 Err(error) => {
@@ -3782,22 +3774,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_display_rotation_maps_degrees_to_bucket() {
-        assert_eq!(parse_display_rotation("mDisplayRotation=ROTATION_0"), Some(0));
-        assert_eq!(parse_display_rotation("mDisplayRotation=ROTATION_90"), Some(1));
-        assert_eq!(parse_display_rotation("mDisplayRotation=ROTATION_180"), Some(2));
-        assert_eq!(parse_display_rotation("mDisplayRotation=ROTATION_270"), Some(3));
-        assert_eq!(parse_display_rotation("  mDisplayRotation=ROTATION_90  \n"), Some(1));
-        assert_eq!(parse_display_rotation(""), None);
-        assert_eq!(parse_display_rotation("no rotation here"), None);
-    }
-
-    #[test]
-    fn parse_display_rotation_keeps_viewport_compatibility() {
-        // 与 dumpsys input 的 Viewport orientation 同编号：90 度对应横向（orientation=1）。
-        let pressed = "mDisplayRotation=ROTATION_270";
-        let (width, height) = oriented_size(2136, 3200, parse_display_rotation(pressed).unwrap());
-        assert_eq!((width, height), (3200, 2136));
+    fn parse_orientation_reads_the_grepped_viewport_line() {
+        // ORIENTATION_VIEWPORT_SH 在设备端 grep 出来的就是这一行。
+        let line = "      Viewport INTERNAL: displayId=0, uniqueId=local:1, port=131, orientation=1, densityDpi=420";
+        assert_eq!(parse_orientation(line), 1);
+        assert_eq!(oriented_size(2136, 3200, parse_orientation(line)), (3200, 2136));
     }
 
     #[test]

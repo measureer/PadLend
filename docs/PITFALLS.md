@@ -1092,3 +1092,75 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 
 
 
+
+## 27. 2.0.5 补录：朝向轮询问错了地方（window dump 不是廉价查询）
+
+### 27.1 现象
+
+- 用户反馈「从 2.0.2 开始平板会卡死」：先卡顿，然后 adbd 掉线（`ping` 仍通、`adb devices` 空），
+  无线调试端口每次掉线都变，最严重时平板黑屏回桌面、只能重启。
+- 掉线时引擎照旧 4s 一次重连、每轮推 2.3MB jar：某 17 分钟窗口里推了 21 次。
+
+### 27.2 量出来的代价（HONOR CGA-W00 / Android 17 / 3200x2136，空载与忙时都测了）
+
+| 查询 | 耗时 | 备注 |
+| --- | --- | --- |
+| `dumpsys window displays`（2.0.2 的「廉价」查询） | **851ms / 1140ms / 8664ms**，忙时 **4745 / 6770 / 7703 / 13416ms** | 只回几十字节，代价全在 dump 本身；全程持有 WindowManager 锁 |
+| `dumpsys input`（Viewport 行） | **64 / 68 / 75 / 76 / 100 / 115 / 150ms** | 同样能拿到 `orientation=` |
+| `settings get system pointer_speed` | 59 / 92ms | 正常很快，系统忙时会到 17.5s |
+| `dumpsys input` 全文 | 65,684 B | 只传回一行就够了 |
+
+### 27.3 根因
+
+- `C::ADB_SHELL_TIMEOUT` 是 5 秒。dump 一旦超过 5 秒，**Rust 侧只杀掉本地 adb 客户端，
+  平板上的 `dumpsys` 进程继续跑到底**（最长见过 13.4s）。
+- 轮询周期 2 秒 —— 下一轮在上一轮 dump 还没结束时又发一条，几轮就叠成 3~6 份并发 dump，
+  全部在 system_server 里抢 WindowManager 锁。平板负载本来就高（load ~15），越叠越慢，
+  最终 adbd 被拖死（无线调试掉线、端口变化），极端情况触发厂商 watchdog 重启。
+- 接通/接管期间轮询会跳过（2.0.2 加的 `set_capturing`），所以最惨的是「连着但没接管」的常驻状态。
+
+### 27.4 修法（2.0.5）
+
+- 廉价查询换成设备端 grep：`dumpsys input 2>/dev/null | grep -m1 'Viewport.*orientation='`
+  （`ORIENTATION_VIEWPORT_SH`），输出一行、65–150ms，解析走原来的 `parse_orientation`。
+- `ORIENTATION_POLL_S` 2.0 → **15.0**；失败时周期翻倍退避（15 → 30 → 60s 封顶），
+  成功立刻复位。连续 3 次拿不到 Viewport 行才退回完整 `dumpsys input`。
+- 删掉 `ORIENTATION_ROTATION_SH` 与 `parse_display_rotation`（连同两条 ROTATION_* 用例），
+  换成 Viewport 行的解析用例。
+
+### 27.5 教训
+
+- **「输出很小」不等于「查询很便宜」**：dumpsys 的成本在 dump 本身，不在传输。评估一条设备端
+  查询要量端到端耗时，而不是看返回几行。
+- **超时 + 周期 = 并发度**：周期必须大于「命令最坏耗时 × 允许并发数」，否则超时杀掉的只是
+  客户端，服务端的工作还在继续，两轮之间就叠起来了。
+- 轮询一个「用户偶尔才改一次」的状态，周期就该是十几秒级，而不是秒级。
+
+
+## 28. 2.0.5 补录：换了端口的会话钉死在旧 serial
+
+### 28.1 现象
+
+- 平板上无线调试的端口隔一段时间就换（adbd 重启一次换一次：35071 → 41917 → 41101 → 44387 …）。
+- 引擎日志里能看到 `[tablet.mdns] mDNS 找到 1 个 adb 服务: <新端口>`、配置也写回了，
+  但紧接着还是 `重连第 N 次失败: … device '<旧端口>' offline` —— 会话继续撞旧地址。
+- 用户只能重启 PadLend 才能接上。
+
+### 28.2 根因
+
+- `maybe_auto_relocate` 只做了三件事：改注册表、改 `config.device.serial`、发日志。
+- 而**会话是在 `devices.connect` 时按 serial 建好的**（候选地址来自 `engine.config`），
+  重连路径 `restart_transport` 复用同一个 `TabletSession`，里面的 serial 是构造时钉死的，
+  Router 的 `requested_serial` 也还是旧值 —— 所以新地址永远进不去。
+
+### 28.3 修法
+
+- 重定位成功（`moved` 非空）后，除了写配置，再 `set_requested_serial(new)` 并调用
+  `Router::connect_device(Some(new))`：它会停掉旧会话、清 facts、把状态打到 Fault 触发 supervisor
+  用新 serial 重建会话。
+
+### 28.4 教训
+
+- **配置改了不等于运行中的对象改了**：凡是「连接时快照」的参数（serial、端口、地址），
+  自动迁移之后必须显式重建持有它的对象，否则日志显示「已更新」而实际仍在用旧值。
+

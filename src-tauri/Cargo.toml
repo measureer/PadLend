@@ -1,6 +1,6 @@
 [package]
 name = "padlend-desktop"
-version = "2.0.4"
+version = "2.0.5"
 description = "PadLend - share keyboard and mouse with an Android tablet"
 authors = ["PadLend contributors"]
 edition = "2021"

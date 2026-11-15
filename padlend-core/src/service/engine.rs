@@ -1754,6 +1754,14 @@ impl Engine {
             for (old, new) in &moved {
                 self.emit_log("DEVICE", format!("平板换了地址：{old} → {new}（已自动更新）"));
             }
+            // 2.0.5：光改配置不够。会话是在连接时按 serial 建好的，里面钉着旧端口，
+            // 重连只会一直撞那个死地址；这里把新地址交给 Router 重建会话，
+            // 用户不用再重启外壳才能接上。
+            if let Some(router) = self.router() {
+                let new_serial = moved[0].1.clone();
+                self.set_requested_serial(&new_serial);
+                router.connect_device(Some(new_serial.as_str()));
+            }
             return;
         }
         let misses = self.relocate_misses.fetch_add(1, Ordering::SeqCst) + 1;
