@@ -649,3 +649,48 @@
   API 401/403/限流都只是「没有详情」，不影响版本判断。没有资产列表时按本仓库发布命名约定推算
   `releases/download/<tag>/PadLend-<版本>-setup.exe`。
 - **教训**：给桌面应用做「查最新版本」时，网页重定向是最便宜可靠的信号源；REST API 只当详情增强。
+
+## 17. 1.7.7 补录：快捷键「能改文本但不生效」（2026-11-15）
+
+### 17.1 三段各自为政：JS 写死、引擎写死、前台双触发
+
+- **现象**：设置页的快捷键输入框能改、能保存（config.yaml 里文本确实变了），但不管改成什么，
+  实际生效的永远是 `Ctrl+Alt+S` / `Ctrl+Alt+Q`，并且窗口在前台时按一次等于没按。
+- **根因**（三条叠加，只修任何一条都不够）：
+  1. `src/hooks/index.ts` 的 `useHotkeys()` 把这两个组合键**写死在 JS** 里，只监听 window keydown，
+     窗口收进托盘就完全不响应；
+  2. `padlend-core/src/win/hotkeys.rs` 的 `register_all` 也**写死**了 `(0x1001, VK_S)`/`(0x1002, VK_Q)`，
+     配置文本从来没有任何代码去 `parse`；
+  3. 前台时 JS 与引擎 `RegisterHotKey` **同时**处理同一次按键，切换两次 = 净效果为零。
+- **修法**：
+  - 全局热键只交给引擎：新增 `HotkeyAction` 枚举（id / config 键 / 中文名 / 取值全挂在一起），
+    `install_hotkeys` 遍历它逐个 `parse_combo` 后注册；`config.save` 走 `Engine::apply_live_config`
+    → `install_hotkeys`（先 `*lock = None` 让旧 `HotkeyManager` Drop 时 UnregisterHotKey，再重装新的）。
+  - 前端删掉 `Ctrl+Alt+S/Q` 分支，只保留 `Ctrl+,`；设置页从「文本框」换成录制控件，
+    写出的文本与引擎 `parse_combo` 同一套规则（`src/lib/hotkeys.ts`），非法组合（只 Shift、
+    小键盘乘号…）当场拒绝并提示。
+  - 另外补了一条：注册被别的程序占用时（`RegisterHotKey` 返回 0x80070581），热键模块只在 stderr 打一行，
+    界面上表现为「设置里填了但按不动」。现在 `install_hotkeys` 会把没注册上的动作汇总成一条 HOTKEY 日志，
+    明确写「可能已被其他程序占用，换一个组合键再试」。
+- **教训**：「配置能改」不等于「配置生效」——凡是配置驱动的行为，必须有一条从配置到运行期的路径，
+  而且只能有一个执行者。两处同时处理同一次输入，表现往往不是重复，而是**互相抵消**。
+
+### 17.2 Router 的 `cfg` 曾是不可更新的构造期快照
+
+- **现象**：改鼠标倍率 / 上报频率 / 键盘拦截 / 剪贴板同步之后要重启 PadLend 才生效。
+- **根因**：`Router::new` 里把 `Config` 整个存进 `cfg: Config`，运行期没有任何写入口；
+  `config.save` 只调 `SessionPort::sync_config`（音频 / 熄屏 / 端口 / 指针速度这几项）。
+- **修法**：`cfg: RwLock<Config>` + `pub fn update_config`，`config.save` 之后
+  `Engine::apply_live_config()` 依次 `router.update_config`、`session.sync_config`、`install_hotkeys`。
+  15 处 `self.cfg.*` 改成 `self.cfg().*`（读锁，中毒取回内层）。
+- **教训**：Rust 没有 Python 那种「会话与配置共享同一个可变对象」的便利，**构造期快照就一定要留热更入口**，
+  否则界面写着「保存后立即生效」而实际要重启。顺带把「哪些项重连才生效」按引擎真实读取时机标在设置项上。
+
+### 17.3 「关于」从对话框搬成页面后，托盘事件要改切页
+
+- **现象**：托盘「关于 PadLend…」点了没反应（旧实现是 `openDialog('about')`，而 `DialogId` 已删掉 'about'）。
+- **修法**：`src/store/events.ts` 的 `handleTrayAction` 改成 `setPage('about')`；`tray.rs` 里本来就有的
+  「先 show + unminimize + set_focus」保持不变。菜单项与托盘共用同一套 action，不需要改两处。
+- **教训**：把对话框升级成页面时，除了 `PageId`/`App.tsx` 路由，还要把所有 `openDialog('x')` 调用点
+  （托盘、菜单、快捷键、向导）一起搜一遍；Token 化的 id 集合是编译期能兜住的，字符串 action 不能。
+

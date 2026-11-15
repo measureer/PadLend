@@ -279,6 +279,18 @@ impl SessionPort for SimulatedSession {
         Ok(())
     }
 
+    fn android_action(
+        &self,
+        action: crate::tablet::protocol::AndroidAction,
+    ) -> Option<Result<(), RouterError>> {
+        if !self.is_started() {
+            // 与 send_key 一致：未 start 时静默丢弃。
+            return Some(Ok(()));
+        }
+        eprintln!("[tablet.simulated] android.action {:?}", action);
+        Some(Ok(()))
+    }
+
     fn facts(&self) -> Option<DeviceFacts> {
         if let Ok(guard) = self.facts.lock() {
             if let Some(facts) = guard.as_ref() {

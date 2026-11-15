@@ -1,14 +1,18 @@
-//! 系统级保命热键（对应 `win/hotkeys.py`；设计文档 6.2.3 / 6.7.5）。
+//! 系统级快捷键（对应 `win/hotkeys.py`；设计文档 6.2.3 / 6.7.5）。
 //!
-//! `RegisterHotKey` 注册 `Ctrl+Alt+S`（切换）与 `Ctrl+Alt+Q`（急停），专用命名线程跑消息循环，
-//! `WM_HOTKEY` 按 id 分发到回调。**不依赖键盘钩子**：钩子被系统静默摘掉时保命键仍然可用。
+//! `RegisterHotKey` 注册配置里的组合键，专用命名线程跑消息循环，`WM_HOTKEY` 按 id 分发到回调。
+//! **不依赖键盘钩子**：钩子被系统静默摘掉时保命键仍然可用；窗口不在前台也照样触发。
+//!
+//! 1.7.7 起不再写死 `Ctrl+Alt+S/Q`：绑定表由配置生成（[`HotkeyAction`]），既支持
+//! 「接管 / 交还」「急停」，也支持安卓导航键（后退、主页、最近任务、通知栏、电源、音量）。
+//! 设置页改了快捷键后引擎会重装一遍绑定，立即生效。
 //!
 //! `import` 本模块不注册任何热键；只有 [`HotkeyManager::start`] 有副作用。
 //!
 //! # 设计约束（PITFALLS 2.1 / 2.5）
 //!
 //! - 热键回调在**热键线程**上执行，必须非阻塞（PITFALLS 2.5：回调里做 I/O 会连带卡住输入链）。
-//!   回调只做“置标志 / 投递到通道”，真正的工作交给路由线程。
+//!   回调只做「置标志 / 投递到通道」，真正的工作交给路由线程。
 //! - 注册失败**不阻断主程序**（Python 只 `log.error`）：被别的程序占用的热键很常见。
 //!
 //! # 分层（对应 Python 的可注入后端）
@@ -17,6 +21,7 @@
 //! Rust 侧把它们收进 [`HotkeyApi`]：真实实现是 [`Win32HotkeyApi`]，测试注入 `tests::FakeApi`，
 //! 于是 start/stop 生命周期与 `WM_HOTKEY` 分发都能默认跑。
 
+use std::collections::HashMap;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -34,48 +39,307 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PM_NOREMOVE, WM_QUIT,
 };
 
+use crate::config::HotkeyCfg;
 // 消息泵结果类型与键盘钩子共用一份定义（两处逻辑完全同构，没必要各写一份）。
 use crate::win::keyboard_hook::MessageOutcome;
 
 // ---------------------------------------------------------------------------
-// 常量（对应 Python 模块级常量）
+// 常量
 // ---------------------------------------------------------------------------
 
 /// `MOD_ALT`。
 pub const MOD_ALT: u32 = 0x0001;
-
 /// `MOD_CONTROL`。
 pub const MOD_CONTROL: u32 = 0x0002;
-
-/// `_CTRL_ALT = MOD_CONTROL | MOD_ALT`：两条热键都带这个修饰位。
+/// `MOD_SHIFT`。
+pub const MOD_SHIFT: u32 = 0x0004;
+/// `MOD_WIN`。
+pub const MOD_WIN: u32 = 0x0008;
+/// `_CTRL_ALT = MOD_CONTROL | MOD_ALT`（默认热键都带这个修饰位）。
 pub const CTRL_ALT: u32 = MOD_CONTROL | MOD_ALT;
-
 /// `WM_HOTKEY`。
 pub const WM_HOTKEY: u32 = 0x0312;
 
-/// 切换热键 id（`Ctrl+Alt+S`）。
+/// 接管 / 交还（`Ctrl+Alt+S`）。
 pub const HOTKEY_TOGGLE_ID: i32 = 0x1001;
-
-/// 急停热键 id（`Ctrl+Alt+Q`）。
+/// 急停（`Ctrl+Alt+Q`）。
 pub const HOTKEY_PANIC_ID: i32 = 0x1002;
-
-/// `VK_Q`。
-pub const VK_Q: u32 = 0x51;
+/// 安卓：后退。
+pub const HOTKEY_BACK_ID: i32 = 0x1003;
+/// 安卓：主页。
+pub const HOTKEY_HOME_ID: i32 = 0x1004;
+/// 安卓：最近任务。
+pub const HOTKEY_RECENTS_ID: i32 = 0x1005;
+/// 安卓：通知栏。
+pub const HOTKEY_NOTIFICATIONS_ID: i32 = 0x1006;
+/// 安卓：电源键。
+pub const HOTKEY_POWER_ID: i32 = 0x1007;
+/// 安卓：音量 +。
+pub const HOTKEY_VOLUME_UP_ID: i32 = 0x1008;
+/// 安卓：音量 -。
+pub const HOTKEY_VOLUME_DOWN_ID: i32 = 0x1009;
 
 /// `VK_S`。
 pub const VK_S: u32 = 0x53;
+/// `VK_Q`。
+pub const VK_Q: u32 = 0x51;
 
 /// 热键线程名（Python `padlend-hotkeys`）。
 pub const HOTKEY_THREAD_NAME: &str = "padlend-hotkeys";
-
 /// 等热键线程就绪的上限（Python `_START_TIMEOUT_S = 2.0`）。
 pub const START_TIMEOUT: Duration = Duration::from_secs(2);
-
 /// 等热键线程退出的上限（Python `_STOP_TIMEOUT_S = 3.0`）。
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// 失败路径上 join 线程的上限（Python `_JOIN_TIMEOUT_S = 1.0`）。
 pub const JOIN_TIMEOUT: Duration = Duration::from_secs(1);
+
+// ---------------------------------------------------------------------------
+// 动作表
+// ---------------------------------------------------------------------------
+
+/// 一个可绑定快捷键的动作。
+///
+/// 配置键名、注册 id、界面文案都挂在这里：加一个安卓按键只要改这一处 + 配置字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HotkeyAction {
+    /// 手动接管 / 交还。
+    Toggle,
+    /// 急停。
+    Panic,
+    /// 安卓：后退。
+    Back,
+    /// 安卓：主页。
+    Home,
+    /// 安卓：最近任务。
+    Recents,
+    /// 安卓：展开通知栏。
+    Notifications,
+    /// 安卓：电源键（开关屏）。
+    Power,
+    /// 安卓：音量 +。
+    VolumeUp,
+    /// 安卓：音量 -。
+    VolumeDown,
+}
+
+impl HotkeyAction {
+    /// 全部动作（顺序即注册顺序、也是设置页顺序）。
+    pub const ALL: [HotkeyAction; 9] = [
+        HotkeyAction::Toggle,
+        HotkeyAction::Panic,
+        HotkeyAction::Back,
+        HotkeyAction::Home,
+        HotkeyAction::Recents,
+        HotkeyAction::Notifications,
+        HotkeyAction::Power,
+        HotkeyAction::VolumeUp,
+        HotkeyAction::VolumeDown,
+    ];
+
+    /// `RegisterHotKey` 用的 id。
+    pub fn id(self) -> i32 {
+        match self {
+            HotkeyAction::Toggle => HOTKEY_TOGGLE_ID,
+            HotkeyAction::Panic => HOTKEY_PANIC_ID,
+            HotkeyAction::Back => HOTKEY_BACK_ID,
+            HotkeyAction::Home => HOTKEY_HOME_ID,
+            HotkeyAction::Recents => HOTKEY_RECENTS_ID,
+            HotkeyAction::Notifications => HOTKEY_NOTIFICATIONS_ID,
+            HotkeyAction::Power => HOTKEY_POWER_ID,
+            HotkeyAction::VolumeUp => HOTKEY_VOLUME_UP_ID,
+            HotkeyAction::VolumeDown => HOTKEY_VOLUME_DOWN_ID,
+        }
+    }
+
+    /// config.yaml 里的键名。
+    pub fn config_key(self) -> &'static str {
+        match self {
+            HotkeyAction::Toggle => "toggle",
+            HotkeyAction::Panic => "panic",
+            HotkeyAction::Back => "back",
+            HotkeyAction::Home => "home",
+            HotkeyAction::Recents => "recents",
+            HotkeyAction::Notifications => "notifications",
+            HotkeyAction::Power => "power",
+            HotkeyAction::VolumeUp => "volume_up",
+            HotkeyAction::VolumeDown => "volume_down",
+        }
+    }
+
+    /// 日志与提示里的中文名
+    pub fn label(self) -> &'static str {
+        match self {
+            HotkeyAction::Toggle => "接管 / 交还",
+            HotkeyAction::Panic => "急停",
+            HotkeyAction::Back => "平板后退",
+            HotkeyAction::Home => "平板主页",
+            HotkeyAction::Recents => "平板最近任务",
+            HotkeyAction::Notifications => "平板通知栏",
+            HotkeyAction::Power => "平板电源键",
+            HotkeyAction::VolumeUp => "平板音量 +",
+            HotkeyAction::VolumeDown => "平板音量 -",
+        }
+    }
+
+    /// 是否是「操作平板」类动作（诊断/日志里用）。
+    pub fn is_android(self) -> bool {
+        !matches!(self, HotkeyAction::Toggle | HotkeyAction::Panic)
+    }
+
+    /// 从配置里取这个动作当前的组合键文本。
+    pub fn combo(self, cfg: &HotkeyCfg) -> &str {
+        match self {
+            HotkeyAction::Toggle => &cfg.toggle,
+            HotkeyAction::Panic => &cfg.panic,
+            HotkeyAction::Back => &cfg.back,
+            HotkeyAction::Home => &cfg.home,
+            HotkeyAction::Recents => &cfg.recents,
+            HotkeyAction::Notifications => &cfg.notifications,
+            HotkeyAction::Power => &cfg.power,
+            HotkeyAction::VolumeUp => &cfg.volume_up,
+            HotkeyAction::VolumeDown => &cfg.volume_down,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 组合键解析
+// ---------------------------------------------------------------------------
+
+/// 把 `Ctrl+Alt+S` 这样的文本解析成 `(modifiers, vk)`。
+///
+/// 规则与设置页的录制控件一致：
+/// - 大小写不敏感；分隔符是 `+`；`Ctrl`/`Control`、`Alt`、`Shift`、`Win`/`Meta`/`Super`；
+/// - 最后一段是按键（`A`…`Z`、`0`…`9`、`F1`…`F24` 或具名键）；
+/// - 必须带 Ctrl / Alt / Win 之一 —— 只按 Shift 的组合会把正常打字全吞掉，直接判无效。
+pub fn parse_combo(text: &str) -> Result<(u32, u32), String> {
+    let raw = text.trim();
+    if raw.is_empty() {
+        return Err("组合键不能为空".to_string());
+    }
+    let mut modifiers = 0u32;
+    let mut key: Option<&str> = None;
+    for part in raw.split('+') {
+        let token = part.trim();
+        if token.is_empty() {
+            // "Ctrl++" 这种把 "+" 当按键的写法：Windows 上就是 VK_OEM_PLUS。
+            key = Some("+");
+            continue;
+        }
+        if let Some(flag) = modifier_flag(token) {
+            modifiers |= flag;
+            continue;
+        }
+        if key.is_some() {
+            return Err(format!("组合键里只能有一个主键：{raw}"));
+        }
+        key = Some(token);
+    }
+    let Some(key) = key else {
+        return Err("缺少主键（比如 S 或 F5）".to_string());
+    };
+    if modifiers & (MOD_CONTROL | MOD_ALT | MOD_WIN) == 0 {
+        return Err("至少要有 Ctrl / Alt / Win 之一".to_string());
+    }
+    let vk = vk_for_key(key).ok_or_else(|| format!("不支持的按键：{key}"))?;
+    Ok((modifiers, vk))
+}
+
+/// 修饰键名 → 标志位。
+fn modifier_flag(token: &str) -> Option<u32> {
+    match token.to_ascii_lowercase().as_str() {
+        "ctrl" | "control" => Some(MOD_CONTROL),
+        "alt" | "menu" => Some(MOD_ALT),
+        "shift" => Some(MOD_SHIFT),
+        "win" | "meta" | "super" | "cmd" | "command" => Some(MOD_WIN),
+        _ => None,
+    }
+}
+
+/// 按键名 → 虚拟键码（`VK_*`）。
+pub fn vk_for_key(key: &str) -> Option<u32> {
+    let lower = key.to_ascii_lowercase();
+    if lower.len() == 1 {
+        let ch = lower.chars().next()?;
+        if ch.is_ascii_alphabetic() {
+            return Some(ch.to_ascii_uppercase() as u32);
+        }
+        if ch.is_ascii_digit() {
+            return Some(ch as u32);
+        }
+        return punctuation_vk(ch);
+    }
+    if let Some(rest) = lower.strip_prefix('f') {
+        if let Ok(number) = rest.parse::<u32>() {
+            if (1..=24).contains(&number) {
+                return Some(0x70 + number - 1);
+            }
+        }
+    }
+    Some(match lower.as_str() {
+        "backspace" => 0x08,
+        "tab" => 0x09,
+        "enter" | "return" => 0x0D,
+        "pause" => 0x13,
+        "capslock" => 0x14,
+        "esc" | "escape" => 0x1B,
+        "space" => 0x20,
+        "pageup" | "pgup" => 0x21,
+        "pagedown" | "pgdn" => 0x22,
+        "end" => 0x23,
+        "home" => 0x24,
+        "arrowleft" | "left" => 0x25,
+        "arrowup" | "up" => 0x26,
+        "arrowright" | "right" => 0x27,
+        "arrowdown" | "down" => 0x28,
+        "printscreen" => 0x2C,
+        "insert" | "ins" => 0x2D,
+        "delete" | "del" => 0x2E,
+        "numlock" => 0x90,
+        "scrolllock" => 0x91,
+        "semicolon" => 0xBA,
+        "plus" | "equal" => 0xBB,
+        "comma" => 0xBC,
+        "minus" => 0xBD,
+        "period" => 0xBE,
+        "slash" => 0xBF,
+        "grave" => 0xC0,
+        "bracketleft" => 0xDB,
+        "backslash" => 0xDC,
+        "bracketright" => 0xDD,
+        "quote" => 0xDE,
+        _ => return None,
+    })
+}
+
+/// ASCII 标点 → VK（OEM 键）。
+fn punctuation_vk(ch: char) -> Option<u32> {
+    Some(match ch {
+        '+' | '=' => 0xBB,
+        ',' | '<' => 0xBC,
+        '-' | '_' => 0xBD,
+        '.' | '>' => 0xBE,
+        '/' | '?' => 0xBF,
+        ';' | ':' => 0xBA,
+        '[' | '{' => 0xDB,
+        '\\' | '|' => 0xDC,
+        ']' | '}' => 0xDD,
+        '\'' | '"' => 0xDE,
+        '`' | '~' => 0xC0,
+        _ => return None,
+    })
+}
+
+/// 一条注册项：id + 修饰位 + 虚拟键。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HotkeyBinding {
+    /// `WM_HOTKEY` 里回传的 id。
+    pub id: i32,
+    /// `MOD_*` 位组合。
+    pub modifiers: u32,
+    /// 虚拟键码。
+    pub vk: u32,
+}
 
 // ---------------------------------------------------------------------------
 // 错误
@@ -107,31 +371,25 @@ impl HotkeyError {
 // 分发（纯逻辑，默认用例直接跑）
 // ---------------------------------------------------------------------------
 
+/// 热键回调类型。回调在热键线程上执行，**必须非阻塞**。
+pub type HotkeyHandler = Box<dyn Fn() + Send + Sync>;
+
 /// 热键 id → 回调的分发表（Python `_callbacks + _dispatch`）。
 ///
-/// 回调在热键线程上执行：**调用方必须保证它非阻塞**（PITFALLS 2.5）。
 /// 回调 panic 只计数并记日志，绝不让消息循环退出（Python 用 `except Exception` 兜住）。
 pub struct HotkeyRouter {
-    on_toggle: Box<dyn Fn() + Send + Sync>,
-    on_panic: Box<dyn Fn() + Send + Sync>,
-    toggle_calls: AtomicU64,
-    panic_calls: AtomicU64,
+    handlers: HashMap<i32, HotkeyHandler>,
+    fired: Mutex<HashMap<i32, u64>>,
     unknown_ids: AtomicU64,
     callback_errors: AtomicU64,
 }
 
 impl HotkeyRouter {
-    /// 建立分发表（对应 Python `_callbacks = {TOGGLE: on_toggle, PANIC: on_panic}`）。
-    pub fn new<F, G>(on_toggle: F, on_panic: G) -> Self
-    where
-        F: Fn() + Send + Sync + 'static,
-        G: Fn() + Send + Sync + 'static,
-    {
+    /// 建立分发表（1.7.7 起由动作表生成，不再固定两条）。
+    pub fn new(handlers: Vec<(i32, HotkeyHandler)>) -> Self {
         Self {
-            on_toggle: Box::new(on_toggle),
-            on_panic: Box::new(on_panic),
-            toggle_calls: AtomicU64::new(0),
-            panic_calls: AtomicU64::new(0),
+            handlers: handlers.into_iter().collect(),
+            fired: Mutex::new(HashMap::new()),
             unknown_ids: AtomicU64::new(0),
             callback_errors: AtomicU64::new(0),
         }
@@ -139,23 +397,15 @@ impl HotkeyRouter {
 
     /// 按 id 调回调；未知 id 只记日志（Python `hotkeys.unknown_id`）。
     pub fn dispatch(&self, hotkey_id: i32) {
-        let callback: &(dyn Fn() + Send + Sync) = match hotkey_id {
-            HOTKEY_TOGGLE_ID => self.on_toggle.as_ref(),
-            HOTKEY_PANIC_ID => self.on_panic.as_ref(),
-            _ => {
-                self.unknown_ids.fetch_add(1, Ordering::Relaxed);
-                eprintln!("[hotkeys] hotkeys.unknown_id id=0x{hotkey_id:04X}");
-                return;
-            }
+        let Some(callback) = self.handlers.get(&hotkey_id) else {
+            self.unknown_ids.fetch_add(1, Ordering::Relaxed);
+            eprintln!("[hotkeys] hotkeys.unknown_id id=0x{hotkey_id:04X}");
+            return;
         };
-
         match catch_unwind(AssertUnwindSafe(callback)) {
             Ok(()) => {
-                if hotkey_id == HOTKEY_TOGGLE_ID {
-                    self.toggle_calls.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    self.panic_calls.fetch_add(1, Ordering::Relaxed);
-                }
+                let mut fired = lock(&self.fired);
+                *fired.entry(hotkey_id).or_insert(0) += 1;
             }
             Err(_) => {
                 self.callback_errors.fetch_add(1, Ordering::Relaxed);
@@ -164,14 +414,9 @@ impl HotkeyRouter {
         }
     }
 
-    /// 切换热键成功回调的次数。
-    pub fn toggle_calls(&self) -> u64 {
-        self.toggle_calls.load(Ordering::Relaxed)
-    }
-
-    /// 急停热键成功回调的次数。
-    pub fn panic_calls(&self) -> u64 {
-        self.panic_calls.load(Ordering::Relaxed)
+    /// 某个 id 成功回调的次数（诊断/测试用）。
+    pub fn fired(&self, hotkey_id: i32) -> u64 {
+        lock(&self.fired).get(&hotkey_id).copied().unwrap_or(0)
     }
 
     /// 未知 id 的 `WM_HOTKEY` 次数。
@@ -186,10 +431,11 @@ impl HotkeyRouter {
 }
 
 impl std::fmt::Debug for HotkeyRouter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HotkeyRouter")
-            .field("toggle_calls", &self.toggle_calls())
-            .field("panic_calls", &self.panic_calls())
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HotkeyRouter")
+            .field("handlers", &self.handlers.len())
+            .field("fired", &lock(&self.fired))
             .field("unknown_ids", &self.unknown_ids())
             .field("callback_errors", &self.callback_errors())
             .finish()
@@ -201,21 +447,26 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 按顺序注册 `Ctrl+Alt+S` 与 `Ctrl+Alt+Q`；单个失败只记日志并继续（Python `_register_all`）。
-fn register_all(api: &dyn HotkeyApi) -> Vec<i32> {
-    let entries = [(HOTKEY_TOGGLE_ID, VK_S), (HOTKEY_PANIC_ID, VK_Q)];
+/// 按顺序注册绑定表；单个失败只记日志并继续（Python `_register_all`）。
+fn register_all(api: &dyn HotkeyApi, bindings: &[HotkeyBinding]) -> Vec<i32> {
     let mut registered = Vec::new();
-    for (hotkey_id, vk) in entries {
-        if api.register(hotkey_id, CTRL_ALT, vk) {
-            registered.push(hotkey_id);
+    for binding in bindings {
+        if api.register(binding.id, binding.modifiers, binding.vk) {
+            registered.push(binding.id);
         } else {
             // 失败细节（LastError）由后端实现记日志，这里只标出 id/vk。
-            eprintln!("[hotkeys] hotkeys.register_failed id=0x{hotkey_id:04X} vk=0x{vk:02X}");
+            eprintln!(
+                "[hotkeys] hotkeys.register_failed id=0x{:04X} mod=0x{:02X} vk=0x{:02X}",
+                binding.id, binding.modifiers, binding.vk
+            );
         }
     }
     eprintln!(
         "[hotkeys] hotkeys.registered ids={:?}",
-        registered.iter().map(|id| format!("0x{id:04X}")).collect::<Vec<_>>()
+        registered
+            .iter()
+            .map(|id| format!("0x{id:04X}"))
+            .collect::<Vec<_>>()
     );
     registered
 }
@@ -302,7 +553,7 @@ impl HotkeyApi for Win32HotkeyApi {
 
 /// 退出时的注销守卫（对应 Python `_run` 的 finally 里 `_unregister_all`）。
 ///
-/// 用 Drop 保证消息循环 panic 退出时也会注销热键，避免把 `Ctrl+Alt+S/Q` 永久占住。
+/// 用 Drop 保证消息循环 panic 退出时也会注销热键，避免把系统热键永久占住。
 struct HotkeyCleanup {
     api: Arc<dyn HotkeyApi>,
     registered: Arc<Mutex<Vec<i32>>>,
@@ -317,12 +568,13 @@ impl Drop for HotkeyCleanup {
     }
 }
 
-/// 保命热键管理器（6.2.3 / 6.7.5）。
+/// 全局快捷键管理器（6.2.3 / 6.7.5）。
 ///
 /// 回调在热键线程执行，**必须非阻塞**。对应 Python `HotkeyManager`。
 pub struct HotkeyManager {
     api: Arc<dyn HotkeyApi>,
     router: Arc<HotkeyRouter>,
+    bindings: Vec<HotkeyBinding>,
     thread: Option<JoinHandle<()>>,
     thread_id: Arc<AtomicU32>,
     registered: Arc<Mutex<Vec<i32>>>,
@@ -331,23 +583,20 @@ pub struct HotkeyManager {
 
 impl HotkeyManager {
     /// 用真实 Win32 后端创建管理器（不注册任何热键；start() 才有副作用）。
-    pub fn new<F, G>(on_toggle: F, on_panic: G) -> Self
-    where
-        F: Fn() + Send + Sync + 'static,
-        G: Fn() + Send + Sync + 'static,
-    {
-        Self::with_api(Arc::new(Win32HotkeyApi), on_toggle, on_panic)
+    pub fn new(bindings: Vec<HotkeyBinding>, handlers: Vec<(i32, HotkeyHandler)>) -> Self {
+        Self::with_api(Arc::new(Win32HotkeyApi), bindings, handlers)
     }
 
     /// 注入自定义后端（测试替身用）。
-    pub fn with_api<F, G>(api: Arc<dyn HotkeyApi>, on_toggle: F, on_panic: G) -> Self
-    where
-        F: Fn() + Send + Sync + 'static,
-        G: Fn() + Send + Sync + 'static,
-    {
+    pub fn with_api(
+        api: Arc<dyn HotkeyApi>,
+        bindings: Vec<HotkeyBinding>,
+        handlers: Vec<(i32, HotkeyHandler)>,
+    ) -> Self {
         Self {
             api,
-            router: Arc::new(HotkeyRouter::new(on_toggle, on_panic)),
+            router: Arc::new(HotkeyRouter::new(handlers)),
+            bindings,
             thread: None,
             thread_id: Arc::new(AtomicU32::new(0)),
             registered: Arc::new(Mutex::new(Vec::new())),
@@ -375,10 +624,13 @@ impl HotkeyManager {
         let router = Arc::clone(&self.router);
         let thread_id = Arc::clone(&self.thread_id);
         let registered = Arc::clone(&self.registered);
+        let bindings = self.bindings.clone();
 
         let handle = std::thread::Builder::new()
             .name(HOTKEY_THREAD_NAME.to_string())
-            .spawn(move || hotkey_thread_main(api, router, thread_id, registered, ready_tx))
+            .spawn(move || {
+                hotkey_thread_main(api, router, bindings, thread_id, registered, ready_tx)
+            })
             .map_err(|source| HotkeyError::Spawn { source })?;
         self.thread = Some(handle);
 
@@ -423,6 +675,11 @@ impl HotkeyManager {
         lock(&self.registered).clone()
     }
 
+    /// 本次注册的绑定表（诊断用）。
+    pub fn bindings(&self) -> &[HotkeyBinding] {
+        &self.bindings
+    }
+
     /// 是否已收到停止请求。
     ///
     /// 与 Python 一致：这个标志在消息循环里**没有人读**（Python 的 `_stop` 同样只 set/clear），
@@ -447,6 +704,7 @@ impl Drop for HotkeyManager {
 fn hotkey_thread_main(
     api: Arc<dyn HotkeyApi>,
     router: Arc<HotkeyRouter>,
+    bindings: Vec<HotkeyBinding>,
     thread_id: Arc<AtomicU32>,
     registered: Arc<Mutex<Vec<i32>>>,
     ready: mpsc::Sender<()>,
@@ -459,7 +717,7 @@ fn hotkey_thread_main(
     let current = api.prepare_message_queue();
     thread_id.store(current, Ordering::Release);
 
-    let ids = register_all(api.as_ref());
+    let ids = register_all(api.as_ref(), &bindings);
     *lock(&registered) = ids;
     let _ = ready.send(());
 
@@ -498,7 +756,6 @@ fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration) -> bool {
     let _ = handle.join();
     true
 }
-
 // ---------------------------------------------------------------------------
 // 测试
 // ---------------------------------------------------------------------------
@@ -506,6 +763,7 @@ fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::collections::VecDeque;
     use std::sync::Condvar;
 
@@ -524,66 +782,150 @@ mod tests {
         true
     }
 
-    // ---- 纯逻辑：分发（Python _dispatch）------------------------------------
+    // ---- 组合键解析 --------------------------------------------------------
 
     #[test]
-    fn dispatch_routes_toggle_and_panic() {
-        let toggle = Arc::new(AtomicU64::new(0));
-        let panic = Arc::new(AtomicU64::new(0));
-        let router = HotkeyRouter::new(
-            {
-                let toggle = Arc::clone(&toggle);
-                move || {
-                    toggle.fetch_add(1, Ordering::SeqCst);
-                }
-            },
-            {
-                let panic = Arc::clone(&panic);
-                move || {
-                    panic.fetch_add(1, Ordering::SeqCst);
-                }
-            },
+    fn parses_common_combos() {
+        assert_eq!(parse_combo("Ctrl+Alt+S"), Ok((CTRL_ALT, VK_S)));
+        // 大小写与顺序都不敏感
+        assert_eq!(parse_combo("alt+ctrl+q"), Ok((CTRL_ALT, VK_Q)));
+        assert_eq!(
+            parse_combo("Ctrl+Shift+F5"),
+            Ok((MOD_CONTROL | MOD_SHIFT, 0x74))
         );
+        assert_eq!(parse_combo("Win+Space"), Ok((MOD_WIN, 0x20)));
+        assert_eq!(parse_combo("Ctrl+Alt+PageUp"), Ok((CTRL_ALT, 0x21)));
+        assert_eq!(parse_combo("Ctrl+Alt+,"), Ok((CTRL_ALT, 0xBC)));
+    }
+
+    #[test]
+    fn rejects_bad_combos() {
+        assert!(parse_combo("").is_err(), "空串必须报错");
+        assert!(parse_combo("S").is_err(), "没有修饰键的组合会把打字全吞掉");
+        assert!(parse_combo("Shift+S").is_err(), "只按 Shift 不算修饰键");
+        assert!(parse_combo("Ctrl+Alt+Foo").is_err(), "未知按键");
+        assert!(parse_combo("Ctrl+Alt+S+T").is_err(), "只能有一个主键");
+        assert!(parse_combo("Ctrl+Alt+").is_ok(), "尾部的 + 视作加号键");
+    }
+
+    #[test]
+    fn maps_key_names_to_vk() {
+        assert_eq!(vk_for_key("A"), Some(0x41));
+        assert_eq!(vk_for_key("z"), Some(0x5A));
+        assert_eq!(vk_for_key("0"), Some(0x30));
+        assert_eq!(vk_for_key("F1"), Some(0x70));
+        assert_eq!(vk_for_key("F12"), Some(0x7B));
+        assert_eq!(vk_for_key("f24"), Some(0x87));
+        assert_eq!(vk_for_key("Backspace"), Some(0x08));
+        assert_eq!(vk_for_key("ArrowLeft"), Some(0x25));
+        assert_eq!(vk_for_key("Escape"), Some(0x1B));
+        assert_eq!(vk_for_key("F25"), None, "F 键只到 F24");
+    }
+
+    // ---- 动作表 ------------------------------------------------------------
+
+    #[test]
+    fn action_ids_and_keys_are_unique() {
+        let mut ids = HashSet::new();
+        let mut keys = HashSet::new();
+        for action in HotkeyAction::ALL {
+            assert!(ids.insert(action.id()), "{:?} 的 id 重复", action);
+            assert!(keys.insert(action.config_key()), "{:?} 的配置键重复", action);
+        }
+    }
+
+    #[test]
+    fn default_combos_are_parseable() {
+        let cfg = HotkeyCfg::default();
+        for action in HotkeyAction::ALL {
+            let combo = action.combo(&cfg);
+            assert!(
+                parse_combo(combo).is_ok(),
+                "{} 的默认组合键 {combo} 解析失败",
+                action.label()
+            );
+        }
+    }
+
+    #[test]
+    fn android_actions_are_flagged() {
+        assert!(!HotkeyAction::Toggle.is_android());
+        assert!(!HotkeyAction::Panic.is_android());
+        assert!(HotkeyAction::Back.is_android());
+        assert!(HotkeyAction::VolumeDown.is_android());
+    }
+
+    // ---- 纯逻辑：分发 ------------------------------------------------------
+
+    fn counting(handler: HotkeyHandler) -> HotkeyHandler {
+        handler
+    }
+
+    #[test]
+    fn dispatch_routes_by_id() {
+        let toggle = Arc::new(AtomicU64::new(0));
+        let panic_counter = Arc::new(AtomicU64::new(0));
+        let router = HotkeyRouter::new(vec![
+            (
+                HOTKEY_TOGGLE_ID,
+                counting(Box::new({
+                    let counter = Arc::clone(&toggle);
+                    move || {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                })),
+            ),
+            (
+                HOTKEY_PANIC_ID,
+                counting(Box::new({
+                    let counter = Arc::clone(&panic_counter);
+                    move || {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                })),
+            ),
+        ]);
 
         router.dispatch(HOTKEY_TOGGLE_ID);
         router.dispatch(HOTKEY_TOGGLE_ID);
         router.dispatch(HOTKEY_PANIC_ID);
 
-        assert_eq!(router.toggle_calls(), 2);
-        assert_eq!(router.panic_calls(), 1);
+        assert_eq!(router.fired(HOTKEY_TOGGLE_ID), 2);
+        assert_eq!(router.fired(HOTKEY_PANIC_ID), 1);
+        assert_eq!(router.fired(HOTKEY_BACK_ID), 0);
         assert_eq!(toggle.load(Ordering::SeqCst), 2);
-        assert_eq!(panic.load(Ordering::SeqCst), 1);
+        assert_eq!(panic_counter.load(Ordering::SeqCst), 1);
         assert_eq!(router.unknown_ids(), 0);
         assert_eq!(router.callback_errors(), 0);
     }
 
     #[test]
     fn unknown_hotkey_id_is_ignored() {
-        // 对应 Python hotkeys.unknown_id 分支。
-        let router = HotkeyRouter::new(|| {}, || {});
+        let router = HotkeyRouter::new(vec![]);
         router.dispatch(0x9999);
 
-        assert_eq!(router.toggle_calls(), 0);
-        assert_eq!(router.panic_calls(), 0);
         assert_eq!(router.unknown_ids(), 1);
+        assert_eq!(router.callback_errors(), 0);
     }
 
     #[test]
     fn panicking_callback_is_counted_and_does_not_propagate() {
-        // 对应 Python hotkeys.callback_failed：回调异常只记日志，消息循环继续。
-        let router = HotkeyRouter::new(|| panic!("急停回调炸了"), || {});
+        let router = HotkeyRouter::new(vec![
+            (HOTKEY_TOGGLE_ID, Box::new(|| panic!("急停回调炸了"))),
+            (HOTKEY_PANIC_ID, Box::new(|| {})),
+        ]);
         router.dispatch(HOTKEY_TOGGLE_ID);
 
         assert_eq!(router.callback_errors(), 1);
-        assert_eq!(router.toggle_calls(), 0, "panic 的回调不该算成功");
+        assert_eq!(router.fired(HOTKEY_TOGGLE_ID), 0, "panic 的回调不该算成功");
 
         // 之后仍然能正常分发别的热键。
         router.dispatch(HOTKEY_PANIC_ID);
-        assert_eq!(router.panic_calls(), 1);
+        assert_eq!(router.fired(HOTKEY_PANIC_ID), 1);
     }
 
     #[test]
-    fn callback_table_uses_python_ids() {
+    fn legacy_ids_are_stable() {
         assert_eq!(HOTKEY_TOGGLE_ID, 0x1001);
         assert_eq!(HOTKEY_PANIC_ID, 0x1002);
         assert_eq!(CTRL_ALT, MOD_CONTROL | MOD_ALT);
@@ -708,10 +1050,26 @@ mod tests {
         }
     }
 
+    /// 两条默认绑定：接管 + 急停。
+    fn default_bindings() -> Vec<HotkeyBinding> {
+        vec![
+            HotkeyBinding {
+                id: HOTKEY_TOGGLE_ID,
+                modifiers: CTRL_ALT,
+                vk: VK_S,
+            },
+            HotkeyBinding {
+                id: HOTKEY_PANIC_ID,
+                modifiers: CTRL_ALT,
+                vk: VK_Q,
+            },
+        ]
+    }
+
     fn fake_manager(api: &Arc<FakeApi>) -> HotkeyManager {
         let concrete: Arc<FakeApi> = Arc::clone(api);
         let backend: Arc<dyn HotkeyApi> = concrete;
-        HotkeyManager::with_api(backend, || {}, || {})
+        HotkeyManager::with_api(backend, default_bindings(), vec![])
     }
 
     #[test]
@@ -721,7 +1079,7 @@ mod tests {
         api.fail(HOTKEY_PANIC_ID);
         let backend: Arc<dyn HotkeyApi> = Arc::clone(&api) as Arc<dyn HotkeyApi>;
 
-        let registered = register_all(backend.as_ref());
+        let registered = register_all(backend.as_ref(), &default_bindings());
 
         assert_eq!(registered, vec![HOTKEY_TOGGLE_ID], "急停键失败不影响切换键");
         assert_eq!(api.register_calls(), 2, "两条热键都必须尝试注册");
@@ -783,10 +1141,13 @@ mod tests {
             let backend: Arc<dyn HotkeyApi> = concrete;
             let mut manager = HotkeyManager::with_api(
                 backend,
-                move || {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                },
-                || {},
+                default_bindings(),
+                vec![(
+                    HOTKEY_TOGGLE_ID,
+                    Box::new(move || {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }),
+                )],
             );
             manager.start().expect("启动");
 
@@ -828,7 +1189,6 @@ mod tests {
 
     #[test]
     fn real_prepare_message_queue_returns_thread_id() {
-        // 对应 Python tests/test_hotkeys.py：GetCurrentThreadId 来自 kernel32 且非 0。
         // 只建本线程的消息队列，不建窗口、不动光标，锁屏下也安全。
         let thread_id = Win32HotkeyApi.prepare_message_queue();
         assert!(thread_id > 0, "GetCurrentThreadId 必须返回非 0 值");
@@ -839,7 +1199,7 @@ mod tests {
     #[test]
     #[ignore = "会真实 RegisterHotKey 抢占 Ctrl+Alt+S/Q 系统热键：需要交互式桌面，手工执行 cargo test -- --ignored"]
     fn real_start_and_stop_registers_hotkeys() {
-        let mut manager = HotkeyManager::new(|| {}, || {});
+        let mut manager = HotkeyManager::new(default_bindings(), vec![]);
         manager.start().expect("启动热键线程失败");
         assert!(manager.active());
         assert_eq!(

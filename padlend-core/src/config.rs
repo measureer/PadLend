@@ -367,7 +367,11 @@ impl Default for KeyboardCfg {
     }
 }
 
-/// 全局热键。
+/// 全局快捷键。
+///
+/// 1.7.7 起除了「接管 / 交还」「急停」，还带一组**操作平板**的组合键：后退、主页、
+/// 最近任务、通知栏、电源键、音量加减。键名与 `win::hotkeys::HotkeyAction` 一一对应，
+/// 全部由引擎用 `RegisterHotKey` 注册（窗口不在前台也有效）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeyCfg {
@@ -375,6 +379,20 @@ pub struct HotkeyCfg {
     pub toggle: String,
     /// 紧急停止（panic）热键。
     pub panic: String,
+    /// 平板：后退。
+    pub back: String,
+    /// 平板：主页。
+    pub home: String,
+    /// 平板：最近任务。
+    pub recents: String,
+    /// 平板：展开通知栏。
+    pub notifications: String,
+    /// 平板：电源键（开关屏）。
+    pub power: String,
+    /// 平板：音量 +。
+    pub volume_up: String,
+    /// 平板：音量 -。
+    pub volume_down: String,
 }
 
 impl Default for HotkeyCfg {
@@ -382,7 +400,45 @@ impl Default for HotkeyCfg {
         Self {
             toggle: "Ctrl+Alt+S".to_string(),
             panic: "Ctrl+Alt+Q".to_string(),
+            back: "Ctrl+Alt+B".to_string(),
+            home: "Ctrl+Alt+H".to_string(),
+            recents: "Ctrl+Alt+R".to_string(),
+            notifications: "Ctrl+Alt+N".to_string(),
+            power: "Ctrl+Alt+P".to_string(),
+            volume_up: "Ctrl+Alt+PageUp".to_string(),
+            volume_down: "Ctrl+Alt+PageDown".to_string(),
         }
+    }
+}
+
+/// 快捷键段的 (配置键, 当前值) 列表；顺序与设置页一致。
+fn hotkey_pairs(cfg: &HotkeyCfg) -> [(&'static str, &str); 9] {
+    [
+        ("toggle", &cfg.toggle),
+        ("panic", &cfg.panic),
+        ("back", &cfg.back),
+        ("home", &cfg.home),
+        ("recents", &cfg.recents),
+        ("notifications", &cfg.notifications),
+        ("power", &cfg.power),
+        ("volume_up", &cfg.volume_up),
+        ("volume_down", &cfg.volume_down),
+    ]
+}
+
+/// 按配置键写回快捷键（repair 用）。
+fn set_hotkey(cfg: &mut HotkeyCfg, key: &str, value: String) {
+    match key {
+        "toggle" => cfg.toggle = value,
+        "panic" => cfg.panic = value,
+        "back" => cfg.back = value,
+        "home" => cfg.home = value,
+        "recents" => cfg.recents = value,
+        "notifications" => cfg.notifications = value,
+        "power" => cfg.power = value,
+        "volume_up" => cfg.volume_up = value,
+        "volume_down" => cfg.volume_down = value,
+        _ => {}
     }
 }
 
@@ -746,11 +802,10 @@ impl Config {
         // Python 还检查 passthrough_keys 是否为 list：_section() 之后必然是 list，
         // Rust 的类型上也不可能，故不移植这条死分支。
 
-        if py_strip(&self.hotkeys.toggle).is_empty() {
-            problems.push("hotkeys.toggle 不能为空".to_string());
-        }
-        if py_strip(&self.hotkeys.panic).is_empty() {
-            problems.push("hotkeys.panic 不能为空".to_string());
+        for (key, value) in hotkey_pairs(&self.hotkeys) {
+            if py_strip(value).is_empty() {
+                problems.push(format!("hotkeys.{key} 不能为空"));
+            }
         }
         problems
     }
@@ -882,13 +937,21 @@ impl Config {
         // 之后必然是 list，Rust 类型上也不可能，故省略。
 
         let hotkey_defaults = HotkeyCfg::default();
-        if py_strip(&self.hotkeys.toggle).is_empty() {
-            found.push("hotkeys.toggle 为空，已恢复默认".to_string());
-            self.hotkeys.toggle = hotkey_defaults.toggle;
+        // 先收集再改：hotkey_pairs 借着 self.hotkeys，直接在里面 set_hotkey 会同时可变借用。
+        let mut empty_hotkeys: Vec<&'static str> = Vec::new();
+        for (key, value) in hotkey_pairs(&self.hotkeys) {
+            if py_strip(value).is_empty() {
+                empty_hotkeys.push(key);
+            }
         }
-        if py_strip(&self.hotkeys.panic).is_empty() {
-            found.push("hotkeys.panic 为空，已恢复默认".to_string());
-            self.hotkeys.panic = hotkey_defaults.panic;
+        for key in empty_hotkeys {
+            found.push(format!("hotkeys.{key} 为空，已恢复默认"));
+            let fallback = hotkey_pairs(&hotkey_defaults)
+                .into_iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, text)| text.to_string())
+                .unwrap_or_default();
+            set_hotkey(&mut self.hotkeys, key, fallback);
         }
 
         // Python 里还有一段 restore_pointer_speed == 0 and != -3 的空操作，
@@ -1059,6 +1122,13 @@ fn section_hotkeys(raw: Option<&Value>) -> HotkeyCfg {
     };
     take_str(map, "toggle", &mut out.toggle);
     take_str(map, "panic", &mut out.panic);
+    take_str(map, "back", &mut out.back);
+    take_str(map, "home", &mut out.home);
+    take_str(map, "recents", &mut out.recents);
+    take_str(map, "notifications", &mut out.notifications);
+    take_str(map, "power", &mut out.power);
+    take_str(map, "volume_up", &mut out.volume_up);
+    take_str(map, "volume_down", &mut out.volume_down);
     out
 }
 

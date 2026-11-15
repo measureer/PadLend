@@ -28,6 +28,8 @@ pub const MSG_INJECT_TOUCH_EVENT: u8 = 2;
 pub const MSG_INJECT_SCROLL_EVENT: u8 = 3;
 /// BACK_OR_SCREEN_ON：按键/亮屏。
 pub const MSG_BACK_OR_SCREEN_ON: u8 = 4;
+/// EXPAND_NOTIFICATION_PANEL：展开通知栏（scrcpy 5.0.1 的 type 5，无载荷）。
+pub const MSG_EXPAND_NOTIFICATION_PANEL: u8 = 5;
 /// SET_CLIPBOARD：直接写平板剪贴板，不敲键盘（6.8）。
 pub const MSG_SET_CLIPBOARD: u8 = 9;
 /// UHID_CREATE：创建 UHID 设备。
@@ -62,6 +64,113 @@ pub const KEYCODE_BACK: i64 = 4;
 pub const KEYCODE_ENTER: i64 = 66;
 /// `KEYCODE_DEL`（退格）。
 pub const KEYCODE_DEL: i64 = 67;
+/// `KEYCODE_HOME`。
+pub const KEYCODE_HOME: i64 = 3;
+/// `KEYCODE_APP_SWITCH`（最近任务）。
+pub const KEYCODE_APP_SWITCH: i64 = 187;
+/// `KEYCODE_POWER`。
+pub const KEYCODE_POWER: i64 = 26;
+/// `KEYCODE_VOLUME_UP`。
+pub const KEYCODE_VOLUME_UP: i64 = 24;
+/// `KEYCODE_VOLUME_DOWN`。
+pub const KEYCODE_VOLUME_DOWN: i64 = 25;
+
+// ---------------------------------------------------------------------------
+// 安卓导航动作（1.7.7：快捷键直接操作平板）
+// ---------------------------------------------------------------------------
+
+/// 一个「操作平板」的动作。快捷键、RPC 与日志共用这一份定义。
+///
+/// 走控制通道（INJECT_KEYCODE / EXPAND_NOTIFICATION_PANEL），所以**不需要**键盘转发、
+/// 不需要接管状态，只要平板连着就能用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AndroidAction {
+    /// 后退。
+    Back,
+    /// 主页。
+    Home,
+    /// 最近任务。
+    Recents,
+    /// 展开通知栏。
+    Notifications,
+    /// 电源键（开关屏）。
+    Power,
+    /// 音量 +。
+    VolumeUp,
+    /// 音量 -。
+    VolumeDown,
+}
+
+impl AndroidAction {
+    /// 全部动作（RPC 文档与测试用）。
+    pub const ALL: [AndroidAction; 7] = [
+        AndroidAction::Back,
+        AndroidAction::Home,
+        AndroidAction::Recents,
+        AndroidAction::Notifications,
+        AndroidAction::Power,
+        AndroidAction::VolumeUp,
+        AndroidAction::VolumeDown,
+    ];
+
+    /// RPC / 配置里用的短名。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AndroidAction::Back => "back",
+            AndroidAction::Home => "home",
+            AndroidAction::Recents => "recents",
+            AndroidAction::Notifications => "notifications",
+            AndroidAction::Power => "power",
+            AndroidAction::VolumeUp => "volume_up",
+            AndroidAction::VolumeDown => "volume_down",
+        }
+    }
+
+    /// 日志与提示里的中文名。
+    pub fn label(self) -> &'static str {
+        match self {
+            AndroidAction::Back => "后退",
+            AndroidAction::Home => "主页",
+            AndroidAction::Recents => "最近任务",
+            AndroidAction::Notifications => "通知栏",
+            AndroidAction::Power => "电源键",
+            AndroidAction::VolumeUp => "音量 +",
+            AndroidAction::VolumeDown => "音量 -",
+        }
+    }
+
+    /// 解析短名（大小写不敏感）。
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "back" => Some(AndroidAction::Back),
+            "home" => Some(AndroidAction::Home),
+            "recents" | "app_switch" => Some(AndroidAction::Recents),
+            "notifications" | "notification" => Some(AndroidAction::Notifications),
+            "power" | "screen" => Some(AndroidAction::Power),
+            "volume_up" => Some(AndroidAction::VolumeUp),
+            "volume_down" => Some(AndroidAction::VolumeDown),
+            _ => None,
+        }
+    }
+
+    /// 对应的 Android keycode；通知栏走专用消息，返回 `None`。
+    pub fn keycode(self) -> Option<i64> {
+        Some(match self {
+            AndroidAction::Back => KEYCODE_BACK,
+            AndroidAction::Home => KEYCODE_HOME,
+            AndroidAction::Recents => KEYCODE_APP_SWITCH,
+            AndroidAction::Notifications => return None,
+            AndroidAction::Power => KEYCODE_POWER,
+            AndroidAction::VolumeUp => KEYCODE_VOLUME_UP,
+            AndroidAction::VolumeDown => KEYCODE_VOLUME_DOWN,
+        })
+    }
+}
+
+/// 展开通知栏（scrcpy 的 EXPAND_NOTIFICATION_PANEL，只有 type 字节）。
+pub fn expand_notification_panel() -> Vec<u8> {
+    vec![MSG_EXPAND_NOTIFICATION_PANEL]
+}
 
 // ---------------------------------------------------------------------------
 // 错误（Python 抛 ValueError）
@@ -449,6 +558,40 @@ mod tests {
         packet.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         packet.extend_from_slice(payload);
         packet
+    }
+
+    // -- 安卓导航动作（1.7.7）-----------------------------------------------
+
+    #[test]
+    fn android_action_names_round_trip() {
+        for action in AndroidAction::ALL {
+            assert_eq!(AndroidAction::parse(action.as_str()), Some(action));
+            assert!(!action.label().is_empty());
+        }
+        assert_eq!(AndroidAction::parse("BACK"), Some(AndroidAction::Back));
+        assert_eq!(AndroidAction::parse("app_switch"), Some(AndroidAction::Recents));
+        assert_eq!(AndroidAction::parse("nope"), None);
+    }
+
+    #[test]
+    fn android_action_keycodes_match_android_api() {
+        assert_eq!(AndroidAction::Back.keycode(), Some(4));
+        assert_eq!(AndroidAction::Home.keycode(), Some(3));
+        assert_eq!(AndroidAction::Recents.keycode(), Some(187));
+        assert_eq!(AndroidAction::Power.keycode(), Some(26));
+        assert_eq!(AndroidAction::VolumeUp.keycode(), Some(24));
+        assert_eq!(AndroidAction::VolumeDown.keycode(), Some(25));
+        assert_eq!(
+            AndroidAction::Notifications.keycode(),
+            None,
+            "通知栏走专用消息，不是按键"
+        );
+    }
+
+    #[test]
+    fn expand_notification_panel_is_one_byte() {
+        assert_eq!(expand_notification_panel(), vec![MSG_EXPAND_NOTIFICATION_PANEL]);
+        assert_eq!(MSG_EXPAND_NOTIFICATION_PANEL, 5);
     }
 
     // -- INJECT_KEYCODE / INJECT_TEXT / BACK_OR_SCREEN_ON -------------------

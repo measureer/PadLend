@@ -3,10 +3,28 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { Config } from '../../api/types';
 import { Icon, type IconName } from '../../components/Icon';
-import { Banner, Button, Card, Field, Select, Slider, TextInput, Toggle } from '../../components/ui';
+import { Banner, Button, Card, Field, Select, Slider, Toggle } from '../../components/ui';
 import { SETTING_GROUPS, readField, validateConfig, settingsPatch, writeField, type FieldDef, type SettingGroup } from '../../lib/configSchema';
 import { saveConfig } from '../../lib/actions';
 import { useAppStore } from '../../store/appStore';
+import { HotkeyRecorder } from './HotkeyRecorder';
+
+/** 「生效方式」徽章：只有真的不是即时生效的字段才显示，避免每行都挂一个标签。 */
+const APPLIES: Record<NonNullable<FieldDef['applies']>, { label: string; tone: string; title: string }> = {
+  live: { label: '即时生效', tone: 'ok', title: '保存后引擎立刻重新加载，不用重连或重启。' },
+  reconnect: { label: '重连后生效', tone: 'warn', title: '引擎在连接平板时读取这一项：保存后断开再连一次才会用上新值。' },
+  restart: { label: '重启后生效', tone: 'warn', title: '引擎只在启动时读这一项：保存后需要重启 PadLend。' },
+};
+
+const FieldLabel = memo(function FieldLabel({ field }: { field: FieldDef }) {
+  const applies = field.applies ? APPLIES[field.applies] : null;
+  return (
+    <span className="field-label-row">
+      <span>{field.label}</span>
+      {applies && <span className={`badge ${applies.tone}`} title={applies.title}>{applies.label}</span>}
+    </span>
+  );
+});
 
 function Control({ field, config, onChange }: {
   field: FieldDef;
@@ -40,7 +58,7 @@ function Control({ field, config, onChange }: {
       );
     case 'hotkey':
       return (
-        <TextInput
+        <HotkeyRecorder
           value={String(value)}
           label={field.label}
           placeholder={field.placeholder}
@@ -64,7 +82,7 @@ const GroupCard = memo(function GroupCard({ group, config, onChange }: {
       desc={group.description}
     >
       {group.fields.map((field) => (
-        <Field key={field.id} label={field.label} hint={field.hint}>
+        <Field key={field.id} label={<FieldLabel field={field} />} hint={field.hint}>
           <Control field={field} config={config} onChange={(value) => onChange(field, value)} />
         </Field>
       ))}
@@ -113,7 +131,7 @@ export function SettingsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">设置</h1>
-          <p className="page-subtitle">鼠标、键盘、快捷键与杂项；保存后立即生效。平板摆位在「桌面布局」页调整，按 Ctrl+, 可快速回到这里。</p>
+          <p className="page-subtitle">鼠标、键盘、快捷键与杂项；标了「重连后生效」「重启后生效」的项保存后还需要对应动作。平板摆位在「桌面布局」页调整，按 Ctrl+, 可快速回到这里。</p>
         </div>
         <div className="page-actions">
           {dirty && <span className="badge warn">有未保存的修改</span>}

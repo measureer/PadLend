@@ -12,18 +12,19 @@ const gainField = SETTING_GROUPS[0].fields[0];
 const reportField = SETTING_GROUPS[0].fields[1];
 
 describe('声明式设置 schema', () => {
-  it('覆盖 15 个可编辑字段，且每个字段都有提示文案', () => {
+  it('覆盖 22 个可编辑字段，且每个字段都有提示文案', () => {
     const fields = SETTING_GROUPS.flatMap((group) => group.fields);
-    expect(fields).toHaveLength(15);
+    expect(fields).toHaveLength(22);
     expect(fields.every((field) => field.hint.length > 0)).toBe(true);
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
 
-    // 左列放鼠标 / 键盘 / 快捷键，右列只放杂项；标题按用户习惯叫「鼠标」。
+    // 左列放鼠标 / 键盘 / 快捷键 / 平板快捷键，右列只放杂项；标题按用户习惯叫「鼠标」。
     expect(SETTING_GROUPS.filter((g) => g.column === 'main').map((g) => g.title)).toEqual([
       '鼠标',
       '键盘',
       '快捷键',
+      '平板快捷键',
     ]);
     expect(SETTING_GROUPS.filter((g) => g.column === 'side').map((g) => g.title)).toEqual(['杂项']);
 
@@ -36,14 +37,27 @@ describe('声明式设置 schema', () => {
     const audio = fields.find((f) => f.id === 'forward_audio');
     expect(audio?.label).toBe('转发平板声音');
     expect(audio?.hint).toContain('Android 11');
-    expect(audio?.hint).toContain('重新连接');
+    expect(audio?.hint).toContain('断开再连一次');
+    // 「改完要不要重连」必须写在设置项上，而不是靠用户猜。
+    expect(audio?.applies).toBe('reconnect');
+    expect(keepScreen?.applies).toBe('reconnect');
 
     // 自动连接开关放在杂项首项，写的是 device.auto_connect。
     const misc = SETTING_GROUPS.find((g) => g.id === 'misc');
     expect(misc?.fields[0].id).toBe('auto_connect');
     expect(misc?.fields[0].section).toBe('device');
     expect(misc?.fields[0].label).toBe('打开软件自动连接上次连接的设备');
-    expect(misc?.fields[0].hint).toContain('下次启动');
+    expect(misc?.fields[0].hint).toContain('重启');
+    // 只有真的不是即时生效的项才挂徽章。
+    expect(misc?.fields[0].applies).toBe('restart');
+
+    // 安卓导航快捷键：7 个动作都能改，且都落在 hotkeys 段。
+    const tablet = SETTING_GROUPS.find((g) => g.id === 'tablet_keys');
+    expect(tablet?.fields.map((f) => f.id)).toEqual([
+      'back', 'home', 'recents', 'notifications', 'power', 'volume_up', 'volume_down',
+    ]);
+    expect(tablet?.fields.every((f) => f.section === 'hotkeys' && f.kind === 'hotkey')).toBe(true);
+    expect(tablet?.fields[0].placeholder).toBe('Ctrl+Alt+B');
   });
 
   it('自动连接写回 device 段且不影响同段其它字段', () => {

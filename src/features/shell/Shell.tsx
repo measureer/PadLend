@@ -15,6 +15,7 @@ const NAV: { id: PageId; label: string; icon: IconName }[] = [
   { id: 'layout', label: '布局', icon: 'layout' },
   { id: 'settings', label: '设置', icon: 'settings' },
   { id: 'logs', label: '日志', icon: 'logs' },
+  { id: 'about', label: '关于', icon: 'info' },
 ];
 
 export const TitleBar = memo(function TitleBar() {
@@ -47,7 +48,7 @@ const MENU_ITEMS: { label: string; icon: IconName; action: () => void; danger?: 
   { label: '打开配置…', icon: 'folder', action: () => void actions.openPath('config'), sep: true },
   { label: '复制诊断信息', icon: 'copy', action: () => void actions.copyStaticDiagnostics() },
   { label: '打开日志目录…', icon: 'folder', action: () => void actions.openPath('logs') },
-  { label: '关于 PadLend…', icon: 'info', action: () => useAppStore.getState().openDialog('about') },
+  { label: '关于 PadLend…', icon: 'info', action: () => useAppStore.getState().setPage('about') },
   { label: '运行诊断…', icon: 'shield', action: () => { useAppStore.getState().openDialog('diagnostics'); void actions.runDiagnostics(); }, sep: true },
   { label: '检查更新…', icon: 'download', action: () => useAppStore.getState().openDialog('update') },
   { label: '首次设置向导…', icon: 'sparkle', action: () => useAppStore.getState().openDialog('wizard') },
@@ -135,6 +136,7 @@ export const Sidebar = memo(function Sidebar() {
   const page = useAppStore((s) => s.page);
   const setPage = useAppStore((s) => s.setPage);
   const version = useAppStore((s) => s.version);
+  const hotkeys = useAppStore((s) => s.config.hotkeys);
   return (
     <nav className="sidebar" aria-label="主导航">
       <div className="sidebar-label">工作区</div>
@@ -154,8 +156,8 @@ export const Sidebar = memo(function Sidebar() {
         </button>
       ))}
       <div className="sidebar-foot">
-        Ctrl+Alt+S 接管 / 交还<br />
-        Ctrl+Alt+Q 急停<br />
+        {hotkeys?.toggle || 'Ctrl+Alt+S'} 接管 / 交还<br />
+        {hotkeys?.panic || 'Ctrl+Alt+Q'} 急停<br />
         Ctrl+, 打开设置
       </div>
       <div className="sidebar-foot mono" style={{ borderTop: 0, paddingTop: 0 }}>v{version}</div>

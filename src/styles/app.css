@@ -608,6 +608,30 @@
 .settings-group .field-row { grid-template-columns: minmax(110px, 170px) minmax(0, 1fr); }
 .settings-group .field-hint { max-width: 460px; }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+/* 字段标题 + 「重连后生效」这类徽章 */
+.field-label-row { display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.field-label-row .badge { font-size: 10px; padding: 1px 6px; }
+/* 快捷键录制：默认显示键帽，点一下进入录制态 */
+.hotkey-recorder { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; min-width: 0; }
+.hotkey-value {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  min-height: 34px; max-width: 100%; padding: 4px 10px;
+  border-radius: var(--r-sm); border: 1px solid var(--border-strong);
+  background: var(--bg-sunken); color: var(--text); cursor: pointer;
+}
+.hotkey-value:hover { background: var(--bg-hover); }
+.hotkey-value.recording { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--accent-soft); }
+.hotkey-value.invalid { border-color: var(--err); }
+.hotkey-keys { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.kbd {
+  font-family: var(--font-mono); font-size: var(--fs-11); padding: 2px 6px;
+  border-radius: 4px; border: 1px solid var(--border-strong);
+  background: var(--bg-surface); box-shadow: 0 1px 0 var(--border);
+}
+.hotkey-action { font-size: var(--fs-11); color: var(--text-3); white-space: nowrap; }
+.hotkey-placeholder { font-size: var(--fs-12); color: var(--text-3); }
+.hotkey-note { font-size: var(--fs-11); color: var(--warn); text-align: right; }
+.hotkey-note.err { color: var(--err); }
 
 /* ---------------------------------------------------------------- 画布 */
 .canvas-toolbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
@@ -669,8 +693,18 @@
 .wizard-result { margin-top: var(--sp-4); padding: var(--sp-4); border-radius: var(--r-md); background: var(--bg-sunken); border: 1px solid var(--border); white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--fs-12); line-height: 1.7; }
 .checkline { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; }
 .diagnostics-text { height: 340px; overflow: auto; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-sunken); font-family: var(--font-mono); font-size: var(--fs-12); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
-.about-hero { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-5); }
-.about-list { display: grid; gap: var(--sp-2); font-size: var(--fs-12); color: var(--text-2); }
+.about-hero { display: flex; align-items: center; gap: var(--sp-4); }
+.about-list { display: grid; gap: var(--sp-2); font-size: var(--fs-12); color: var(--text-2); line-height: 1.7; }
+/* 关于页：四张卡片两列排布，窄屏单列 */
+.about-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); align-items: start; }
+.about-card .card-body { display: flex; flex-direction: column; gap: var(--sp-4); }
+.about-version { font-size: var(--fs-20); font-weight: 650; }
+.about-repo {
+  padding: var(--sp-3); border-radius: var(--r-sm);
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  font-size: var(--fs-12); word-break: break-all;
+}
+.about-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 
 /* ---------------------------------------------------------------- 自适应 */
 @media (max-width: 1180px) {
@@ -679,6 +713,7 @@
   .nav-label, .sidebar-label, .sidebar-foot { display: none; }
   .grid-2 { grid-template-columns: minmax(0, 1fr); }
   .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .about-grid { grid-template-columns: minmax(0, 1fr); }
   .logs-layout { grid-template-columns: minmax(0, 1fr); }
   .content { padding: var(--sp-5); }
 }

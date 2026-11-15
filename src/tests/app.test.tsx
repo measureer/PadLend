@@ -48,6 +48,9 @@ describe('应用外壳与核心交互（浏览器 mock 后端）', () => {
     fireEvent.click(screen.getByRole('button', { name: '菜单' }));
     await waitFor(() => expect(screen.getByText('运行诊断…')).toBeTruthy());
     fireEvent.click(screen.getByText('关于 PadLend…'));
-    await waitFor(() => expect(screen.getByText(/第三方许可/)).toBeTruthy());
+    // 1.7.7 起「关于」是常驻页面：版本、仓库地址和检查更新都在页面上。
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '关于' })).toBeTruthy());
+    expect(screen.getByText('https://github.com/measureer/PadLend')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeTruthy();
   });
 });

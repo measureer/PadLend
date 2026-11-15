@@ -61,6 +61,7 @@ fn dispatch(engine: &Arc<Engine>, method: &str, params: &Value) -> Result<Value,
         "engine.panic" => Ok(engine_panic(engine)),
         "engine.reconnect" => Ok(engine_reconnect(engine)),
         "engine.inject_clipboard" => Ok(engine_inject_clipboard(engine, params)),
+    "engine.android_key" => engine_android_key(engine, params),
         "engine.state" => Ok(engine_state(engine)),
         "engine.metrics" => Ok(engine.current_metrics_value()),
         // -- 诊断 ---------------------------------------------------------
@@ -151,7 +152,9 @@ fn config_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
         return Err(problems.join("；"));
     }
     engine.save_config()?;
-    sync_session_config(engine);
+    // 1.7.7：一处推给所有组件 —— Router 的配置、会话参数、全局快捷键。
+    // 以前 Router 拿的是构造期快照，鼠标倍率/键盘开关改了要重连才生效。
+    engine.apply_live_config();
     let config = engine.config_dict()?;
     engine.emit("config", json!({ "config": config.clone(), "issues": [] }));
     engine.emit_log("CONFIG", format!("配置已保存：{}", config_path_text(engine)));
@@ -478,6 +481,21 @@ fn engine_inject_clipboard(engine: &Arc<Engine>, params: &Value) -> Value {
         }
     }
     json!({ "ok": ok })
+}
+
+/// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量。
+///
+/// 与全局快捷键走同一条路径（`Engine::press_android`）：不依赖接管状态、不需要键盘转发。
+fn engine_android_key(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
+    let name = params
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(action) = crate::tablet::protocol::AndroidAction::parse(name) else {
+        return Err(format!("不支持的平板动作：{name}"));
+    };
+    let ok = engine.press_android(action);
+    Ok(json!({ "ok": ok, "action": action.as_str(), "label": action.label() }))
 }
 
 fn engine_state(engine: &Arc<Engine>) -> Value {

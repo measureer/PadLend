@@ -45,7 +45,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
@@ -387,6 +387,16 @@ pub trait SessionPort: Send + Sync + fmt::Debug {
     /// 注入文本（扩展面；Router 核心路径不调用）。
     fn inject_text(&self, _text: &str) -> Result<(), RouterError> {
         Ok(())
+    }
+
+    /// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量（扩展面）。
+    ///
+    /// None = 会话不支持（模拟设备以外的旧实现），Router 会报「不支持」而不是静默丢弃。
+    fn android_action(
+        &self,
+        _action: crate::tablet::protocol::AndroidAction,
+    ) -> Option<Result<(), RouterError>> {
+        None
     }
 
     /// 会话是否已启动（扩展面；Router 核心路径不调用）。
@@ -1100,8 +1110,12 @@ fn lookup_vk_name(name: &str) -> Option<i32> {
 
 /// PadLend 的核心状态机（对应 Python Router，DESIGN 8.2 冻结接口 + 测试注入点）。
 pub struct Router {
-    /// 配置（只读；设备序列号见 requested_serial）。
-    cfg: Config,
+    /// 配置。
+    ///
+    /// 1.7.7 起改成 RwLock：设置页保存后由 `Engine::apply_live_config` 原地替换，
+    /// 鼠标倍率、上报频率、键盘开关、剪贴板同步这些**立刻生效**，不必重连。
+    /// 写法统一为 `self.cfg().field`（读锁只活一条语句，开销可以忽略）。
+    cfg: RwLock<Config>,
     /// 会话端口。
     session: Arc<dyn SessionPort>,
     /// 桌面端口。
@@ -1141,6 +1155,22 @@ impl fmt::Debug for Router {
 }
 
 impl Router {
+    /// 读配置（读锁；中毒时取回内层值）。
+    fn cfg(&self) -> std::sync::RwLockReadGuard<'_, Config> {
+        self.cfg
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// 运行期替换配置（设置页保存后立刻生效）。
+    pub fn update_config(&self, cfg: Config) {
+        *self
+            .cfg
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = cfg;
+        rdebug!("router.config_updated");
+    }
+
     /// 用配置与四个外部端口构造（时钟默认 SystemClock、键位表默认惰性构造）。
     pub fn new(
         cfg: Config,
@@ -1157,7 +1187,7 @@ impl Router {
         };
         Self {
             inner: Mutex::new(Inner::new(&cfg, None)),
-            cfg,
+            cfg: RwLock::new(cfg),
             session,
             desktop,
             mask,
@@ -1412,7 +1442,7 @@ impl Router {
         }
         self.stop_flag.clear();
         self.register_session_callbacks();
-        let auto_connect = self.cfg.device.auto_connect;
+        let auto_connect = self.cfg().device.auto_connect;
         let mut events: Vec<RouterEvent> = Vec::new();
         {
             let mut inner = self.lock_inner();
@@ -2048,7 +2078,7 @@ impl Router {
         };
         inner.arm_segment = Some(chosen);
         inner.arm_monitor = Some(monitor);
-        inner.arm_deadline = self.clock.now() + self.cfg.motion.arm_window_ms.max(0) as f64 / 1000.0;
+        inner.arm_deadline = self.clock.now() + self.cfg().motion.arm_window_ms.max(0) as f64 / 1000.0;
         inner.arm_accum = 0.0;
         inner.manual = false;
         if self.change_state(inner, events, State::Arming, "arm") {
@@ -2080,7 +2110,7 @@ impl Router {
         };
         let now = self.clock.now();
         if now > inner.arm_deadline {
-            let arm_px = self.cfg.motion.arm_px;
+            let arm_px = self.cfg().motion.arm_px;
             let slow_px = (C::ARM_SLOW_PX as i64).min((arm_px / 2).max(1));
             if inner.arm_accum >= slow_px as f64 {
                 inner.arm_accum = 0.0;
@@ -2122,7 +2152,7 @@ impl Router {
             return Ok(());
         }
         inner.arm_accum += f64::from(ev.dx.abs() + ev.dy.abs());
-        if inner.arm_accum >= self.cfg.motion.arm_px.max(1) as f64 {
+        if inner.arm_accum >= self.cfg().motion.arm_px.max(1) as f64 {
             inner.arm_accum = 0.0;
             return self.enter_captured(inner, events, "arm");
         }
@@ -2150,7 +2180,7 @@ impl Router {
 
     /// 命中当前光标位置的外轮廓边段（Python _segments_at）。
     fn segments_at(&self, x: i32, y: i32) -> Vec<EdgeSegment> {
-        let band = self.cfg.motion.edge_band_px.max(0);
+        let band = self.cfg().motion.edge_band_px.max(0);
         self.desktop.segments_at(x, y, band as i32)
     }
 
@@ -2189,7 +2219,7 @@ impl Router {
 
     /// 配置里的吸附边（解析失败返回 None）。
     fn config_edge_opt(&self) -> Option<Edge> {
-        self.cfg.placement.edge.parse::<Edge>().ok()
+        self.cfg().placement.edge.parse::<Edge>().ok()
     }
 
     /// 配置里的吸附边（解析失败回退 RIGHT，对应 Python _config_edge）。
@@ -2699,9 +2729,9 @@ impl Router {
             inner.neutral_until_release = false;
         }
         let buttons = inner.effective_buttons();
-        let gain = self.cfg.motion.gain;
+        let gain = self.cfg().motion.gain;
         let clamp = self
-            .cfg
+            .cfg()
             .motion
             .hid_clamp
             .clamp(1, i64::from(C::HID_CLAMP)) as i32;
@@ -2731,7 +2761,7 @@ impl Router {
             rdebug!("cap.hit edge={}", entry.as_str());
         }
         inner.overflow += f64::from(push);
-        let threshold = self.cfg.motion.exit_overflow_px.max(1) as f64;
+        let threshold = self.cfg().motion.exit_overflow_px.max(1) as f64;
         if inner.overflow >= threshold {
             rdebug!("cap.exit overflow={:.0}", inner.overflow);
             self.begin_return(inner, events, "exit", true);
@@ -2805,7 +2835,7 @@ impl Router {
             return;
         }
         let debounce_ms = if debounce {
-            self.cfg.motion.debounce_ms.max(0)
+            self.cfg().motion.debounce_ms.max(0)
         } else {
             0
         };
@@ -2979,7 +3009,7 @@ impl Router {
 
     /// 出帧频率（clamp 到 [125, 1000]，对应 Python _report_hz）。
     fn report_hz(&self) -> i32 {
-        self.cfg
+        self.cfg()
             .motion
             .report_hz
             .clamp(i64::from(C::MIN_REPORT_HZ), i64::from(C::MAX_REPORT_HZ)) as i32
@@ -3366,7 +3396,7 @@ impl Router {
                 return;
             }
         }
-        let speed = self.cfg.misc.restore_pointer_speed as i32;
+        let speed = self.cfg().misc.restore_pointer_speed as i32;
         if let Some(result) = self.session.set_pointer_speed(speed) {
             if let Err(err) = result {
                 eprintln!("[router] session.set_pointer_speed 失败 err={err}");
@@ -3434,7 +3464,7 @@ impl Router {
 
     /// 接收线程入口：按开关把平板文本转交给 GUI，绝不直接碰 GUI（对应 Python _on_session_clipboard）。
     pub fn on_session_clipboard(&self, text: &str) {
-        if !self.cfg.misc.clipboard_sync {
+        if !self.cfg().misc.clipboard_sync {
             return;
         }
         if self.lock_inner().stopped {
@@ -3451,7 +3481,7 @@ impl Router {
 
     /// 把 PC 剪贴板文本写进平板剪贴板（UTF-8，最多 4KB；对应 Python inject_clipboard）。
     pub fn inject_clipboard(&self, text: &str) -> bool {
-        if !self.cfg.misc.clipboard_sync || text.is_empty() {
+        if !self.cfg().misc.clipboard_sync || text.is_empty() {
             return false;
         }
         let payload = truncate_utf8(text, 4096);
@@ -3471,6 +3501,32 @@ impl Router {
                 );
                 false
             }
+        }
+    }
+
+    // -- 安卓导航键 --------------------------------------------------------
+
+    /// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量。
+    ///
+    /// 与快捷键、RPC 共用；不依赖接管状态与键盘转发开关 —— 只要平板连着就能用。
+    /// 发送都在 Router 锁外（PITFALLS 2.5）。
+    pub fn android_key(
+        &self,
+        action: crate::tablet::protocol::AndroidAction,
+    ) -> Result<(), RouterError> {
+        if self.session.facts().is_none() {
+            return Err(RouterError::device_offline("平板未连接"));
+        }
+        match self.session.android_action(action) {
+            Some(Ok(())) => {
+                self.note_write_success(None);
+                Ok(())
+            }
+            Some(Err(err)) => {
+                self.note_write_failure(&err);
+                Err(err)
+            }
+            None => Err(RouterError::device_offline("当前会话不支持安卓按键")),
         }
     }
 
@@ -3528,7 +3584,8 @@ impl Router {
         if inner.state != State::Captured {
             return (false, None);
         }
-        let keyboard = &self.cfg.keyboard;
+        let cfg = self.cfg();
+        let keyboard = &cfg.keyboard;
         if !keyboard.forward {
             return (false, None);
         }
@@ -3622,7 +3679,7 @@ impl Router {
             return inner.keymap.clone();
         }
         inner.keymap_loaded = true;
-        let names = self.cfg.keyboard.passthrough_keys.clone();
+        let names = self.cfg().keyboard.passthrough_keys.clone();
         let keymap: Arc<dyn KeymapPort> = Arc::new(BuiltinKeymap::new(names));
         inner.keymap = Some(Arc::clone(&keymap));
         Some(keymap)

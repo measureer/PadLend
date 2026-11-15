@@ -16,7 +16,7 @@ const LogsPage = lazy(() => import('./features/logs/LogsPage').then((m) => ({ de
 const AddDeviceDialog = lazy(() => import('./features/devices/AddDeviceDialog').then((m) => ({ default: m.AddDeviceDialog })));
 const SetupWizard = lazy(() => import('./features/dialogs/SetupWizard').then((m) => ({ default: m.SetupWizard })));
 const DiagnosticsDialog = lazy(() => import('./features/dialogs/DiagnosticsDialog').then((m) => ({ default: m.DiagnosticsDialog })));
-const AboutDialog = lazy(() => import('./features/dialogs/AboutDialog').then((m) => ({ default: m.AboutDialog })));
+const AboutPage = lazy(() => import('./features/about/AboutPage').then((m) => ({ default: m.AboutPage })));
 const UpdateDialog = lazy(() => import('./features/dialogs/UpdateDialog').then((m) => ({ default: m.UpdateDialog })));
 
 function PageFallback() {
@@ -29,6 +29,7 @@ function CurrentPage() {
     case 'layout': return <LayoutPage />;
     case 'settings': return <SettingsPage />;
     case 'logs': return <LogsPage />;
+    case 'about': return <AboutPage />;
     default: return <DevicesPage />;
   }
 }
@@ -41,7 +42,6 @@ function DialogHost() {
       {dialog === 'addDevice' && <AddDeviceDialog />}
       {dialog === 'wizard' && <SetupWizard />}
       {dialog === 'diagnostics' && <DiagnosticsDialog />}
-      {dialog === 'about' && <AboutDialog />}
       {dialog === 'update' && <UpdateDialog />}
     </Suspense>
   );

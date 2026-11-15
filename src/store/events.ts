@@ -27,7 +27,8 @@ async function handleTrayAction(action: string): Promise<void> {
       await actions.openPath('logs');
       break;
     case 'about':
-      s().openDialog('about');
+      // 1.7.7 起「关于」是页面而不是对话框：切页即可，窗口已经在放出来之前唤到前台。
+      s().setPage('about');
       break;
     case 'run-diagnostics':
       s().openDialog('diagnostics');

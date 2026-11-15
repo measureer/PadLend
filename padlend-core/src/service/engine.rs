@@ -28,7 +28,8 @@ use crate::tablet::locator;
 use crate::tablet::session::{SessionBuilder, TabletSession};
 use crate::tablet::simulated::{SimulatedAdb, SimulatedSession};
 use crate::win::desktop::DesktopMap;
-use crate::win::hotkeys::HotkeyManager;
+use crate::tablet::protocol::AndroidAction;
+use crate::win::hotkeys::{parse_combo, HotkeyAction, HotkeyBinding, HotkeyHandler, HotkeyManager};
 use crate::win::keyboard_hook::KeyboardHook;
 use crate::win::mask::MaskConfig;
 
@@ -479,40 +480,163 @@ impl Engine {
         }
     }
 
-    /// 注册全局热键（Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停）。
+    /// 注册全局快捷键（按配置：接管 / 急停 + 安卓导航键）。
     ///
     /// Python 的 PadLendService._start_hotkeys 在启动时注册它们；Rust 服务最初漏了这一步，
-    /// README 里写的热键整个不可用。注册失败只记日志，不影响接管。
+    /// README 里写的热键整个不可用。1.7.7 起绑定表来自配置，**保存后重装一遍立刻生效**
+    /// （旧的先 drop 掉，Drop 里会 UnregisterHotKey）。注册失败只记日志，不影响接管。
     fn install_hotkeys(self: &Arc<Self>) {
+        // 先卸掉上一套：设置页改了快捷键要立刻生效，不能留着旧组合键占着系统。
+        *lock(&self.hotkeys) = None;
         if self.simulate || self.no_hooks {
             return;
         }
-        let toggle_weak = Arc::downgrade(self);
-        let panic_weak = Arc::downgrade(self);
-        let mut hotkeys = HotkeyManager::new(
-            move || {
-                if let Some(engine) = toggle_weak.upgrade() {
-                    super::api::engine_toggle(&engine);
+        let cfg = self.config_clone();
+        let mut bindings = Vec::new();
+        let mut handlers: Vec<(i32, HotkeyHandler)> = Vec::new();
+        for action in HotkeyAction::ALL {
+            let combo = action.combo(&cfg.hotkeys).to_string();
+            match parse_combo(&combo) {
+                Ok((modifiers, vk)) => {
+                    bindings.push(HotkeyBinding {
+                        id: action.id(),
+                        modifiers,
+                        vk,
+                    });
+                    let weak = Arc::downgrade(self);
+                    handlers.push((
+                        action.id(),
+                        Box::new(move || {
+                            if let Some(engine) = weak.upgrade() {
+                                engine.fire_hotkey(action);
+                            }
+                        }),
+                    ));
                 }
-            },
-            move || {
-                if let Some(engine) = panic_weak.upgrade() {
-                    super::api::engine_panic(&engine);
+                Err(err) => {
+                    eprintln!(
+                        "[engine] 快捷键 {:?} = {combo:?} 无效：{err}",
+                        action.config_key()
+                    );
+                    self.emit_log(
+                        "HOTKEY",
+                        format!("快捷键「{}」无效（{combo}）：{err}", action.label()),
+                    );
                 }
-            },
-        );
+            }
+        }
+        if bindings.is_empty() {
+            self.emit_log("HOTKEY", "没有可用的全局快捷键（配置全部无效）");
+            return;
+        }
+        let mut hotkeys = HotkeyManager::new(bindings, handlers);
         match hotkeys.start() {
             Ok(()) => {
                 let ids = hotkeys.registered();
-                eprintln!("[engine] 全局热键已注册（id={ids:?}）");
-                self.emit_log("HOTKEY", format!("全局热键已注册：Ctrl+Alt+S 切换接管、Ctrl+Alt+Q 急停（id={ids:?}）"));
+                eprintln!("[engine] 全局快捷键已注册（id={ids:?}）");
+                let summary = HotkeyAction::ALL
+                    .iter()
+                    .filter(|action| ids.contains(&action.id()))
+                    .map(|action| format!("{}=>{}", action.label(), action.combo(&cfg.hotkeys)))
+                    .collect::<Vec<_>>()
+                    .join("，");
+                self.emit_log("HOTKEY", format!("全局快捷键已注册：{summary}"));
+                // 被别的程序占用的组合键不会出现在 summary 里：单独报一条，
+                // 否则用户只会在设置页看到「能改但不生效」的快捷键（PITFALLS 17.1）。
+                let missing: Vec<String> = HotkeyAction::ALL
+                    .iter()
+                    .filter(|action| !ids.contains(&action.id()))
+                    .map(|action| format!("{}（{}）", action.label(), action.combo(&cfg.hotkeys)))
+                    .collect();
+                if !missing.is_empty() {
+                    eprintln!("[engine] 快捷键注册失败：{}", missing.join("、"));
+                    self.emit_log(
+                        "HOTKEY",
+                        format!(
+                            "快捷键未注册：{}。可能已被其他程序占用，换一个组合键再试",
+                            missing.join("、")
+                        ),
+                    );
+                }
                 *lock(&self.hotkeys) = Some(hotkeys);
             }
             Err(err) => {
-                eprintln!("[engine] 全局热键不可用：{err}");
-                self.emit_log("HOTKEY", format!("全局热键不可用：{err}"));
+                eprintln!("[engine] 全局快捷键不可用：{err}");
+                self.emit_log("HOTKEY", format!("全局快捷键不可用：{err}"));
             }
         }
+    }
+
+    /// 热键线程上的分发：保命键走引擎动作，其余是「操作平板」。
+    ///
+    /// 回调**必须非阻塞**（PITFALLS 2.5）：这里只做一次状态切换 / 一次入队。
+    fn fire_hotkey(self: &Arc<Self>, action: HotkeyAction) {
+        match action {
+            HotkeyAction::Toggle => {
+                super::api::engine_toggle(self);
+            }
+            HotkeyAction::Panic => {
+                super::api::engine_panic(self);
+            }
+            _ => {
+                self.android_key(action);
+            }
+        }
+    }
+
+    /// 快捷键 → 安卓动作（两者用同一份名字，避免出现两套叫法）。
+    fn android_action_of(action: HotkeyAction) -> Option<AndroidAction> {
+        match action {
+            HotkeyAction::Back => Some(AndroidAction::Back),
+            HotkeyAction::Home => Some(AndroidAction::Home),
+            HotkeyAction::Recents => Some(AndroidAction::Recents),
+            HotkeyAction::Notifications => Some(AndroidAction::Notifications),
+            HotkeyAction::Power => Some(AndroidAction::Power),
+            HotkeyAction::VolumeUp => Some(AndroidAction::VolumeUp),
+            HotkeyAction::VolumeDown => Some(AndroidAction::VolumeDown),
+            HotkeyAction::Toggle | HotkeyAction::Panic => None,
+        }
+    }
+
+    /// 操作平板（快捷键与 RPC 共用）；返回是否成功。
+    pub fn android_key(&self, action: HotkeyAction) -> bool {
+        let Some(android) = Self::android_action_of(action) else {
+            return false;
+        };
+        self.press_android(android)
+    }
+
+    /// 直接执行一个安卓动作（`engine.android_key` RPC 的入口）。
+    pub fn press_android(&self, action: AndroidAction) -> bool {
+        let Some(router) = self.router() else {
+            self.emit_log("KEY", "引擎未启动，无法操作平板");
+            return false;
+        };
+        match router.android_key(action) {
+            Ok(()) => {
+                self.emit_log("KEY", format!("平板：{}", action.label()));
+                true
+            }
+            Err(err) => {
+                self.emit_log("KEY", format!("平板{}失败：{}", action.label(), err.detail()));
+                false
+            }
+        }
+    }
+
+    /// 配置保存后立刻生效：路由配置、会话参数与全局快捷键。
+    ///
+    /// 设置页此前改了鼠标参数/键盘开关要重连才生效（Router 拿的是构造期快照），
+    /// 1.7.7 起 Router 的配置可运行期替换，这里一处推给所有组件。
+    pub fn apply_live_config(self: &Arc<Self>) {
+        let cfg = self.config_clone();
+        if let Some(router) = self.router() {
+            router.update_config(cfg.clone());
+        }
+        if let Some(session) = self.session_port() {
+            session.sync_config(&cfg);
+        }
+        self.install_hotkeys();
     }
 
     fn install_callbacks(self: &Arc<Self>, router: &Arc<Router>) {

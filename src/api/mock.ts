@@ -55,7 +55,17 @@ export function defaultConfig(): Config {
       layout: 'us',
       passthrough_keys: ['VK_LWIN', 'VK_RWIN'],
     },
-    hotkeys: { toggle: 'Ctrl+Alt+S', panic: 'Ctrl+Alt+Q' },
+    hotkeys: {
+    toggle: 'Ctrl+Alt+S',
+    panic: 'Ctrl+Alt+Q',
+    back: 'Ctrl+Alt+B',
+    home: 'Ctrl+Alt+H',
+    recents: 'Ctrl+Alt+R',
+    notifications: 'Ctrl+Alt+N',
+    power: 'Ctrl+Alt+P',
+    volume_up: 'Ctrl+Alt+PageUp',
+    volume_down: 'Ctrl+Alt+PageDown',
+  },
     ui: {
       language: 'zh_CN',
       theme: 'dark',
@@ -456,7 +466,7 @@ export class MockBackend {
   async openUrl(): Promise<void> {}
   async checkUpdate(): Promise<{ tag: string; release: unknown }> {
     // 浏览器预览：假装 GitHub 上最新就是当前版本，避免走真网络。
-    return { tag: 'v1.7.6', release: null };
+    return { tag: 'v1.7.7', release: null };
   }
   async setCloseToTray(): Promise<void> {}
   async setTrayState(): Promise<void> {}

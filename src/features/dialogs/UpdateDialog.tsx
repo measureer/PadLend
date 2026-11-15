@@ -53,7 +53,7 @@ export function UpdateDialog() {
           <div className="muted"><span className="spinner" /> 正在读取 GitHub Releases…</div>
         )}
         {!checking && error && (
-          <div style={{ color: 'var(--danger)' }}>{error}</div>
+          <div style={{ color: 'var(--err)' }}>{error}</div>
         )}
         {!checking && result && (
           result.newer ? (

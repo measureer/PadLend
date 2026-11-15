@@ -888,6 +888,14 @@ impl TabletSession {
         self.core.send_android_keycode(keycode, down)
     }
 
+    /// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量（快捷键与 RPC 共用）。
+    pub fn android_action(
+        &self,
+        action: crate::tablet::protocol::AndroidAction,
+    ) -> Result<(), SessionError> {
+        self.core.android_action(action)
+    }
+
     /// 直接发一个 VK（等价 SessionPort 默认实现：VK 当 usage 用）。
     pub fn send_vk(&self, vk: i32) -> Result<(), SessionError> {
         let usage = vk.clamp(0, 255) as u8;
@@ -1080,6 +1088,13 @@ impl SessionPort for TabletSession {
 
     fn send_keycode(&self, vk: i32) -> Result<(), RouterError> {
         TabletSession::send_vk(self, vk).map_err(|error| error.to_router())
+    }
+
+    fn android_action(
+        &self,
+        action: crate::tablet::protocol::AndroidAction,
+    ) -> Option<Result<(), RouterError>> {
+        Some(TabletSession::android_action(self, action).map_err(|error| error.to_router()))
     }
 
     fn inject_text(&self, text: &str) -> Result<(), RouterError> {
@@ -2934,6 +2949,31 @@ impl SessionCore {
         let payload = crate::tablet::protocol::inject_keycode(action, keycode, 0, 0)
             .map_err(|error| SessionError::Unexpected(format!("keycode 编码失败: {error}")))?;
         self.enqueue(payload);
+        Ok(())
+    }
+
+    /// 操作平板：后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量。
+    ///
+    /// 按键走 INJECT_KEYCODE 的 DOWN+UP 对；通知栏走 scrcpy 的 EXPAND_NOTIFICATION_PANEL。
+    /// 都不经过键盘转发，所以「转发按键到平板」关掉时快捷键仍然可用。
+    fn android_action(
+        &self,
+        action: crate::tablet::protocol::AndroidAction,
+    ) -> Result<(), SessionError> {
+        self.ensure_connected()?;
+        use crate::tablet::protocol as p;
+        let payloads: Vec<Vec<u8>> = match action.keycode() {
+            Some(keycode) => vec![
+                p::inject_keycode(p::ACTION_DOWN, keycode, 0, 0)
+                    .map_err(|error| SessionError::Unexpected(format!("keycode 编码失败: {error}")))?,
+                p::inject_keycode(p::ACTION_UP, keycode, 0, 0)
+                    .map_err(|error| SessionError::Unexpected(format!("keycode 编码失败: {error}")))?,
+            ],
+            None => vec![p::expand_notification_panel()],
+        };
+        for payload in payloads {
+            self.enqueue(payload);
+        }
         Ok(())
     }
 

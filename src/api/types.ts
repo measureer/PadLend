@@ -4,7 +4,7 @@ export type Edge = 'left' | 'right' | 'top' | 'bottom';
 export type Align = 'proportional' | 'center' | 'one_to_one';
 export type Orientation = 'landscape' | 'portrait';
 export type Theme = 'dark' | 'light';
-export type PageId = 'devices' | 'layout' | 'settings' | 'logs';
+export type PageId = 'devices' | 'layout' | 'settings' | 'logs' | 'about';
 export type AppState =
   | ''
   | 'disconnected'
@@ -146,7 +146,17 @@ export interface Config {
     layout: string;
     passthrough_keys: string[];
   };
-  hotkeys: { toggle: string; panic: string };
+  hotkeys: {
+    toggle: string;
+    panic: string;
+    back: string;
+    home: string;
+    recents: string;
+    notifications: string;
+    power: string;
+    volume_up: string;
+    volume_down: string;
+  };
   ui: {
     language: string;
     theme: Theme;
@@ -196,7 +206,7 @@ export interface SystemPaths {
   appName: string;
 }
 
-export type DialogId = 'about' | 'diagnostics' | 'wizard' | 'addDevice' | 'update' | null;
+export type DialogId = 'diagnostics' | 'wizard' | 'addDevice' | 'update' | null;
 
 export interface ToastMessage {
   id: number;

@@ -20,6 +20,9 @@ export interface FieldDef {
   format?: (value: number) => string;
   options?: { value: string; label: string }[];
   placeholder?: string;
+  /** 生效方式：live = 保存即生效；reconnect = 下次连接平板生效；restart = 重启 PadLend 生效。
+   *  这是引擎真实行为，不是文案：引擎只在连接/启动时读这几项，界面上必须写清楚。 */
+  applies?: 'live' | 'reconnect' | 'restart';
 }
 
 export interface SettingGroup {
@@ -101,7 +104,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
     id: 'hotkeys',
     title: '快捷键',
     icon: 'bolt',
-    description: '全局生效的保命组合键',
+    description: '系统级全局热键，窗口不在前台也有效',
     column: 'main',
     fields: [
       {
@@ -115,6 +118,43 @@ export const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
+    id: 'tablet_keys',
+    title: '平板快捷键',
+    icon: 'tablet',
+    description: '不用接管也能操作平板，组合键可逐个改',
+    column: 'main',
+    fields: [
+      {
+        id: 'back', section: 'hotkeys', key: 'back', label: '后退', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+B', hint: '给平板发一次「返回」键，等于平板上划手势的返回。',
+      },
+      {
+        id: 'home', section: 'hotkeys', key: 'home', label: '返回主页', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+H', hint: '回到平板桌面。',
+      },
+      {
+        id: 'recents', section: 'hotkeys', key: 'recents', label: '最近任务', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+R', hint: '打开平板的最近任务（多任务）界面。',
+      },
+      {
+        id: 'notifications', section: 'hotkeys', key: 'notifications', label: '通知栏', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+N', hint: '展开平板的通知面板；与下拉状态栏效果相同。',
+      },
+      {
+        id: 'power', section: 'hotkeys', key: 'power', label: '电源键', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+P', hint: '模拟平板的电源键（锁屏 / 亮屏）。',
+      },
+      {
+        id: 'volume_up', section: 'hotkeys', key: 'volume_up', label: '音量 +', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+PageUp', hint: '调高平板媒体音量。',
+      },
+      {
+        id: 'volume_down', section: 'hotkeys', key: 'volume_down', label: '音量 -', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+PageDown', hint: '调低平板媒体音量。',
+      },
+    ],
+  },
+  {
     id: 'misc',
     title: '杂项',
     icon: 'sliders',
@@ -123,7 +163,8 @@ export const SETTING_GROUPS: SettingGroup[] = [
     fields: [
       {
         id: 'auto_connect', section: 'device', key: 'auto_connect', label: '打开软件自动连接上次连接的设备', kind: 'toggle',
-        hint: '启动后自动连上次用过的那台设备（地址存在配置里）。关闭后停在设备页，需要手动点「连接此设备」。保存后下次启动生效。',
+        applies: 'restart',
+        hint: '启动后自动连上次用过的那台设备（地址存在配置里）。关闭后停在设备页，需要手动点「连接此设备」。引擎只在启动时读这一项，保存后要重启 PadLend。',
       },
       {
         id: 'tray_notifications', section: 'ui', key: 'tray_notifications', label: '托盘气泡通知', kind: 'toggle',
@@ -139,15 +180,22 @@ export const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'keep_screen_on', section: 'misc', key: 'keep_screen_on', label: '保持平板亮屏', kind: 'toggle',
-        hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。不会修改开发者选项里的「保持唤醒状态」。',
+        applies: 'reconnect',
+        hint: '开启后会在连接期间临时把平板的系统「熄屏时间」调到 5 小时（原本更长则保持不变），断开或退出时还原；PadLend 异常退出时下次启动会补还原。不需要让平板常亮时可以关闭。引擎在连接时设置这一项，改完要断开再连一次。不会修改开发者选项里的「保持唤醒状态」。',
       },
       {
         id: 'forward_audio', section: 'misc', key: 'forward_audio', label: '转发平板声音', kind: 'toggle',
-        hint: '把平板正在播放的声音实时转到电脑，平板自身静音。需要 Android 11 或更高版本；首次开启可能要在平板上确认。修改后重新连接平板才生效。',
+        applies: 'reconnect',
+        hint: '把平板正在播放的声音实时转到电脑，平板自身静音。需要 Android 11 或更高版本；首次开启可能要在平板上确认。音频通道在连接时建立，改完要断开再连一次。',
       },
     ],
   },
 ];
+
+/** 配置里全部快捷键字段，顺序与 HotkeyAction 一致（改这里要同步引擎的 HotkeyCfg）。 */
+export const HOTKEY_KEYS = [
+  'toggle', 'panic', 'back', 'home', 'recents', 'notifications', 'power', 'volume_up', 'volume_down',
+] as const;
 
 type SectionValue = Record<string, string | number | boolean | string[]>;
 
@@ -199,8 +247,9 @@ export function validateConfig(config: Config): string[] {
   if (motion.boundary_inset_px < 0) problems.push('motion.boundary_inset_px 不能为负');
   if (!keyboard.layout.trim()) problems.push('keyboard.layout 不能为空');
   if (!Array.isArray(keyboard.passthrough_keys)) problems.push('keyboard.passthrough_keys 必须是列表');
-  if (!hotkeys.toggle.trim()) problems.push('hotkeys.toggle 不能为空');
-  if (!hotkeys.panic.trim()) problems.push('hotkeys.panic 不能为空');
+  for (const key of HOTKEY_KEYS) {
+    if (!String(hotkeys[key] ?? '').trim()) problems.push(`hotkeys.${key} 不能为空`);
+  }
   return problems;
 }
 
