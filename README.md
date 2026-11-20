@@ -77,7 +77,7 @@ Get-FileHash .\PadLend-2.2.0-win64.zip -Algorithm SHA256
 | `Ctrl+,` | 打开设置页 |
 | `Ctrl+0` | 布局画布复位视野 |
 
-热键可以在设置里改，对应 `hotkeys.toggle` 和 `hotkeys.panic`。
+热键可以在设置里改，对应 `hotkeys` 下的 9 个组合键：`toggle`、`panic` 与平板的后退 / 主页 / 最近任务 / 通知栏 / 电源 / 音量（`back` / `home` / `recents` / `notifications` / `power` / `volume_up` / `volume_down`），默认组合见下方配置示例。
 
 ### 状态颜色
 
@@ -102,8 +102,8 @@ device:
   prefer_usb: true
   auto_connect: true      # false = 启动后不自动连接，在设备页手动连接
   server_port: 1234       # 1024–65535
-  known: []               # 已停用：仅首次升级时迁移到 devices.json
-  macs: {}                # 已停用：仅首次升级时迁移到 devices.json
+  known: []               # 已停用：仅作迁移源；非空时每次启动幂等并入 devices.json
+  macs: {}                # 已停用：仅作迁移源；非空时每次启动幂等并入 devices.json
 placement:
   monitor: ""             # 空 = 主屏
   edge: right             # left / right / top / bottom
@@ -116,10 +116,10 @@ layouts:
   devices: {}             # 每台设备 × 横/竖屏的布局，保存布局时自动维护
 motion:
   gain: 1.0               # 0.25–3.0
-  report_hz: 1000         # 125 / 250 / 500 / 1000
+  report_hz: 125          # 125 / 250 / 500 / 1000
   hid_clamp: 127          # 1–127，单次 HID 位移上限
   entry_margin_px: 2
-  exit_overflow_px: 80    # 交还所需的外推距离
+  exit_overflow_px: 120   # 交还所需的外推距离
   debounce_ms: 250
   arm_px: 10
   arm_window_ms: 80
@@ -129,10 +129,17 @@ keyboard:
   forward: true
   suppress_pc: true
   layout: us
-  passthrough_keys: []    # 1.2.0 起接管期 Win 键由 Router 强制吞掉；这里只配其它放行键
+  passthrough_keys: []    # 默认 [VK_LWIN, VK_RWIN]；1.2.0 起接管期 Win 键由 Router 强制吞掉；这里只配其它放行键
 hotkeys:
   toggle: "Ctrl+Alt+S"
   panic: "Ctrl+Alt+Q"
+  back: "Ctrl+Alt+B"                # 平板：后退
+  home: "Ctrl+Alt+H"                # 平板：主页
+  recents: "Ctrl+Alt+R"             # 平板：最近任务
+  notifications: "Ctrl+Alt+N"       # 平板：展开通知栏
+  power: "Ctrl+Alt+P"               # 平板：电源键（开关屏）
+  volume_up: "Ctrl+Alt+PageUp"      # 平板：音量 +
+  volume_down: "Ctrl+Alt+PageDown"  # 平板：音量 -
 ui:
   language: zh_CN         # 预留字段，目前仅中文界面
   theme: dark             # dark / light
@@ -140,7 +147,7 @@ ui:
   close_to_tray: false    # 关闭主窗时收进托盘继续运行
 misc:
   clipboard_sync: true
-  keep_screen_on: true
+  keep_screen_on: false
   forward_audio: false    # 1.4.0：需重新连接后生效；失败会自动退回仅控制通道
   restore_pointer_speed: -3
 ```
@@ -168,7 +175,7 @@ YAML 损坏、字段越界或版本过新时，程序会把原文件备份成 `c
 | 设备页显示 unauthorized | 在平板上点「允许 USB 调试」，勾选「始终允许」，再刷新 |
 | 无线 adb 连不上 | 确认电脑能访问平板的调试端口；跨网/VPN 直接填 IP、主机名或 `[IPv6]:端口`，mDNS 自动发现通常只同一局域网；重新配对 |
 | 边缘手势被平板抢走 | 调大 `motion.boundary_inset_px`（8–16） |
-| 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 80）或 `debounce_ms` |
+| 交还太灵敏或太迟钝 | 调 `motion.exit_overflow_px`（默认 120）或 `debounce_ms` |
 
 更完整的排障步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)；开发期踩坑与失效安全记录见 [docs/PITFALLS.md](docs/PITFALLS.md)。
 
@@ -202,7 +209,7 @@ PadLend/
 
 ## 从源码构建
 
-依赖：Node 22+、Rust 1.82+（引擎 `rust-version`；外壳为 1.77.2，构建整个仓库按 1.82 装）、MSVC 工具链 + Windows SDK、WebView2 运行时。
+依赖：Node 22+、Rust 1.82+（引擎与外壳的 `rust-version` 均为 1.82）、MSVC 工具链 + Windows SDK、WebView2 运行时。
 
 ```powershell
 npm ci
@@ -226,10 +233,12 @@ powershell -ExecutionPolicy Bypass -File tools\release.ps1
 
 `vendor/scrcpy-server-v5.0.1.jar` 和 `vendor/adb/platform-tools/` 随仓库提供，校验和见 `vendor/SHA256SUMS`。adb 的查找顺序是：`PADLEND_ADB` → 内置 `vendor/adb/platform-tools/` → PATH → 常见 SDK 目录。
 
+排障时可设 `PADLEND_ROUTER_DEBUG=1`（非 0 值即开启）：引擎会输出路由决策与 Raw Input 采样诊断日志，详见 [docs/PITFALLS.md](docs/PITFALLS.md)。
+
 ## 开发与验收
 
 ```powershell
-cargo test --manifest-path padlend-core\Cargo.toml   # 引擎单测 + fixture 回放（532 例）
+cargo test --manifest-path padlend-core\Cargo.toml   # 引擎单测 + fixture 回放（559 例）
 cargo test --manifest-path src-tauri\Cargo.toml      # 外壳单测
 npx vitest run                                      # 前端单元与交互测试
 npm run build                                       # tsc --noEmit + vite build

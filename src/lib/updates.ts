@@ -1,6 +1,11 @@
-/** 检查更新：从 GitHub Releases 读最新发布，与本机版本比较。
+/** 检查更新的前端部分：从 GitHub Releases 读最新发布，与本机版本比较。
  *
- * 主路径走 `/releases/latest` 的**网页重定向**（不消耗 API 配额，重定向后的 URL 就是 tag），
+ * 外壳内的主路径是 Rust 的 check_update 命令（WinHTTP，走系统代理、不受浏览器 CORS 限制），
+ * Rust 拿回 tag / release JSON 后由本模块的 resultFromTag 组装结果；本文件的 fetch 流程
+ * （findLatestTag / fetchLatestRelease）只用于浏览器预览，以及外壳命令失败时的兜底
+ * （分流逻辑见 actions.ts 的 checkUpdates）。
+ *
+ * fetch 主路径走 `/releases/latest` 的**网页重定向**（不消耗 API 配额，重定向后的 URL 就是 tag），
  * 再尽量用 REST API 补充发布说明与资产列表；API 401/403/限流都只是「拿不到详情」，不影响判断版本。
  * （实测 api.github.com 在共享出口 IP 上很容易 403 rate limit，只用 API 会经常查不了。）
  *
@@ -8,7 +13,9 @@
  */
 
 export const RELEASES_REPO = 'measureer/PadLend';
-export const RELEASES_PAGE = `https://github.com/${RELEASES_REPO}/releases`;
+/** 仓库主页（关于页展示与复制共用；由 RELEASES_REPO 派生，不再另写一份硬编码）。 */
+export const REPO_URL = `https://github.com/${RELEASES_REPO}`;
+export const RELEASES_PAGE = `${REPO_URL}/releases`;
 export const LATEST_PAGE = `${RELEASES_PAGE}/latest`;
 export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`;
 

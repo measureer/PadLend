@@ -6,9 +6,9 @@ export type IconName =
   | 'devices' | 'layout' | 'settings' | 'logs' | 'refresh' | 'add' | 'sun' | 'moon'
   | 'dots' | 'gear' | 'link' | 'unlink' | 'close' | 'wifi' | 'save' | 'fit'
   | 'pointer' | 'keyboard' | 'bolt' | 'sliders' | 'check' | 'alert' | 'info'
-  | 'copy' | 'folder' | 'download' | 'shield' | 'tablet' | 'monitor' | 'trash'
+  | 'copy' | 'folder' | 'download' | 'shield' | 'tablet' | 'trash'
   | 'minimize' | 'maximize' | 'power' | 'chevronLeft' | 'chevronRight' | 'play'
-  | 'clipboard' | 'search' | 'sparkle';
+  | 'search' | 'sparkle';
 
 const PATHS: Record<IconName, string> = {
   devices: 'M4 5h11v11H4zM4 20h11M17 9h3v9h-3zM8 8h3',
@@ -39,7 +39,6 @@ const PATHS: Record<IconName, string> = {
   download: 'M12 3v12M7 11l5 5 5-5M4 20h16',
   shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4',
   tablet: 'M5 3h14v18H5zM10 18h4',
-  monitor: 'M3 5h18v12H3zM8 21h8M12 17v4',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6',
   minimize: 'M5 12h14',
   maximize: 'M5 5h14v14H5z',
@@ -47,7 +46,6 @@ const PATHS: Record<IconName, string> = {
   chevronLeft: 'M15 5l-7 7 7 7',
   chevronRight: 'M9 5l7 7-7 7',
   play: 'M8 5l11 7-11 7z',
-  clipboard: 'M9 4h6v3H9zM6 6h12v15H6zM9 11h6M9 15h4',
   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM17 17l4 4',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z',
 };

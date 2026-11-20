@@ -5,13 +5,12 @@
  */
 
 import { Icon } from '../../components/Icon';
+import { UpdateResultView } from '../../components/UpdateResult';
 import { Button, Card } from '../../components/ui';
 import { backend } from '../../api/client';
 import { checkUpdates, openPath, openUrl } from '../../lib/actions';
-import { formatReleaseDate, humanSize, RELEASES_PAGE } from '../../lib/updates';
+import { RELEASES_PAGE, REPO_URL } from '../../lib/updates';
 import { useAppStore } from '../../store/appStore';
-
-const REPO_URL = 'https://github.com/measureer/PadLend';
 
 /** 复制仓库地址：失败只提示，不阻塞页面。 */
 async function copyRepo(): Promise<void> {
@@ -71,19 +70,7 @@ export function AboutPage() {
               <div className="muted"><span className="spinner" /> 正在读取 GitHub Releases…</div>
             )}
             {!checking && error && <div style={{ color: 'var(--err)' }}>{error}</div>}
-            {!checking && result && (
-              result.newer ? (
-                <>
-                  <div>发现新版本：<strong>v{result.latest}</strong>{result.release.name ? `（${result.release.name}）` : ''}</div>
-                  <div className="muted">
-                    发布于 {formatReleaseDate(result.release.publishedAt) || '时间未知'}
-                    {installer ? ` · ${installer.name}${installer.size ? ` · ${humanSize(installer.size)}` : ''}` : ' · 该发布没有可直接下载的安装包'}
-                  </div>
-                </>
-              ) : (
-                <div>已是最新版本{checkedAt ? `（${checkedAt} 检查）` : ''}。</div>
-              )
-            )}
+            {!checking && result && <UpdateResultView result={result} checkedAt={checkedAt} />}
             {!checking && !result && !error && (
               <div className="muted">尚未检查；点下面的「检查更新」即可。</div>
             )}

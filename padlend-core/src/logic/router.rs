@@ -370,11 +370,6 @@ pub trait SessionPort: Send + Sync + fmt::Debug {
         None
     }
 
-    /// 设置 pointer_speed；None = 不支持。
-    fn set_pointer_speed(&self, _speed: i32) -> Option<Result<(), RouterError>> {
-        None
-    }
-
     /// 把系统光标移到绝对坐标；false = 不支持。
     fn set_cursor_pos(&self, _x: i32, _y: i32) -> bool {
         false
@@ -537,11 +532,6 @@ impl BuiltinKeymap {
             inner: Mutex::new(Keymap::with_passthrough(names)),
         }
     }
-
-    /// 把逻辑层事件转成键位表事件（两份同形结构，字段名一致）。
-    fn convert(event: &KeyEvent) -> crate::tablet::keymap::KeyEvent {
-        crate::tablet::keymap::KeyEvent::new(event.vk, event.scan, event.is_extended, event.down)
-    }
 }
 
 impl fmt::Debug for BuiltinKeymap {
@@ -552,14 +542,12 @@ impl fmt::Debug for BuiltinKeymap {
 
 impl KeymapPort for BuiltinKeymap {
     fn on_key(&self, event: &KeyEvent) -> Option<(u8, Vec<u8>)> {
-        let converted = Self::convert(event);
         let mut keymap = lock_mutex(&self.inner);
-        Some(keymap.on_key(&converted))
+        Some(keymap.on_key(event))
     }
 
     fn is_passthrough(&self, event: &KeyEvent) -> bool {
-        let converted = Self::convert(event);
-        lock_mutex(&self.inner).is_passthrough(&converted)
+        lock_mutex(&self.inner).is_passthrough(event)
     }
 
     fn reset(&self) {
@@ -710,7 +698,7 @@ impl CalibrationState {
 /// 换算链（DESIGN 6.4.1）：PC 物理像素位移 Δp --×gain--> HID 相对计数 c（clamp ±127）
 /// --×XScale--> 平板像素位移 Δx。关键不变量 I3：每次 feed 之后立刻 clamp。
 ///
-/// TODO(B2-M4)：tablet/cursor.rs 落地后本类型应迁出去复用，避免两份实现。
+/// （B2 迁移已结束：本类型留在 Router 内，全仓仅此一份实现，无迁移计划。）
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CursorEstimator {
     /// 平板宽（浮点，与 Python 的 self.W 一致）。
@@ -3789,7 +3777,6 @@ impl Router {
             }
         }
         if probe_ok {
-            self.restore_pointer_speed(inner);
             inner.adb_link_failures = 0;
             return;
         }
@@ -3803,33 +3790,6 @@ impl Router {
                 ErrorCode::SocketBroken,
                 &format!("adb 链路连续 {failures} 次无响应（平板可能已掉线）"),
             );
-        }
-    }
-
-    /// 恢复 pointer_speed（对应 Python _restore_pointer_speed）。
-    fn restore_pointer_speed(&self, inner: &Inner) {
-        if let Some(result) = self.session.ensure_pointer_speed() {
-            match result {
-                Ok(()) => return,
-                Err(err) => {
-                    // 2.0.4：会话已经报告失败（后台心跳线程那边没复查通过），这里
-                    // 别再补一条注定超时的 adb 写命令 —— 这条 fallback 原来跑在路由
-                    // 线程上，会再多堵 5s，正是「平板上指针卡一下」的一部分。
-                    eprintln!("[router] session.ensure_pointer_speed 失败 err={err}");
-                    return;
-                }
-            }
-        }
-        if let Some(facts) = inner.facts.as_ref() {
-            if facts.pointer_speed == 0 {
-                return;
-            }
-        }
-        let speed = self.cfg().misc.restore_pointer_speed as i32;
-        if let Some(result) = self.session.set_pointer_speed(speed) {
-            if let Err(err) = result {
-                eprintln!("[router] session.set_pointer_speed 失败 err={err}");
-            }
         }
     }
 
@@ -4504,7 +4464,6 @@ mod tests {
         mouse_reports: Mutex<Vec<(i32, i32, i32, i32)>>,
         key_reports: Mutex<Vec<(u8, Vec<u8>)>>,
         cursor_sets: Mutex<Vec<(i32, i32)>>,
-        pointer_speed_sets: Mutex<Vec<i32>>,
         clipboards: Mutex<Vec<String>>,
         start_calls: AtomicI32,
         stop_calls: AtomicI32,
@@ -4703,11 +4662,6 @@ mod tests {
                     "模拟 adb 链路失败",
                 )))
             }
-        }
-
-        fn set_pointer_speed(&self, speed: i32) -> Option<Result<(), RouterError>> {
-            lock_mutex(&self.pointer_speed_sets).push(speed);
-            Some(Ok(()))
         }
 
         fn set_cursor_pos(&self, x: i32, y: i32) -> bool {

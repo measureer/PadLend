@@ -1,4 +1,4 @@
-/** 前后端契约：与 service/serializers.py 一一对应，禁止在各组件里另造形状。 */
+/** 前后端契约：与 padlend-core/src/service/serializers.rs 一一对应，禁止在各组件里另造形状（历史：原 service/serializers.py）。 */
 
 export type Edge = 'left' | 'right' | 'top' | 'bottom';
 export type Align = 'proportional' | 'center' | 'one_to_one';
@@ -51,6 +51,8 @@ export interface Placement {
   edge: Edge;
   spanStart: number;
   spanEnd: number;
+  /** 边段像素长度；引擎 placement_dict 总是下发（serializers.rs），前端回传时被 placement_from_dict 忽略。 */
+  length: number;
   offset: number;
   align: Align;
   cornerPriority: Edge | null;

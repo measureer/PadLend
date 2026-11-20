@@ -6,7 +6,7 @@
 //! 事件 `{"event":"state","data":...}`，每行一个 JSON，UTF-8，\n 结尾。
 //!
 //! 子命令：
-//! * `--debug-raw`：与 `python main.py --debug-raw` 等价，用来做 M0 计数对拍；
+//! * `--debug-raw`：统计 Raw Input 事件计数（1.x 时代用于与 Python 版对拍）；
 //! * `--serve`（默认）：NDJSON RPC 服务，供 Tauri 外壳调用。
 
 use std::path::PathBuf;
@@ -44,7 +44,7 @@ fn parse_args() -> Result<Args, String> {
             "--help" | "-h" => {
                 println!(
                     "padlend-core {VERSION}\n\n\
-                     --debug-raw            统计 Raw Input 事件（对拍 python main.py --debug-raw）\n\
+                     --debug-raw            统计 Raw Input 事件\n\
                      --duration <秒>        运行时长，0=直到 Ctrl+C\n\
                      --json                 结束时输出一行 JSON 汇总\n\
                      --serve                NDJSON RPC 服务（默认）\n\
@@ -120,7 +120,7 @@ fn simulate_requested() -> bool {
     }
 }
 
-/// 等价于 `python main.py --debug-raw`：每秒打印一次计数，格式保持一致便于 diff。
+/// `--debug-raw` 主循环：每秒打印一次计数（格式沿用 1.x Python 版，便于历史输出 diff）。
 fn run_debug_raw(args: &Args) -> Result<(), String> {
     let source = win::rawinput::RawInputSource::start()?;
     if !args.json {

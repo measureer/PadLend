@@ -78,10 +78,6 @@ export function connectEvents(): () => void {
       s().setConfig(p.config, p.issues ?? []);
     }),
     backend.on('log', (payload) => s().appendLogs([payload as LogEntry])),
-    backend.on('log:batch', (payload) => {
-      const p = payload as { entries: LogEntry[] };
-      s().appendLogs(p.entries ?? []);
-    }),
     backend.on('clipboard', (payload) => {
       const p = payload as { text: string };
       void actions.noteTabletClipboard(p.text);
@@ -96,10 +92,6 @@ export function connectEvents(): () => void {
     backend.on('diagnostics:progress', (payload) => {
       const p = payload as { label: string };
       s().setDiagnostics({ progress: `${p.label} …` });
-    }),
-    backend.on('fatal', (payload) => {
-      const p = payload as { message: string };
-      s().pushToast(`业务服务异常：${p.message}`, 'err');
     }),
     backend.on('service:disconnected', () => {
       s().pushToast('业务服务已断开，请重启应用', 'err');

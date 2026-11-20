@@ -2,6 +2,52 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.2.1] — 2026-11-20
+
+### 修复
+
+- **单实例唤醒不还原最小化**：托盘/快捷方式二次启动时 `window.show()` 不还原最小化
+  状态，补 `unminimize()`（与托盘菜单动作一致）。
+- **`PADLEND_SERVICE_CMD` 与 `PADLEND_SIMULATE` 同设时 `--simulate` 丢失**：模拟判断
+  提升到 SERVICE_CMD 分支之前；SERVICE_CMD 解析支持双引号包裹的含空格路径。
+- **icon.ico 声明 256×256 的帧内嵌的其实是 512×512 PNG**（与 128x128@2x.png 逐字节相同）：
+  从 512 源重新导出，7 帧全部为真实尺寸。
+- **文档过时内容批量修正**：README 默认值 / 热键全集 / 构建要求、PITFALLS 遮罩归属、
+  TROUBLESHOOTING 排障指引、TAURI_MIGRATION 环境变量状态、bug_report 托盘菜单路径、
+  vendor README 重打包指引，全部对齐 2.x 现状。
+
+### 清理
+
+- 删除从未接线的 `win/single_instance.rs`（1280 行）及其互斥体常量：单实例由 Tauri
+  外壳负责，引擎里这组 API 全仓零调用。
+- 删除 `pointer_speed` 写路径死簇：`SessionPort::set_pointer_speed` 与三处实现、
+  路由 `restore_pointer_speed` 调用链——真实会话上 `set` 永远返回 `None`，该 fallback
+  从未真正写过设备（teardown 恢复走的是会话自己的读写路径，不受影响）。
+- 删除 `hotkeys` 里只写不读的 `stop` 标志与 `stopping()`；引擎 `service.stopped`
+  死事件（前端无监听）；`KeyEvent` 第二份同形定义（keymap 直接复用
+  `logic::events`，路由与引擎的手工字段转换一并删除）。
+- 删除 `constants.rs` 与 `uhid.rs` 重复的 HID 常量副本（含已分叉的
+  `KEYBOARD_KRO: u8`）、`raw_button_is_up` 及其常量（仅测试引用）。
+- 删除 `tests/fixtures` 中 42 个零引用 JSON 夹具：config 用例数据早已内联进
+  `config_cases.json` 索引、desktop 数据内联进测试；索引、对拍向量与路由场景基线保留。
+- 前端删除死代码：`log:batch` / `fatal` 事件订阅、4 个零引用 RPC 常量与 mock case、
+  `monitor` / `clipboard` 死图标、`parseLogLine`、tsconfig 的 `@/*` paths 与
+  `@types/node`（tsc 验证无 Node 类型缺失）。
+
+### 优化
+
+- **Raw Input 每事件堆分配改 thread_local 缓冲复用**；无按键 flag 的纯位移事件完全
+  跳过按键位图锁与位循环（位移事件占绝大多数）。
+- `DesktopCanvas` 吸附高亮改为 key 缓存 + 拓扑变化时失效，不再每帧全量重写 DOM；
+  `DevicesPage` busy 订阅拆分为扫描/连接两个按需订阅；`report_hz` 特判改数据驱动。
+- `release.ps1`：无条件 `npm ci`、缺 cargo 显式告警并退出、免安装 zip 补 jar 校验和。
+
+### 验证
+
+- 引擎 `cargo test`：559 passed / 10 ignored / 0 failed（较 2.2.0 少的 13 个用例来自
+  被删的 single_instance 模块测试）；新增 adb↔router 错误码一致性测试、methods 白名单
+  测试补 `devices.cancel`。
+- 外壳 `cargo test` 全绿；前端 `tsc --noEmit` 零错误、vitest 16 个文件 89 个测试通过。
 ## [2.2.0] — 2026-11-17
 
 ### 变更

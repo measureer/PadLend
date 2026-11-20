@@ -377,16 +377,6 @@ impl SessionPort for SimulatedSession {
         Some(Ok(()))
     }
 
-    fn set_pointer_speed(&self, speed: i32) -> Option<Result<(), RouterError>> {
-        Some(match self.started.lock().map(|guard| *guard).unwrap_or(false) {
-            true => {
-                let _ = speed;
-                Ok(())
-            }
-            false => Err(RouterError::device_offline("模拟会话未启动")),
-        })
-    }
-
     fn set_cursor_pos(&self, x: i32, y: i32) -> bool {
         if let Ok(mut guard) = self.cursor.lock() {
             *guard = (x, y);

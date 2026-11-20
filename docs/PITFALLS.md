@@ -9,7 +9,7 @@
 - 版本列写的是该行为**引入/定型**的版本。标注 1.2.0/1.2.1/1.3.0/1.4.0 的条目是这些版本的约定；若代码与本文不一致，以代码和 CHANGELOG 为准。
 - 行号基于 1.4.0 开发工作区，重构后请顺手更新；找不到行号时按函数名/类名搜索。
 - 代码与文档的 `文件:行` 默认相对**仓库根**；只有 Markdown 链接用同目录相对路径。
-- 「遮罩」默认指 Python sidecar 创建的 `PadLendCursorMaskWindow`，不是 Tauri 窗口。这个心智模型错了，后面所有判断都会错。
+- 「遮罩」默认指 Rust 引擎 padlend-core.exe 创建的 `PadLendCursorMaskWindow`（实现在 padlend-core/src/win/mask.rs），不是 Tauri 窗口。这个心智模型错了，后面所有判断都会错。
 
 **按症状速查**
 

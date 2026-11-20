@@ -10,8 +10,8 @@
 //!
 //! 本模块纯计算、import 无副作用（Python 侧只 import `logging`，Rust 侧不写日志）。
 //!
-//! 常量出处：Python 把它们放在 `constants.py`；`constants.rs` 目前还是占位，
-//! 所以 HID 报告布局与附录 A 的描述符先放在本模块，`constants.rs` 落地后应迁走。
+//! 常量出处：Python 把它们放在 `constants.py`；Rust 版以本模块为 HID 报告
+//! 布局与描述符常量的唯一家（constants.rs 曾有重复副本，2026-11 已删）。
 
 // ---------------------------------------------------------------------------
 // HID 报告布局（Python: constants.py 9.3 / 9.4）

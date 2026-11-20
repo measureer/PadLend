@@ -1,10 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
     PadLend 发布脚本：前端 → Rust 引擎 → Tauri 外壳 → NSIS 安装包 → 免安装 zip → SHA256。
 
 .DESCRIPTION
     1.7.0 起发版不再涉及 Python：不再打 PyInstaller sidecar，也不再依赖 .venv。
-    版本号以 src-tauri/tauri.conf.json 为唯一来源（安装器与 RPC ready 事件都用它）。
+    版本号四处一致由 release.yml 发版强检；本脚本以 src-tauri/tauri.conf.json
+    为准读取（安装器与 RPC ready 事件都用它）。
 
     dist/ 里旧的 PadLend-* 产物会先被清掉：之前 make_sha256 会把 1.1.x 遗留文件
     一起算进 SHA256SUMS.txt，导致校验和对应着一堆早已过期的安装包。
@@ -47,9 +48,9 @@ if (-not $Version) { Write-Fail "无法从 tauri.conf.json 读取 version" }
 Write-Step "版本：$Version"
 
 # ---- 1. 前端 -------------------------------------------------------------
-if (-not (Test-Path (Join-Path $Root "node_modules"))) {
-    Invoke-Checked { npm ci } "npm ci"
-}
+# 无条件 npm ci：node_modules 存在不代表依赖与 package-lock.json 同步，
+# 残留旧依赖会让本地发版悄悄用错版本（CI 每次都是干净安装）。
+Invoke-Checked { npm ci } "npm ci"
 Invoke-Checked { npm run build } "前端构建"
 if (-not (Test-Path (Join-Path $FrontendDist "index.html"))) {
     Write-Fail "frontend-dist\index.html 不存在"
@@ -69,8 +70,9 @@ if (-not $SkipTests) {
 
 # ---- 4. 外壳与安装器 -----------------------------------------------------
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Write-Step "本机没有 cargo，跳过 Tauri 外壳（CI 会构建并发布安装包）"
-    exit 0
+    # 发版不能静默缺件：以失败退出，避免误以为发版已完成（安装包并没有构建）。
+    Write-Warning "本机缺少 cargo，仅完成前端与引擎测试；外壳与安装包未构建"
+    exit 1
 }
 if ($NoBundle) {
     Invoke-Checked { npx tauri build --no-bundle } "tauri build"
@@ -120,6 +122,15 @@ if (Test-Path $jar) {
 $adbSrc = Join-Path $Root "vendor\adb\platform-tools"
 if (Test-Path $adbSrc) {
     Copy-Item $adbSrc (Join-Path $appDir "vendor\adb\platform-tools") -Recurse -Force
+}
+# 与 NSIS 版对齐（tauri.conf.json resources 同款清单）：带上 SHA256SUMS，
+# 引擎才能校验 jar 完整性（读不到时它只会静默跳过校验）；vendor\README.md
+# 记录 jar 来源与重打包说明，方便 zip 用户自查。
+if (Test-Path (Join-Path $appDir "vendor")) {
+    foreach ($name in @("SHA256SUMS", "README.md")) {
+        $src = Join-Path $Root "vendor\$name"
+        if (Test-Path $src) { Copy-Item $src (Join-Path $appDir "vendor\$name") -Force }
+    }
 }
 foreach ($name in @("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md")) {
     if (Test-Path (Join-Path $Root $name)) { Copy-Item (Join-Path $Root $name) (Join-Path $appDir $name) -Force }

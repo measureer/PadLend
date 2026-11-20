@@ -3,8 +3,8 @@
 import { useEffect, useRef } from 'react';
 import { Icon } from '../../components/Icon';
 import { Button, Modal } from '../../components/ui';
+import { UpdateResultView } from '../../components/UpdateResult';
 import { checkUpdates, openUrl } from '../../lib/actions';
-import { formatReleaseDate, humanSize } from '../../lib/updates';
 import { useAppStore } from '../../store/appStore';
 
 export function UpdateDialog() {
@@ -49,19 +49,7 @@ export function UpdateDialog() {
         {!checking && error && (
           <div style={{ color: 'var(--err)' }}>{error}</div>
         )}
-        {!checking && result && (
-          result.newer ? (
-            <>
-              <div>发现新版本：<strong>v{result.latest}</strong>{result.release.name ? `（${result.release.name}）` : ''}</div>
-              <div className="muted">
-                发布于 {formatReleaseDate(result.release.publishedAt) || '时间未知'}
-                {installer ? ` · ${installer.name}${installer.size ? ` · ${humanSize(installer.size)}` : ''}` : ' · 该发布没有可直接下载的安装包'}
-              </div>
-            </>
-          ) : (
-            <div>已是最新版本{checkedAt ? `（${checkedAt} 检查）` : ''}。</div>
-          )
-        )}
+        {!checking && result && <UpdateResultView result={result} checkedAt={checkedAt} />}
       </div>
 
       {!checking && result?.newer && result.release.notes && (

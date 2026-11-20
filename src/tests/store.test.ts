@@ -83,7 +83,7 @@ describe('应用状态切片', () => {
 
   it('移除布局后清掉未保存标记并换成回退摆位', () => {
     const store = useAppStore.getState();
-    const placement = { monitorHandle: 1, edge: 'right' as const, spanStart: 0, spanEnd: 100, offset: 0.5, align: 'proportional' as const, cornerPriority: null };
+    const placement = { monitorHandle: 1, edge: 'right' as const, spanStart: 0, spanEnd: 100, length: 100, offset: 0.5, align: 'proportional' as const, cornerPriority: null };
     store.setPlacement(placement);
     expect(useAppStore.getState().layoutDirty).toBe(true);
 
@@ -99,7 +99,7 @@ describe('应用状态切片', () => {
 
   it('摆位预览标记 dirty，服务确认后清除', () => {
     const store = useAppStore.getState();
-    const placement = { monitorHandle: 1, edge: 'right' as const, spanStart: 0, spanEnd: 100, offset: 0.5, align: 'proportional' as const, cornerPriority: null };
+    const placement = { monitorHandle: 1, edge: 'right' as const, spanStart: 0, spanEnd: 100, length: 100, offset: 0.5, align: 'proportional' as const, cornerPriority: null };
     store.setPlacement(placement);
     expect(useAppStore.getState().layoutDirty).toBe(true);
     useAppStore.getState().setPlacement(placement, false);

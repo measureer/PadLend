@@ -47,9 +47,9 @@ impl Bridge {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
-            // 父进程看门狗：外壳崩溃后引擎必须自行 teardown 退出，
-            // 否则它持有的全屏遮罩会留在桌面上（1.2.0 缺陷 A 的失效安全）。
-            .env("PADLEND_PARENT_PID", std::process::id().to_string())
+            // 孤儿保护靠 stdin EOF：外壳退出（哪怕崩溃）后管道关闭，引擎
+            // rpc.rs 读循环随之结束并自行 shutdown teardown，全屏遮罩不会残留
+            // （1.2.0 缺陷 A 的失效安全）——不再注入父进程 PID，引擎侧从未读取它。
             // 0 表示音频 sink 没起来；引擎会把它当成“只读掉音频、不播放”。
             .env("PADLEND_AUDIO_PORT", audio_port.to_string());
         if let Some(dir) = cwd {
@@ -211,15 +211,47 @@ fn normalize_event(name: &str) -> String {
     name.replace('.', ":")
 }
 
+/// 按空白切分，但双引号包裹的部分算一个参数（引号本身不保留）。
+/// 仅供 PADLEND_SERVICE_CMD 用：开发机的引擎路径可能含空格。
+fn split_quoted(raw: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    for ch in raw.chars() {
+        match ch {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
 /// 解析引擎启动方式：环境变量 → 随包 exe。
 ///
 /// 1.7.0 起只剩 Rust 引擎（`padlend-core`）：Python sidecar 随实现一起移除，
 /// 所以这里不再有“找不到 exe 就退回 `python -m service.server`”的分支。
 fn resolve_service() -> (String, Vec<String>, Option<PathBuf>) {
+    // PADLEND_SIMULATE 对随包 exe 与 PADLEND_SERVICE_CMD 两种启动方式都要生效，
+    // 先在这里取值：否则 SERVICE_CMD 分支提前 return 时会把 --simulate 丢掉。
+    let simulate = env::var("PADLEND_SIMULATE").is_ok();
     if let Ok(raw) = env::var("PADLEND_SERVICE_CMD") {
-        let mut parts = raw.split_whitespace().map(str::to_string);
-        if let Some(program) = parts.next() {
-            return (program, parts.collect(), None);
+        // 引号感知切分：双引号包裹的部分算一个参数（引号本身不保留），
+        // 引擎路径带空格也能写，如 PADLEND_SERVICE_CMD="C:\my tools\core.exe" --serve。
+        let parts = split_quoted(&raw);
+        if let Some(program) = parts.first() {
+            let mut args: Vec<String> = parts[1..].to_vec();
+            if simulate {
+                args.push("--simulate".to_string());
+            }
+            return (program.clone(), args, None);
         }
     }
 
@@ -228,7 +260,7 @@ fn resolve_service() -> (String, Vec<String>, Option<PathBuf>) {
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
     let mut args = Vec::new();
-    if env::var("PADLEND_SIMULATE").is_ok() {
+    if simulate {
         args.push("--simulate".to_string());
     }
     // 安装包里叫 padlend-core.exe；开发时 tauri 会把带 target triple 的名字拷到

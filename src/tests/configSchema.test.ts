@@ -115,7 +115,7 @@ describe('声明式设置 schema', () => {
     expect(validateConfig(invalid).join('\n')).toContain('当前 0.5');
   });
 
-  it('校验规则与 config.py 一致并回报具体字段', () => {
+  it('校验规则与 padlend-core/src/config.rs 一致并回报具体字段', () => {
     const config = defaultConfig();
     config.motion.gain = 5;
     config.hotkeys.toggle = '';

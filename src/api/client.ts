@@ -140,8 +140,6 @@ export const backend: Backend = isTauri ? new TauriBackend() : new MockBackend()
 /** 业务方法名集中在这里，避免字符串散落在各页面。 */
 export const RPC = {
   bootstrap: 'app.bootstrap',
-  shutdown: 'app.shutdown',
-  configGet: 'config.get',
   configSave: 'config.save',
   devicesScan: 'devices.scan',
   devicesLocate: 'devices.locate',
@@ -157,8 +155,10 @@ export const RPC = {
   enginePanic: 'engine.panic',
   engineReconnect: 'engine.reconnect',
   engineInjectClipboard: 'engine.inject_clipboard',
-  engineState: 'engine.state',
-  engineMetrics: 'engine.metrics',
+  // 指针校准三步（引擎侧 methods.rs 有收录，此前前端用裸字符串调用、绕过了本表）。
+  pointerCalibrateBegin: 'pointer.calibrate_begin',
+  pointerCalibrateState: 'pointer.calibrate_state',
+  pointerCalibrateEnd: 'pointer.calibrate_end',
   diagnosticsRun: 'diagnostics.run',
   diagnosticsExport: 'diagnostics.export',
   diagnosticsStatic: 'diagnostics.static',

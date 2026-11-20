@@ -143,7 +143,7 @@ pub(crate) fn write_event(event: &str, data: &Value) {
     write_value(&json!({ "event": event, "data": data }));
 }
 
-/// 启动服务：建 Engine → ready → 逐行请求 → service.stopped。
+/// 启动服务：建 Engine → ready → 逐行请求。
 pub fn serve(options: ServeOptions) -> Result<(), String> {
     let engine = Engine::open(EngineOptions {
         simulate: options.simulate,
@@ -207,7 +207,7 @@ pub fn serve(options: ServeOptions) -> Result<(), String> {
     }
 
     engine.shutdown();
-    // 在飞请求可能还在写响应：等一小会儿，别让 service.stopped 抢在它们的响应前面。
+    // 在飞请求可能还在写响应：等一小会儿再退出，别截断它们的响应。
     // 关窗不能卡太久，超时就照常退出（只记一行 stderr）。
     let before = in_flight().count();
     let remaining = in_flight().wait_idle(SHUTDOWN_GRACE);
@@ -219,7 +219,6 @@ pub fn serve(options: ServeOptions) -> Result<(), String> {
     } else if before > 0 {
         eprintln!("[rpc] 退出前已等完 {before} 个在飞请求");
     }
-    write_value(&json!({ "event": "service.stopped", "data": {} }));
     Ok(())
 }
 

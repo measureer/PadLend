@@ -156,7 +156,7 @@ describe('动作层错误分支', () => {
   it('移除布局走 layout.save 的 remove 契约并回填引擎返回值', async () => {
     const config = defaultConfig();
     const fallback = {
-      monitorHandle: 1, edge: 'left' as const, spanStart: 0, spanEnd: 1080,
+      monitorHandle: 1, edge: 'left' as const, spanStart: 0, spanEnd: 1080, length: 1080,
       offset: 0.5, align: 'proportional' as const, cornerPriority: null,
     };
     useAppStore.setState({ layoutDirty: true });
@@ -182,7 +182,7 @@ describe('动作层错误分支', () => {
   it('当前方向没有自定义布局时只提示，不清掉预览', async () => {
     const config = defaultConfig();
     const current = {
-      monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080,
+      monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080, length: 1080,
       offset: 0.5, align: 'proportional' as const, cornerPriority: 'right' as const,
     };
     useAppStore.setState({ placement: current, layoutDirty: false });
@@ -204,7 +204,7 @@ describe('动作层错误分支', () => {
 
   it('移除布局失败时保留预览并提示错误', async () => {
     const current = {
-      monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080,
+      monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080, length: 1080,
       offset: 0.5, align: 'proportional' as const, cornerPriority: null,
     };
     useAppStore.setState({ placement: current });

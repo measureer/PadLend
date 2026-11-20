@@ -172,7 +172,7 @@ pub fn latest_tag() -> Result<String, String> {
                 .ok_or_else(|| format!("重定向地址里没有发布标签：{location}"));
         }
         Ok((404, _, _)) => return Err("仓库还没有发布任何 Release".into()),
-        Ok((200, _, _)) => return Err("仓库还没有发布任何 Release".into()),
+        Ok((200, _, _)) => return Err("网页端点未按预期重定向（HTTP 200），请改用 REST API 或手动查看 Releases".into()),
         Ok((status, _, _)) => {
             crate::shell_log!("[update] 网页端点返回 HTTP {status}，改用 REST API");
         }

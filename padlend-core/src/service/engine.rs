@@ -442,18 +442,21 @@ impl Engine {
             ));
             let handler: Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync> =
                 Arc::new(move |packet| {
-                    let mut state = buttons.lock().unwrap_or_else(|err| err.into_inner());
-                    for bit in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100] {
-                        if packet.button_flags & bit != 0 {
-                            if let Some(mask) = crate::constants::raw_button_flag(bit) {
-                                *state |= i32::from(mask);
+                    // 纯位移事件占绝大多数：没有按键 flag 就完全不碰这把锁。
+                    if packet.button_flags != 0 {
+                        let mut state = buttons.lock().unwrap_or_else(|err| err.into_inner());
+                        for bit in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100] {
+                            if packet.button_flags & bit != 0 {
+                                if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                                    *state |= i32::from(mask);
+                                }
                             }
                         }
-                    }
-                    for bit in [0x0002u16, 0x0008, 0x0020, 0x0080, 0x0200] {
-                        if packet.button_flags & bit != 0 {
-                            if let Some(mask) = crate::constants::raw_button_flag(bit) {
-                                *state &= !i32::from(mask);
+                        for bit in [0x0002u16, 0x0008, 0x0020, 0x0080, 0x0200] {
+                            if packet.button_flags & bit != 0 {
+                                if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                                    *state &= !i32::from(mask);
+                                }
                             }
                         }
                     }
@@ -471,7 +474,6 @@ impl Engine {
                     } else {
                         (packet.x, packet.y)
                     };
-                    drop(state);
                     let wheel = if packet.has_wheel() {
                         i32::from(packet.button_data as i16)
                     } else {
@@ -521,7 +523,7 @@ impl Engine {
         let weak_engine = Arc::downgrade(self);
         let double_taps = Arc::clone(&self.double_taps);
         let matcher = Mutex::new(DoubleTapMatcher::new());
-        let mut hook = KeyboardHook::new(move |event: &crate::tablet::keymap::KeyEvent| {
+        let mut hook = KeyboardHook::new(move |event: &crate::logic::events::KeyEvent| {
             if event.down {
                 let fired = matcher
                     .try_lock()
@@ -547,14 +549,7 @@ impl Engine {
                     }
                 }
             }
-            let logical = crate::logic::events::KeyEvent {
-                vk: event.vk,
-                scan: event.scan,
-                is_extended: event.is_extended,
-                down: event.down,
-                ts: event.ts,
-            };
-            let (suppress, hotkey) = router.on_key_action(&logical);
+            let (suppress, hotkey) = router.on_key_action(event);
             if let Some(action) = hotkey {
                 if let Some(engine) = weak_engine.upgrade() {
                     // 动作可能走 RPC / 注入按键，绝不能跑在钩子线程上。

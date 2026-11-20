@@ -983,11 +983,6 @@ impl TabletSession {
         self.core.ensure_pointer_speed()
     }
 
-    /// 设置 pointer_speed（Python 没有这个方法，保留给上层扩展）。
-    pub fn apply_pointer_speed(&self, speed: i32) -> Result<(), SessionError> {
-        self.core.write_pointer_speed(speed)
-    }
-
     /// 注册朝向/分辨率变化回调。
     pub fn set_facts_callback(
         &self,
@@ -1048,7 +1043,7 @@ impl TabletSession {
         self.core.store.dir().to_path_buf()
     }
 
-    /// 附录 C.2 的诊断项（tools/probe.py 用，全部 best-effort）。
+    /// 附录 C.2 的诊断项（全部 best-effort；历史：1.x 由 tools/probe.py 消费）。
     pub fn diagnostics(&self) -> Vec<(String, String)> {
         let adb = self.core.dev_adb_clone().unwrap_or_else(|| self.core.adb.clone());
         self.core.probe_diagnostics(&adb)
@@ -1151,11 +1146,6 @@ impl SessionPort for TabletSession {
                 "adb 链路探针失败（后台心跳超时）",
             )))
         }
-    }
-
-    fn set_pointer_speed(&self, _speed: i32) -> Option<Result<(), RouterError>> {
-        // 与 Python 对齐：TabletSession 没有这个方法，Router 视为"不支持"。
-        None
     }
 
     fn set_cursor_pos(&self, _x: i32, _y: i32) -> bool {
@@ -2105,7 +2095,7 @@ impl SessionCore {
         })
     }
 
-    /// 附录 C.2 的诊断项（tools/probe.py 用，全部 best-effort）。
+    /// 附录 C.2 的诊断项（全部 best-effort；历史：1.x 由 tools/probe.py 消费）。
     pub fn probe_diagnostics(&self, adb: &Arc<dyn AdbApi>) -> Vec<(String, String)> {
         let checks: [(&str, &[&str]); 5] = [
             ("density", &["wm", "density"]),
@@ -2290,30 +2280,6 @@ impl SessionCore {
                 Ok(false)
             }
         }
-    }
-
-    fn write_pointer_speed(&self, speed: i32) -> Result<(), SessionError> {
-        let Some(adb) = self.dev_adb_clone() else {
-            return Err(SessionError::offline("尚未 start，没有可写的设备"));
-        };
-        if !adb.shell_ok(
-            &["settings", "put", "system", "pointer_speed", &speed.to_string()],
-            C::ADB_SHELL_TIMEOUT,
-        ) {
-            return Err(SessionError::offline(format!(
-                "pointer_speed 写入 {speed} 失败"
-            )));
-        }
-        let actual = parse_pointer_speed(&adb.shell(
-            &["settings", "get", "system", "pointer_speed"],
-            C::ADB_SHELL_TIMEOUT,
-        )?);
-        if actual != speed {
-            return Err(SessionError::offline(format!(
-                "pointer_speed 写入后为 {actual}（期望 {speed}）"
-            )));
-        }
-        Ok(())
     }
 
     fn refresh_facts(&self) -> Result<DeviceFacts, SessionError> {
@@ -4625,7 +4591,6 @@ mod tests {
         let health = port.health().expect("应当有健康").expect("应当有");
         assert!(health.socket_ok);
         assert!(port.ensure_pointer_speed().is_some());
-        assert!(port.set_pointer_speed(1).is_none(), "与 Python 对齐：不支持");
         assert!(!port.set_cursor_pos(1, 1));
     }
 }

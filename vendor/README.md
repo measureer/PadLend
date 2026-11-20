@@ -9,10 +9,7 @@
 **已重打包（代码未改）**：Android 17 的 `app_process`/ART 通过 `CLASSPATH`
 加载压缩的 `classes.dex` 条目时会抛 `ClassNotFoundException`；因此把
 `classes.dex` 以 **stored（不压缩）** 方式重新封包，其余条目保持原样。
-重打包脚本见 `tools/repack_server_jar.py`：
-
-```bash
-python tools/repack_server_jar.py <官方 jar> vendor/scrcpy-server-v5.0.1.jar
-```
+重打包方法与理由见仓库根的 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)（原
+`tools/repack_server_jar.py` 已随 1.7.0 移除 Python 工具链一并删除）。
 
 更新 jar 后必须同步 `vendor/SHA256SUMS`（运行时完整性校验用）。

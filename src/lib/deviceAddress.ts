@@ -1,4 +1,4 @@
-/** 无线调试地址补全与校验：与 tablet/adb.py 的 normalize_address 保持同一语义。 */
+/** 无线调试地址补全与校验：与 padlend-core/src/tablet/adb.rs 的 normalize_address 保持同一语义（历史：原 tablet/adb.py）。 */
 
 const DEFAULT_PORT = 5555;
 

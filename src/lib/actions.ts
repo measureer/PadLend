@@ -45,6 +45,9 @@ export async function tickClipboardSync(): Promise<boolean> {
 let lastPcClipboard = '';
 
 export async function bootstrap(): Promise<void> {
+  // ready 事件可能先于本调用完成 hydrate（events.ts 的 ready 处理器有同样的守卫）；
+  // 已 hydrate 就跳过整套启动流程，避免重复扫描与叠加副作用。
+  if (store().hydrated) return;
   try {
     const data = await backend.call<Bootstrap>(RPC.bootstrap);
     store().hydrate(data);

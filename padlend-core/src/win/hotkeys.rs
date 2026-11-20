@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -578,7 +578,6 @@ pub struct HotkeyManager {
     thread: Option<JoinHandle<()>>,
     thread_id: Arc<AtomicU32>,
     registered: Arc<Mutex<Vec<i32>>>,
-    stop: Arc<AtomicBool>,
 }
 
 impl HotkeyManager {
@@ -600,7 +599,6 @@ impl HotkeyManager {
             thread: None,
             thread_id: Arc::new(AtomicU32::new(0)),
             registered: Arc::new(Mutex::new(Vec::new())),
-            stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -615,7 +613,6 @@ impl HotkeyManager {
             return Ok(());
         }
 
-        self.stop.store(false, Ordering::Release);
         *lock(&self.registered) = Vec::new();
         self.thread_id.store(0, Ordering::Release);
 
@@ -647,7 +644,6 @@ impl HotkeyManager {
 
     /// 退出消息循环并注销热键；幂等（Python `stop`）。
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::Release);
         let Some(handle) = self.thread.take() else {
             return;
         };
@@ -678,14 +674,6 @@ impl HotkeyManager {
     /// 本次注册的绑定表（诊断用）。
     pub fn bindings(&self) -> &[HotkeyBinding] {
         &self.bindings
-    }
-
-    /// 是否已收到停止请求。
-    ///
-    /// 与 Python 一致：这个标志在消息循环里**没有人读**（Python 的 `_stop` 同样只 set/clear），
-    /// 保留只为语义对齐与外部诊断。
-    pub fn stopping(&self) -> bool {
-        self.stop.load(Ordering::Acquire)
     }
 
     /// 分发表（测试与诊断用；生产代码通过 `WM_HOTKEY` 触发）。

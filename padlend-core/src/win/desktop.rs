@@ -633,7 +633,7 @@ mod tests {
     const TABLET_W: i32 = 3200;
     const TABLET_H: i32 = 2136;
 
-    // -- 夹具（与 tests/fixtures/desktop_*.json 逐字段一致）------------------
+    // -- 测试数据（历史：逐字段内联自 1.x 的 tests/fixtures/desktop_*.json）--
 
     fn monitor(
         handle: i64,

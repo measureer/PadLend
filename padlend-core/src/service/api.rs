@@ -17,7 +17,7 @@ use super::diagnostics;
 use super::engine::Engine;
 use super::serializers as S;
 
-/// RPC 连接等待上限（Python deadline = 45.0 秒）。
+/// RPC 连接等待上限（1.6.0 由 Python 版的 45s 缩到 30s）。
 const CONNECT_TIMEOUT_S: f64 = 30.0;
 /// 点击连接时对无线地址做的一次 adb connect 超时。
 ///

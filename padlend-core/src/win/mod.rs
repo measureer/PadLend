@@ -8,4 +8,3 @@ pub mod keyboard_hook;
 pub mod mask;
 pub mod process;
 pub mod rawinput;
-pub mod single_instance;

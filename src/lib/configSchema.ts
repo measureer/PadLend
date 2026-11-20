@@ -21,6 +21,8 @@ export interface FieldDef {
   /** 滑条数值框里的文本与解析（缺省就是内部值的字符串形式）。 */
   text?: (value: number) => string;
   parse?: (text: string) => number | null;
+  /** select 的存储值本身是数字（如 report_hz）：读取时以字符串展示、写回时转 Number。 */
+  numeric?: boolean;
   /** 数值框后缀单位，例如 × / px / Hz。 */
   unit?: string;
   options?: { value: string; label: string }[];
@@ -75,6 +77,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'report_hz', section: 'motion', key: 'report_hz', label: '上报频率', kind: 'select',
         options: HZ_OPTIONS,
+        numeric: true,
         hint: '每秒向平板发多少次指针位置。默认 125 Hz，无线连接也够跟手；想更跟手可以调高，抖动时调低。',
       },
       {
@@ -104,7 +107,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
         },
         unit: 'px/计数',
         applies: 'live',
-        hint: '每个 HID 计数在平板上走多少像素，填 1–10；0 表示按分辨率推理论值（不写镜头距离）。自动校准会随手速浮动（推得越快测得越小）自动校准会随手速浮动（推得越快测得越小），填比校准值低 10–20% 更稳：估计器宁可偏晚交还，也不会在屏幕中间掉回 PC；觉得回 PC 太迟钝就往大调。',
+        hint: '每个 HID 计数在平板上走多少像素，填 1–10；0 表示按分辨率推理论值（不写镜头距离）。自动校准会随手速浮动（推得越快测得越小），填比校准值低 10–20% 更稳：估计器宁可偏晚交还，也不会在屏幕中间掉回 PC；觉得回 PC 太迟钝就往大调。',
       },
     ],
   },
@@ -232,14 +235,14 @@ type SectionValue = Record<string, string | number | boolean | string[]>;
 export function readField(config: Config, field: FieldDef): string | number | boolean {
   const raw = (config[field.section] as unknown as SectionValue)[field.key];
   if (field.kind === 'slider' && typeof raw === 'number' && field.display) return field.display(raw);
-  if (field.kind === 'select' && field.id === 'report_hz') return String(raw);
+  if (field.kind === 'select' && field.numeric) return String(raw);
   return raw as string | number | boolean;
 }
 
 export function writeField(config: Config, field: FieldDef, value: string | number | boolean): Config {
   let next: string | number | boolean = value;
   if (field.kind === 'slider' && typeof value === 'number' && field.persist) next = field.persist(value);
-  if (field.id === 'report_hz') next = Number(value);
+  if (field.kind === 'select' && field.numeric) next = Number(value);
   return {
     ...config,
     [field.section]: {
@@ -249,7 +252,7 @@ export function writeField(config: Config, field: FieldDef, value: string | numb
   } as Config;
 }
 
-/** 与 config.py::Config.validate() 同规则；服务端仍是最终权威。 */
+/** 与 padlend-core/src/config.rs 的 Config::validate 同规则；服务端仍是最终权威（历史：原 config.py）。 */
 export function validateConfig(config: Config): string[] {
   const problems: string[] = [];
   const { device, placement, motion, keyboard, hotkeys } = config;

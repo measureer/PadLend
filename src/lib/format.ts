@@ -1,6 +1,6 @@
-/** 状态文案、颜色与展示格式化（原 ui/theme/tokens.py 的单一来源在前端的镜像）。 */
+/** 状态文案、颜色与展示格式化（前端自有实现；历史：原 ui/theme/tokens.py）。 */
 
-import type { AppState, Edge, LogEntry, Metrics } from '../api/types';
+import type { AppState, Edge, Metrics } from '../api/types';
 
 export const STATE_LABELS: Record<string, string> = {
   '': '未连接',
@@ -86,8 +86,3 @@ export function connectedHint(facts: { width: number; height: number; orientatio
     : `${base} · 在「布局」页把平板拖到屏幕边缘`;
 }
 
-export function parseLogLine(line: string): LogEntry {
-  const match = /^(?<ts>\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<event>[A-Za-z][\w.]*)\s+(?<message>.*)$/.exec(line.trim());
-  if (!match || !match.groups) return { timestamp: '', event: '', message: line.trim() };
-  return { timestamp: match.groups.ts, event: match.groups.event, message: match.groups.message };
-}

@@ -73,9 +73,9 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 return;
             }
             if action == "open-logs" {
-                // 不走前端：引擎的 system.paths.logDir 是 %APPDATA%\PadLend\logs（历史设计，
-                // 2.x 没有任何写入者），真实日志在 %LOCALAPPDATA%\PadLend 下的 shell.log 与
-                // service.log。由外壳直接打开真实目录，避免用户拿到一个空目录。
+                // 不走前端：引擎的 system.paths.logDir 现已直接返回真实日志目录
+                // %LOCALAPPDATA%\PadLend（shell.log 与 service.log 都在这里）。由外壳
+                // 直接打开该目录，少一跳前端转发，也确保用户拿到的就是真实目录。
                 let dir = crate::shell_log::log_dir();
                 let _ = std::fs::create_dir_all(&dir);
                 if let Err(err) = crate::commands::open_path(dir.display().to_string()) {

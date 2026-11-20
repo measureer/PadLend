@@ -35,6 +35,9 @@ pub fn run() {
             // 第二实例：把已有窗口还原并置前，与旧版命名事件语义一致。
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
+                // show() 不会还原最小化状态：窗口若收在任务栏，要补 unminimize()
+                // 才能真正回到用户面前（与 tray.rs 菜单动作的处理一致）。
+                let _ = window.unminimize();
                 let _ = window.set_focus();
             }
             let _ = app.emit("app:present", json!({}));

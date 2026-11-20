@@ -1,6 +1,6 @@
 /** 指针校准：3 个 RPC 的薄封装（引擎侧实现见 padlend-core/src/logic/router.rs）。 */
 
-import { backend } from '../api/client';
+import { backend, RPC } from '../api/client';
 
 export interface CalibrationReading {
   /** 是否仍在累计计数；用户交还 PC 后变 false。 */
@@ -17,14 +17,14 @@ export interface CalibrationReading {
 
 /** 把平板指针钉到左上角并开始计数（必要时代为接管）。 */
 export function calibrateBegin(): Promise<CalibrationReading> {
-  return backend.call<CalibrationReading>('pointer.calibrate_begin');
+  return backend.call<CalibrationReading>(RPC.pointerCalibrateBegin);
 }
 
 export function calibrateState(): Promise<CalibrationReading> {
-  return backend.call<CalibrationReading>('pointer.calibrate_state');
+  return backend.call<CalibrationReading>(RPC.pointerCalibrateState);
 }
 
 /** 结束计数窗口（结果保留，可继续读取）。 */
 export function calibrateEnd(): Promise<CalibrationReading> {
-  return backend.call<CalibrationReading>('pointer.calibrate_end');
+  return backend.call<CalibrationReading>(RPC.pointerCalibrateEnd);
 }

@@ -76,8 +76,8 @@ const NAMED_KEYS = new Set([
   'bracketleft', 'backslash', 'bracketright', 'quote',
 ]);
 
-/** 标点（字符形式也可直接写进配置）。 */
-const PUNCTUATION = '+=,<-_.>/?:;[]\\|\'"`~';
+/** 标点（字符形式也可直接写进配置）；集合与引擎 vk_for_key 对齐，含花括号。 */
+const PUNCTUATION = '+=,<-_.>/?:;[]{}\\|\'"`~';
 
 type KeyboardLike = {
   code?: string;

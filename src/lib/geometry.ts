@@ -1,4 +1,5 @@
-/** 画布几何：从 core/geometry.py 与 ui/canvas_items.py 移植的纯函数。
+/** 画布几何：与 padlend-core/src/logic/geometry.rs 共用同一套公式的纯函数
+ * （历史：从 Python 时代的 core/geometry.py 与 ui/canvas_items.py 移植）。
  * 前后端共用同一套公式，预览位置与实际穿越范围不会出现偏差。 */
 
 import type { Edge, Monitor, Placement, Rect, Segment } from '../api/types';
@@ -80,7 +81,8 @@ export interface ScoredSegment {
   distance: number;
 }
 
-/** 拖动时只对附近的边段打分，避免每帧遍历并重建整个场景。 */
+/** 全量打分后按距离排序，取吸附带内的边段（没有则退回最近一条）。
+ * 边段数量小（每屏只有几条），每帧全量打分没有性能问题。 */
 export function nearbySegments(
   segments: Segment[],
   monitors: Monitor[],

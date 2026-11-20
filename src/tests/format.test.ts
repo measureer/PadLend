@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectedHint, formatLastSeen, logEventTone, metricLine, parseLogLine, presentState, stateLabel } from '../lib/format';
+import { connectedHint, formatLastSeen, logEventTone, metricLine, presentState, stateLabel } from '../lib/format';
 
 describe('状态与格式化', () => {
   it('没有设备事实时不把 fault 显示成故障', () => {
@@ -14,13 +14,6 @@ describe('状态与格式化', () => {
     expect(text).toContain('RTT 4.2ms');
     expect(text).toContain('丢包 0.50%');
     expect(metricLine({}, 'rate')).toContain('—');
-  });
-
-  it('日志行解析支持无时间戳的原文', () => {
-    expect(parseLogLine('12:00:00.123 STATE idle → captured')).toEqual({
-      timestamp: '12:00:00.123', event: 'STATE', message: 'idle → captured',
-    });
-    expect(parseLogLine('裸文本')).toEqual({ timestamp: '', event: '', message: '裸文本' });
   });
 
   it('最后在线只取日期部分，坏值不显示', () => {

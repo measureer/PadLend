@@ -209,6 +209,13 @@ fn stats_of(hwnd: HWND) -> Option<&'static Stats> {
     Some(unsafe { &*(raw as *const Stats) })
 }
 
+// RAWINPUT 缓冲：热路径上每个事件都需要一块 8 字节对齐的缓冲，
+// 用 thread_local 复用避免每事件一次堆分配。
+thread_local! {
+    static RAW_BUFFER: std::cell::RefCell<Vec<u64>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
 fn on_raw_input(hwnd: HWND, lparam: LPARAM) {
     let Some(stats) = stats_of(hwnd) else {
         return;
@@ -221,26 +228,32 @@ fn on_raw_input(hwnd: HWND, lparam: LPARAM) {
         return;
     }
 
-    // RAWINPUT 需要 8 字节对齐，用 u64 缓冲而不是 Vec<u8>。
+    // RAWINPUT 需要 8 字节对齐，用 u64 缓冲而不是 Vec<u8>；缓冲 thread_local 复用。
     let words = (size as usize).div_ceil(size_of::<u64>());
-    let mut buffer = vec![0u64; words];
-    let mut written = size;
-    let got = unsafe {
-        GetRawInputData(
-            handle,
-            RID_INPUT,
-            Some(buffer.as_mut_ptr().cast()),
-            &mut written,
-            header_size,
-        )
-    };
-    if got == u32::MAX {
-        return;
-    }
-
-    // 解码只有一处实现（decode.rs），M0 的对拍向量走的也是它。
-    let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, size as usize) };
-    let Some(packet) = crate::decode::decode_raw_input(bytes) else {
+    let packet = RAW_BUFFER.with(|cell| {
+        let mut buffer = cell.borrow_mut();
+        if buffer.len() < words {
+            buffer.resize(words, 0);
+        }
+        let mut written = size;
+        let got = unsafe {
+            GetRawInputData(
+                handle,
+                RID_INPUT,
+                Some(buffer.as_mut_ptr().cast()),
+                &mut written,
+                header_size,
+            )
+        };
+        if got == u32::MAX {
+            return None;
+        }
+        // 解码只有一处实现（decode.rs），M0 的对拍向量走的也是它。
+        let bytes =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u8, size as usize) };
+        crate::decode::decode_raw_input(bytes)
+    });
+    let Some(packet) = packet else {
         return;
     };
 

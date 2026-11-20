@@ -2075,7 +2075,7 @@ mod tests {
         }
     }
 
-    // -- 与 pytest test_config.py 逐条对应 ----------------------------------
+    // -- 历史：以下测试逐条迁移自 1.x 的 pytest test_config.py ---------------
     #[test]
     fn legacy_ghost_pointer_key_is_ignored() {
         // 1.2.1 删掉的 show_pointer_ghost 必须静默丢失，不能报未知字段。

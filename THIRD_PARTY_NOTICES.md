@@ -24,7 +24,7 @@ Windows 上的 WebView2 运行时由操作系统提供（安装器会在缺失�
 | WebView2 Runtime | 随 Windows / Edge | Microsoft 软件许可条款 | Copyright (c) Microsoft Corporation | 系统组件，不随包分发 |
 | padlend-core（内置 Rust 引擎） | 见 `padlend-core/Cargo.toml` | Apache-2.0（本项目） | Copyright (c) PadLend contributors | 本项目源码 |
 | scrcpy-server（Android 端） | 5.0.1 | Apache-2.0 | Copyright (C) Romain Vimont and scrcpy contributors | <https://github.com/Genymobile/scrcpy> · `LICENSES/Apache-2.0.txt` |
-| adb / Android platform-tools | 见 `vendor/adb/README.md` | Apache-2.0 | Copyright (C) 2007-2025 The Android Open Source Project | `LICENSES/adb-NOTICE.txt`、`LICENSES/Apache-2.0.txt` |
+| adb / Android platform-tools | 见 `vendor/adb/README.md` | Apache-2.0 | Copyright (C) 2007-2025 The Android Open Source Project | `vendor/adb/platform-tools/NOTICE.txt`、`LICENSES/Apache-2.0.txt` |
 
 > 说明：Tauri 外壳与 `padlend-core` 都是静态编译的 Rust 可执行文件，发行物里
 > 只有原生二进制，不再打包任何解释型运行时。
@@ -42,7 +42,8 @@ Windows 上的 WebView2 运行时由操作系统提供（安装器会在缺失�
 
 `vendor/adb/platform-tools/` 为 Android SDK Platform-Tools 的原样拷贝
 （adb.exe、AdbWinApi.dll、AdbWinUsbApi.dll、libwinpthread-1.dll 等），
-按 Apache-2.0 分发，原始 `NOTICE.txt` 一并保留为 `LICENSES/adb-NOTICE.txt`。
+按 Apache-2.0 分发，原始 `NOTICE.txt` 随 platform-tools 目录原样保留
+（`vendor/adb/platform-tools/NOTICE.txt`，发行物内为同一路径）。
 
 ## 其他
 

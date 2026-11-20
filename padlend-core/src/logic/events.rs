@@ -58,7 +58,7 @@ impl RawDelta {
 ///
 /// `vk` 为虚拟键码，`scan` 为扫描码（含扩展位，见设计文档 6.2.2），
 /// `is_extended` 用于区分左右修饰键，`down` 表示按下。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct KeyEvent {
     pub vk: i32,
     pub scan: i32,

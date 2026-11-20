@@ -1,8 +1,7 @@
 # 故障排查
 
-> **版本提示**：配置/日志路径、adb 与 UHID 排障步骤在 1.1.0 仍然有效；
-> 文中提到的 Qt 窗口/托盘行为已改为 Tauri 2 外壳，界面问题另见
-> [TAURI_MIGRATION.md](TAURI_MIGRATION.md)。
+> **版本提示**：本文已按 2.2.0（Rust 引擎 + Tauri 2 外壳）核对；
+> 配置/日志路径、adb 与 UHID 排障步骤仍然有效。
 >
 > 本文只保留**用户可执行**的排障步骤；开发期的根因、代码位置与回归测试见
 > [PITFALLS.md](PITFALLS.md)。
@@ -179,7 +178,7 @@ adb forward tcp:1234 localabstract:scrcpy
 
 - 正常应读到 **1 字节** `00`（scrcpy 5.0.1 `DesktopConnection` 实测）；
 - 手动执行 server 报 `Address already in use`，是旧 server 残留占用 `localabstract:scrcpy`（见第 4 节）；
-- logcat 出现 `ClassNotFoundException: com.genymobile.scrcpy.Server`，说明 jar 的 `classes.dex` 被压缩，Android 17 的 app_process 加载失败；用 `tools/repack_server_jar.py` 重打包为 stored；
+- logcat 出现 `ClassNotFoundException: com.genymobile.scrcpy.Server`，说明 jar 的 `classes.dex` 被压缩，Android 17 的 app_process 加载失败；jar 需以 stored（不压缩）方式重打包，方法与理由见仓库根 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) 的重打包声明（原 `tools/repack_server_jar.py` 已随 1.7.0 移除）；
 - `cleanup=true` 时 server 启动即由 CleanUp 删除 CLASSPATH 首项 jar，重连前会重新 push，属预期行为；
 - 确认 scrcpy-server 版本与 `SCRCPY_VERSION` 一致（5.0.1）。
 
@@ -215,7 +214,7 @@ adb shell dumpsys input | grep -B1 -A3 "Classes: CURSOR"
 
 ### 指针漂移/位置不准
 
-- 运行 `tools/calibrate.py` 重新测 `XScale` 与实际 px/count；
+- 用应用内「设置 → 指针校准」重新测定 px/count，结果按提示填进「指针比例」（`motion.px_per_count`）；
 - 调小 `motion.gain`（每次 0.02）；
 - 检查 `pointer_speed` 是否被系统重置：`adb shell settings get system pointer_speed`（接管期间应为 `0`）；
 - 托盘菜单 →「重连」会请求重新同步指针（内部 `resync_pointer`），把估计器拉回中心附近。
@@ -236,8 +235,8 @@ adb shell dumpsys input | grep -B1 -A3 "Classes: CURSOR"
 
 ### 点击 Windows 输入框后无法再滑入
 
-- 某些焦点/桌面切换会让 Raw Input 在最后一次鼠标事件后静默；0.3.1 起 `win/cursor_watch.py` 会在 Raw Input 超过 250ms 无事件时轮询绝对光标并合成位移，自动恢复边缘接管；
-- 日志出现 `cursorwatch.fallback` 即表示兜底已接管；若仍无法进入，附上该段日志与 `tools/probe.py --json` 输出。
+- 某些焦点/桌面切换会让 Raw Input 在最后一次鼠标事件后静默；旧版 `win/cursor_watch.py` 的兜底轮询已随 1.7.0 移除 Python 实现而消失，当前 Rust 引擎没有等价的兜底机制；
+- 遇到时按 `Ctrl+Alt+Q` 急停交还输入，再退出并重启 PadLend；若复发，附上 `%LOCALAPPDATA%\PadLend\service.log` 对应时段的日志来反馈。
 
 ### 边缘手势抢鼠标
 

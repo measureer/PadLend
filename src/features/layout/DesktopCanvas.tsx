@@ -54,6 +54,8 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
   const pendingRef = useRef<{ x: number; y: number } | null>(null);
   const spaceRef = useRef(false);
   const shiftRef = useRef(false);
+  /** 上一次 highlight 已着色的吸附目标；目标没变就跳过整段 class 重写。 */
+  const highlightKeyRef = useRef<string | null>(null);
   const tabletSizeRef = useRef({ ...DEFAULT_TABLET });
   const [sizeNonce, setSizeNonce] = useState(0);
   const [fit, setFit] = useState({ x: 0, y: 0, w: 4480, h: 1600 });
@@ -85,6 +87,9 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
   const fitRef = useRef(fitView);
   fitRef.current = fitView;
   useEffect(() => { fitRef.current(); }, [fitNonce, desktop.monitors]);
+
+  // 桌面拓扑变化时边段线随重挂载回到初始 class，缓存随之失效；清掉让下一次 highlight 重新着色。
+  useEffect(() => { highlightKeyRef.current = null; }, [desktop]);
 
   // 平板实际尺寸由设备事实决定：旋转后 width/height 互换，画布必须跟着换。
   // （1.7.5 之前只有双击预览能改尺寸，引擎报来的竖屏尺寸从没被用上，
@@ -153,6 +158,10 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
     const svg = svgRef.current;
     if (!svg) return;
     const wanted = chosen ? segKey(chosen) : '';
+    // 拖动期间每帧都会调用，但吸附目标绝大多数帧不变；未变化直接返回，
+    // 不再每帧 querySelectorAll + 全量重写 class。
+    if (highlightKeyRef.current === wanted) return;
+    highlightKeyRef.current = wanted;
     svg.querySelectorAll<SVGLineElement>('.canvas-edge').forEach((line) => {
       line.setAttribute('class', `canvas-edge exterior${line.dataset.key === wanted ? ' attached' : ''}`);
     });
@@ -173,6 +182,7 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
       edge: segment.edge,
       spanStart: segment.spanStart,
       spanEnd: segment.spanEnd,
+      length: segment.length,
       offset: segmentOffset(segment, sceneX, sceneY),
       align: current.align,
       cornerPriority: corner,

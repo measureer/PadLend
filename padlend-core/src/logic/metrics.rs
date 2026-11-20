@@ -413,7 +413,7 @@ mod tests {
 
     use super::*;
 
-    /// 可推进的单调时钟（对应 pytest `tests/fakes.py:FakeClock`）。
+    /// 可推进的单调时钟（测试替身，历史源自 1.x pytest tests/fakes.py:FakeClock）。
     struct FakeClock(Arc<Mutex<f64>>);
 
     impl FakeClock {
@@ -486,9 +486,9 @@ mod tests {
         assert!(round_digits(-0.0, 1).is_sign_negative());
     }
 
-    // -- pytest test_router.py::test_metrics_* ---------------------------
+    // -- 历史：以下测试逐条迁移自 1.x pytest test_router.py::test_metrics_* -
 
-    /// 逐条对应 pytest `test_metrics_snapshot_keys_and_rates`。
+    /// 历史：逐条迁移自 pytest test_metrics_snapshot_keys_and_rates。
     #[test]
     fn snapshot_keys_and_rates() {
         let clock = FakeClock::new(0.0);

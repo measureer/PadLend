@@ -2,6 +2,9 @@
  *
  * 作用：无需 Rust 工具链、无需真实平板即可在浏览器里验证全部页面与交互；
  * 单元测试也用它作为确定性的事件源。生产路径走 client.ts 的 TauriBackend。
+ *
+ * 注意：演示后端的事件面比真实引擎小——不发 ready / clipboard / orientation /
+ * diagnostics:progress 等外壳事件，模拟里看到的推送只覆盖核心子集。
  */
 
 import type {
@@ -155,6 +158,7 @@ function placementFromConfig(cfg: Config['placement']): Placement | null {
     edge: segment.edge,
     spanStart: segment.spanStart,
     spanEnd: segment.spanEnd,
+    length: segment.length,
     offset: Math.min(1, Math.max(0, cfg.offset)),
     align,
     cornerPriority: corner,
@@ -232,6 +236,7 @@ export class MockBackend {
     edge: 'right',
     spanStart: 0,
     spanEnd: 1080,
+    length: 1080,
     offset: 0.5,
     align: 'one_to_one',
     cornerPriority: 'right',
@@ -261,6 +266,9 @@ export class MockBackend {
 
   /** 指针校准的模拟状态（只有 mock 用）。 */
   private calib = { active: false, countsX: 0, countsY: 0 };
+
+  /** 演示连接被 devices.cancel 中止的标记（只有 mock 用）。 */
+  private connectAborted = false;
 
   private calibReading() {
     const height = this.facts?.height ?? 2136;
@@ -331,9 +339,6 @@ export class MockBackend {
       case 'app.bootstrap':
         result = this.snapshot();
         break;
-      case 'config.get':
-        result = { config: this.config, issues: [], path: '%APPDATA%\\PadLend\\config.yaml' };
-        break;
       case 'config.save': {
         const patch = (params.patch ?? {}) as Partial<Config>;
         this.config = {
@@ -361,7 +366,13 @@ export class MockBackend {
         break;
       case 'devices.connect': {
         this.setState('connecting', 'device.connect');
+        this.connectAborted = false;
         await delay(500);
+        // 等待期间被 devices.cancel 中止就直接返回，别把演示状态机假装连上。
+        if (this.connectAborted) {
+          result = { ok: false, message: '连接已取消' };
+          break;
+        }
         this.facts = { ...FACTS };
         this.setState('idle', 'tablet.connect');
         this.emit('facts', this.facts);
@@ -374,6 +385,15 @@ export class MockBackend {
         this.setState('idle', 'device.disconnect');
         this.emit('facts', null);
         this.pushLog('DEVICE', '已断开');
+        result = { ok: true };
+        break;
+      case 'devices.cancel':
+        // 与引擎一致：中止进行中的连接；不在连接中就是无害空操作。
+        // busy.connect 由前端 connectDevice 自己的 finally 收尾，这里只管模拟状态机。
+        if (this.state === 'connecting') {
+          this.connectAborted = true;
+          this.setState('', 'device.cancel');
+        }
         result = { ok: true };
         break;
       case 'devices.add': {
@@ -482,12 +502,6 @@ export class MockBackend {
       case 'pointer.calibrate_end':
         this.calib.active = false;
         result = this.calibReading();
-        break;
-      case 'engine.state':
-        result = { state: this.state, connected: this.facts !== null, facts: this.facts, metrics: this.metrics, manual: false };
-        break;
-      case 'engine.metrics':
-        result = this.metrics;
         break;
       case 'diagnostics.run': {
         this.diagnosticsText = [

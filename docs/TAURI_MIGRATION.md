@@ -235,6 +235,9 @@ npm run build
 可用 `PADLEND_PYTHON`、`PADLEND_PROJECT_ROOT`、`PADLEND_SERVICE_CMD`、`PADLEND_SIMULATE`
 指定解释器/项目根/自定义命令/演示假平板。
 
+> 注（2.2.0 核对）：`PADLEND_PYTHON` 与 `PADLEND_PROJECT_ROOT` 已随 1.7.0 移除 Python
+> 实现而失效；`PADLEND_SERVICE_CMD` 与 `PADLEND_SIMULATE` 在当前外壳中仍然有效。
+
 ---
 
 ## 9. 已知事项

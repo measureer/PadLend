@@ -241,52 +241,16 @@ pub static VK_NAME_TO_CODE: LazyLock<HashMap<String, i32>> = LazyLock::new(|| {
 });
 
 // ---------------------------------------------------------------------------
-// 键盘事件（对应 `core/events.py` 的 `KeyEvent`）
+// 键盘事件
 // ---------------------------------------------------------------------------
 
 /// 一次键盘事件（`WH_KEYBOARD_LL`）。
 ///
-/// `vk` 为虚拟键码，`scan` 为扫描码（含扩展位，见 6.2.2），
-/// `is_extended` 用于区分左右修饰键，`down` 表示按下。
-///
-/// 字段与 Python 的 `core.events.KeyEvent` 一一对应；`core/events.rs` 落地后
-/// 应改为复用它，而不是各模块自带一份。
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct KeyEvent {
-    /// 虚拟键码。
-    pub vk: i32,
-    /// 扫描码（可含 `0xE000` 扩展位）。
-    pub scan: i32,
-    /// 是否带扩展位（区分左右 Ctrl/Alt）。
-    pub is_extended: bool,
-    /// `true` = 按下，`false` = 抬起。
-    pub down: bool,
-    /// `time.perf_counter()` 时间戳，仅用于延迟统计。
-    pub ts: f64,
-}
-
-impl KeyEvent {
-    /// 构造一个事件（`ts` 置 0）。
-    pub fn new(vk: i32, scan: i32, is_extended: bool, down: bool) -> Self {
-        Self {
-            vk,
-            scan,
-            is_extended,
-            down,
-            ts: 0.0,
-        }
-    }
-
-    /// 构造一个"按下"事件（`scan = 0`、非扩展）。
-    pub fn key_down(vk: i32) -> Self {
-        Self::new(vk, 0, false, true)
-    }
-
-    /// 构造一个"抬起"事件（`scan = 0`、非扩展）。
-    pub fn key_up(vk: i32) -> Self {
-        Self::new(vk, 0, false, false)
-    }
-}
+/// 单一实现：逻辑层（`logic::events`）与键位表共用同一个 `KeyEvent`。
+/// 历史：1.7.0 前这里是独立副本（对应 Python `core/events.py`），字段
+/// `vk / scan / is_extended / down / ts` 与其一一对应；2026-11 起直接复用，
+/// 不再维护两份同形结构与手工转换。
+pub use crate::logic::events::KeyEvent;
 
 // ---------------------------------------------------------------------------
 // 纯函数

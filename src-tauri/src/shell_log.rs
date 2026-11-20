@@ -15,7 +15,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
-/// 单文件上限 1 MiB，超过后轮转成 `shell.log.1`（只保留一代）。
+/// 单文件上限约 1 MiB，超过后在下次启动 `init()` 时轮转成 `shell.log.1`
+/// （只保留一代）；运行期 `write_line` 只追加，不做轮转检查。
 const MAX_BYTES: u64 = 1_048_576;
 
 /// 进程启动时刻，用于在每行打出相对时间（跨日志对照毫秒级顺序）。

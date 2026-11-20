@@ -2275,6 +2275,20 @@ adb-AM4NBB5C23001691-xn14x2 (2)._adb-tls-connect._tcp device product:CGA-W00 mod
     }
 
     #[test]
+    fn adb_error_codes_match_router() {
+        // E1xx/E9xx 与 router::ErrorCode 是两份手工同步的表，这里钉死共享四个码 + E900。
+        use crate::logic::router::ErrorCode;
+        assert_eq!(AdbErrorCode::AdbNotFound.as_str(), ErrorCode::AdbNotFound.as_str());
+        assert_eq!(AdbErrorCode::DeviceOffline.as_str(), ErrorCode::DeviceOffline.as_str());
+        assert_eq!(
+            AdbErrorCode::ServerStartFailed.as_str(),
+            ErrorCode::ServerStartFailed.as_str()
+        );
+        assert_eq!(AdbErrorCode::ForwardFailed.as_str(), ErrorCode::ForwardFailed.as_str());
+        assert_eq!(AdbErrorCode::Unexpected.as_str(), ErrorCode::Unexpected.as_str());
+    }
+
+    #[test]
     fn shell_ok_never_raises() {
         let runner = ScriptRunner::new(vec![
             Err(RunnerError::Spawn("boom".to_string())),

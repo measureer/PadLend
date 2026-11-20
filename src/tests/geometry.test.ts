@@ -26,11 +26,11 @@ const monitor: Monitor = {
 const right: Segment = { monitorHandle: 1, edge: 'right', spanStart: 0, spanEnd: 1080, length: 1080 };
 const top: Segment = { monitorHandle: 1, edge: 'top', spanStart: -1920, spanEnd: 0, length: 1920 };
 const placement: Placement = {
-  monitorHandle: 1, edge: 'right', spanStart: 0, spanEnd: 1080,
+  monitorHandle: 1, edge: 'right', spanStart: 0, spanEnd: 1080, length: 1080,
   offset: 0.5, align: 'proportional', cornerPriority: null,
 };
 
-describe('画布几何（与 core/geometry.py 保持一致）', () => {
+describe('画布几何（与 padlend-core/src/logic/geometry.rs 保持一致）', () => {
   it('负坐标显示器也能算出正确的边段', () => {
     expect(segmentLine(right, monitor)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 1080 });
     expect(segmentLine(top, monitor)).toEqual({ x1: -1920, y1: 0, x2: 0, y2: 0 });

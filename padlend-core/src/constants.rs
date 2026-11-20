@@ -26,11 +26,6 @@ pub const VERSION: &str = crate::VERSION;
 /// 许可证标识（关于对话框/诊断包用）。
 pub const LICENSE: &str = "Apache-2.0";
 
-/// 单实例互斥体（7.5）。`Global\` 前缀保证跨用户会话唯一。
-pub const SINGLE_INSTANCE_MUTEX: &str = r"Global\PadLend.SingleInstance";
-/// 第二实例用它通知首实例“把窗口拿到前台”（1.0.2）。
-pub const SINGLE_INSTANCE_EVENT: &str = r"Global\PadLend.Activate";
-
 // ---------------------------------------------------------------------------
 // 路径
 // ---------------------------------------------------------------------------
@@ -354,14 +349,6 @@ pub const HID_KEYBOARD_DESCRIPTOR: &[u8] = &[
     0xC0,
 ];
 
-/// 鼠标报文长度：按键位图 + dx + dy + wheel。
-pub const MOUSE_REPORT_SIZE: usize = 4;
-/// 键盘报文长度：修饰位 + 保留字节 + 6 键。
-pub const KEYBOARD_REPORT_SIZE: usize = 8;
-
-/// 键盘最多同时按下的键数（6KRO）。
-pub const KEYBOARD_KRO: u8 = 6;
-
 /// 描述符 Logical Max = 127，单报文位移上限。
 pub const HID_CLAMP: i32 = 127;
 
@@ -379,9 +366,6 @@ pub const MOUSE_BTN_MIDDLE: u8 = 0x04;
 pub const MOUSE_BTN_SIDE1: u8 = 0x08;
 /// 侧键 2（前进）位。
 pub const MOUSE_BTN_SIDE2: u8 = 0x10;
-
-/// Raw Input 里表示“抬起”的 flag（Python 的 `RAW_BUTTON_UP_FLAGS` 集合）。
-pub const RAW_BUTTON_UP_FLAGS: [u16; 5] = [0x0002, 0x0008, 0x0020, 0x0080, 0x0200];
 
 /// Raw Input `usButtonFlags` → HID 按键位图（6.2.1）。
 ///
@@ -402,28 +386,6 @@ pub fn raw_button_flag(flag: u16) -> Option<u8> {
         _ => None,
     }
 }
-
-/// flag 是否为“抬起”（对应 Python 的 `flag in RAW_BUTTON_UP_FLAGS`）。
-pub fn raw_button_is_up(flag: u16) -> bool {
-    RAW_BUTTON_UP_FLAGS.contains(&flag)
-}
-
-/// 键盘报告修饰位（6.7.2）：左 Ctrl。
-pub const MOD_LEFT_CTRL: u8 = 0x01;
-/// 左 Shift。
-pub const MOD_LEFT_SHIFT: u8 = 0x02;
-/// 左 Alt。
-pub const MOD_LEFT_ALT: u8 = 0x04;
-/// 左 GUI（Win）。
-pub const MOD_LEFT_GUI: u8 = 0x08;
-/// 右 Ctrl。
-pub const MOD_RIGHT_CTRL: u8 = 0x10;
-/// 右 Shift。
-pub const MOD_RIGHT_SHIFT: u8 = 0x20;
-/// 右 Alt（AltGr）。
-pub const MOD_RIGHT_ALT: u8 = 0x40;
-/// 右 GUI（Win）。
-pub const MOD_RIGHT_GUI: u8 = 0x80;
 
 // ---------------------------------------------------------------------------
 // 输入 / 状态机默认阈值（6.5 / 6.9）
@@ -601,20 +563,11 @@ mod tests {
         assert_eq!(raw_button_flag(0x0400), None);
         assert_eq!(raw_button_flag(0x0800), None);
         assert_eq!(raw_button_flag(0x0000), None);
-
-        for flag in RAW_BUTTON_UP_FLAGS {
-            assert!(raw_button_is_up(flag), "flag={flag:#06x}");
-        }
-        for flag in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100, 0x0400] {
-            assert!(!raw_button_is_up(flag), "flag={flag:#06x}");
-        }
     }
 
     #[test]
     fn hid_report_geometry_matches_python() {
-        assert_eq!(MOUSE_REPORT_SIZE, 4);
-        assert_eq!(KEYBOARD_REPORT_SIZE, 8);
-        assert_eq!(KEYBOARD_KRO, 6);
+        // 报告尺寸/槽数常量在 tablet::uhid（本模块的重复副本已删，值由 uhid 测试钉死）。
         assert_eq!(HID_CLAMP, 127);
         assert_eq!(WHEEL_UNITS_PER_DETENT, 120);
         assert_eq!(HID_VENDOR_ID, 0x1D6B);

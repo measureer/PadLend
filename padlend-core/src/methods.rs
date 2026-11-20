@@ -150,6 +150,7 @@ mod tests {
             "devices.scan",
             "devices.locate",
             "devices.connect",
+            "devices.cancel",
             "devices.disconnect",
             "devices.add",
             "devices.remove",

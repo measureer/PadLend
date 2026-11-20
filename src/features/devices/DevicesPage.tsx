@@ -54,11 +54,13 @@ export function DevicesPage() {
   const setSelected = useAppStore((s) => s.setSelectedSerial);
   const error = useAppStore((s) => s.deviceError);
   const hint = useAppStore((s) => s.scanHint);
-  const busy = useAppStore((s) => s.busy);
+  // 只订阅用到的两个 busy 键：其它键（add 等）翻转时不触发本页重渲染（参考 Shell.tsx 的写法）。
+  const busyScan = useAppStore((s) => s.busy.scan);
+  const busyConnect = useAppStore((s) => s.busy.connect);
   const facts = useAppStore((s) => s.facts);
   const state = useAppStore((s) => s.state);
   const openDialog = useAppStore((s) => s.openDialog);
-  const visibleState = presentState(state, facts, Boolean(busy.connect));
+  const visibleState = presentState(state, facts, Boolean(busyConnect));
   const onSelect = useCallback((serial: string) => setSelected(serial), [setSelected]);
   const chosen = devices.find((d) => d.serial === selected);
 
@@ -70,7 +72,7 @@ export function DevicesPage() {
         </div>
         <div className="page-actions">
           <span className="badge accent">{hint || '准备扫描…'}</span>
-          <Button icon="refresh" onClick={() => void refreshDevices()} loading={Boolean(busy.scan)}>刷新设备</Button>
+          <Button icon="refresh" onClick={() => void refreshDevices()} loading={Boolean(busyScan)}>刷新设备</Button>
           <Button icon="add" onClick={() => openDialog('addDevice')}>添加设备</Button>
         </div>
       </div>
@@ -83,7 +85,7 @@ export function DevicesPage() {
           desc="一台设备只占一行；双击可直接连接。「从列表移除」只删除记忆记录，不影响在线设备。"
           footer={
             <>
-              {busy.connect ? (
+              {busyConnect ? (
                 // 连接可能卡在选设备/握手阶段十几秒，必须给用户一个出口。
                 <Button variant="danger" icon="close" onClick={() => void cancelConnect()}>
                   取消连接
