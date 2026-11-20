@@ -21,6 +21,7 @@
 | 退出后下次启动报「上次未正常退出」 | [4.2](#42-python-关闭被守护线程截断) [4.3](#43-首次运行就报上次未正常退出) |
 | 高 DPI / 多屏遮罩错位、落点偏 | [5.1](#51-dpi-感知晚于建窗遮罩只盖住一部分) [5.2](#52-物理坐标与逻辑坐标混用) [5.3](#53-接管中显示器拓扑变化) [5.4](#54-负坐标副屏) |
 | 开「转发平板声音」后一直卡在「连接中」 | [2.8](#28-audio-模式下控制通道等-dummy回退重启又丢了-jar) |
+| 转发中插/拔耳机，平板声音不切换或无声 | [32.1](#321-插耳机不切拔耳机无声输出流只开一次) |
 | 转屏后界面方向不对 / 转回去没反应 | [29.3](#293-根因) |
 | 连上平板但输入乱/没反应 | [1.1](#11-幽灵-scrcpy-server-杀不掉) [2.2](#22-心跳把按住冲成松开) [2.4](#24-进入接管没有先补发全松) |
 | 换 Wi-Fi 后设备多出一台 / 自动连接卡 40 秒 | [1.6](#16-把-adb-serial-当设备身份换网就多出一台) [1.7](#17-坏历史地址把首连拖-40-秒) |
@@ -1387,3 +1388,47 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
   `center` 后被显示器拓扑变化重置。已有配置里显式写的 `proportional` 不迁移。
 - **教训**：改默认值先全仓搜字符串与枚举构造点，再补「缺省字段」和「非法值回退」两类测试；
   默认值本身也是契约，不能只测显式值。
+
+## 32. 2.2.2 补录：音频转发绑死连接建立时的输出设备（2026-11-20）
+
+### 32.1 插耳机不切、拔耳机无声：输出流只开一次
+
+- **现象**：开启「转发平板声音」后，扬声器播放中插上耳机，其它应用的声音都切到耳机，
+  平板的声音仍从扬声器出来；反过来耳机播放中拔掉耳机（Windows 把默认设备切回扬声器），
+  平板的声音从此无声，直到断开重连。
+- **触发条件**：转发进行中系统默认输出设备变化（插拔耳机 / 蓝牙连接断开 / 手动切换）。
+- **根因**：`play_connection` 在连接建立时查一次 `default_output_device()`，把 cpal 流
+  开在那个端点上直到连接结束。WASAPI 的流绑定创建它的端点：默认设备切换不会迁移它，
+  端点消失后它只会静音——1.4.0 引音频转发起一直如此，只是没人插拔设备测过。
+- **修法**：输出流交给每条连接独立的渲染线程持有（`renderer_loop`）：设备身份用
+  MMDeviceEnumerator 的**端点 ID**（设备名会重复，端点 ID 不会）；注册
+  `IMMNotificationClient`（默认切换 / 端点增删 / 状态变化）即时唤醒，500ms 轮询兜底；
+  身份变化即先 drop 旧流再开新流（避免两个设备同播），`PcmBuffer` 与 TCP 读循环
+  原样保留——换设备不断流，跨采样率只改插值步长 `set_step`（相位 pos 恒在 [0,1)）。
+  打开设备失败改为周期重试（不再放弃整条转发），输出回调报错置 force 标志就地重建；
+  COM 不可用降级为按设备名轮询。
+- **踩坑点（Win32/COM，实现时逐一核实）**：
+  - 渲染线程先 `CoInitializeEx(COINIT_MULTITHREADED)`：cpal 的 wasapi 宿主随后在同线程
+    做 STA 初始化会拿到 `RPC_E_CHANGED_MODE`，而它把该返回值**当成功**
+    （cpal host/wasapi/com.rs），所以「我们的 MTA + cpal 的流」同线程混用安全，
+    但顺序必须我们先初始化。
+  - windows 0.62 没导出 `CLSID_MMDeviceEnumerator`，要手工
+    `GUID::from_u128(0xBCDE0395_E52F_467C_8E3D_C4579291692E)`。
+  - `IMMDevice::GetId` 的字符串要 `CoTaskMemFree` 释放（该函数每 500ms 轮询一次，
+    泄漏会持续累积）；`CoTaskMemFree` 被 windows 门在 `Win32_Security` feature 后面。
+  - `use …::IMMNotificationClient` 不会带入伴随 trait `IMMNotificationClient_Impl`
+    （同模块下的独立条目），要单独导入；`#[implement]` 生成的代码引用
+    `::windows_core::` 绝对路径，src-tauri 必须把 `windows-core` 声明为直接依赖。
+  - `CoCreateInstance` 的 `P1` 从裸 `None` 推不出来，要 turbofish
+    `::<Option<&IUnknown>, IMMDeviceEnumerator>`。
+  - cpal 错误回调闭包要 `move`（必须 'static），内部只置 `Arc<AtomicBool>` 唤醒重建。
+- **如何验证 / 回归**：播放中插耳机 / 拔耳机 / 系统设置手动切换默认设备，平板声音
+  都跟随，`shell.log` 出现「默认输出设备变化：A → B」；断开重连、开关转发无残留线程。
+  单测：`should_rebuild` 判定表（含「瞬时查不到默认设备保旧流」分支）、
+  `PcmBuffer::set_step` 跨采样率重定时。
+- **相关文件**：`src-tauri/src/audio.rs`、`src-tauri/Cargo.toml`（windows features：
+  Win32_Media_Audio / Win32_System_Com / Win32_Security；新增 windows-core 直接依赖）。
+- **版本**：2.2.2
+- **再犯的代价**：用户感知成「PadLend 的声音不切设备」而其它应用都正常；拔耳机场景是
+  彻底无声——不到真机插拔根本测不出来，测试也没有设备可插拔，只能靠单测钉住判定逻辑。
+

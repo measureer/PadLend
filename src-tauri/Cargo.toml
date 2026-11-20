@@ -1,6 +1,6 @@
 [package]
 name = "padlend-desktop"
-version = "2.2.1"
+version = "2.2.2"
 description = "PadLend - share keyboard and mouse with an Android tablet"
 authors = ["PadLend contributors"]
 edition = "2021"
@@ -26,7 +26,18 @@ cpal = "0.15"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # 1.7.6：检查更新走 WinHTTP —— 前端 fetch 读不了 github.com（没有 CORS），
 # 而 WinHTTP 还能顺带用上 Windows 的系统代理设置。
-windows = { version = "0.62", features = ["Win32_Networking_WinHttp"] }
+# 2.2.2：音频设备跟随加 MMDeviceEnumerator / IMMNotificationClient ——
+# Win32_Media_Audio（枚举端点）、Win32_System_Com（CoInitializeEx 等）、
+# Win32_Security（CoTaskMemFree 被 windows 门控在这个 feature 后面）。
+windows = { version = "0.62", features = [
+    "Win32_Networking_WinHttp",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_Security",
+] }
+# 2.2.2：#[implement] 宏生成的代码引用 ::windows_core:: 绝对路径，
+# 下游 crate 必须把 windows-core 声明为直接依赖才能解析。
+windows-core = "0.62"
 
 [features]
 default = ["custom-protocol"]
