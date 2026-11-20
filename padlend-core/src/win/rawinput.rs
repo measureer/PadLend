@@ -209,6 +209,39 @@ fn stats_of(hwnd: HWND) -> Option<&'static Stats> {
     Some(unsafe { &*(raw as *const Stats) })
 }
 
+/// 设备名（`RIDI_DEVICENAME`）。
+///
+/// 排障用：一台机器上往往同时挂着物理鼠标、触摸板、虚拟鼠标（VHF / ROOT\HIDCLASS）。
+/// 粘性按键位图是**所有设备共用**的，只有分清是谁发的 DOWN，才知道该不该怀疑它。
+/// 失败返回空串——只影响日志，不影响链路。
+pub fn device_name(hdevice: u64) -> String {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::UI::Input::{GetRawInputDeviceInfoW, RIDI_DEVICENAME};
+    let handle = HANDLE(hdevice as usize as *mut std::ffi::c_void);
+    let mut size: u32 = 0;
+    let probe = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
+    if probe == u32::MAX || size == 0 {
+        return String::new();
+    }
+    let mut buffer = vec![0u16; size as usize];
+    let written = unsafe {
+        GetRawInputDeviceInfoW(
+            Some(handle),
+            RIDI_DEVICENAME,
+            Some(buffer.as_mut_ptr().cast()),
+            &mut size,
+        )
+    };
+    if written == u32::MAX {
+        return String::new();
+    }
+    let len = buffer
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len])
+}
+
 // RAWINPUT 缓冲：热路径上每个事件都需要一块 8 字节对齐的缓冲，
 // 用 thread_local 复用避免每事件一次堆分配。
 thread_local! {

@@ -212,6 +212,28 @@
 - **版本**：1.7.1
 - **再犯的代价**：开音频就等于连不上，而且现场证据全指向「对端关闭连接」，很容易去查网络、adb 授权或服务端 jar 版本，绕很远。
 
+### 2.9 丢一次鼠标「抬起」，就再也穿不回电脑、平板上还点不动
+
+- **现象**：平板摆在显示器下方（`edge: bottom`）。刚开始正常，跑一段时间后鼠标推进平板还能动，但**往上推到底也回不到电脑**，只能按 `Ctrl+Alt+S` 手动交还；同时在板上**点击完全没反应**（移动、悬停正常）。重启 PadLend 立刻恢复。
+- **现场证据**（2.2.2 真机，连续跑了 1.5 小时后）：
+  - 事件时间线里只有最开始两次交还是 `captured→returning(exit)`，之后每一次都是 `returning(manual)`（用户按热键）；
+  - `adb shell dumpsys input` 里悬停指针的 y 能稳定降到 `0`——说明估算器已经贴到平板顶边，出口条件 `at_edge(Top)` 本身是成立的；
+  - 同一时刻平板侧 `touchingPointers=[]`、悬停指针的按键位恒为 0——设备根本没收到点击；
+  - 重启引擎（位图归零）后现象立刻消失，说明卡住的是**进程内状态**，不是设备、链路或几何配置。
+- **同一事故的第二现场（2.3.0 修出口时冒出来）**：出口能穿了之后，用户报「平板上要双击才算单击」。同一份日志里有 46 次 `[engine] buttons.healed sticky=0x01 physical=0x00`，而平板侧只收到 9 次 `tablet.mouse.btn 0x01` 和 10 次 `0x00`（多出来的一次是会话首包），`cap.start` 全是 `buttons=0x00`。位图卡在 `0x01` 期间平板处于拖拽态；用户紧接着按下左键时位图从 `0x01` 到 `0x01`「没有变化」，路由按「按键未变」不补发按键帧——**这一次按下根本没送到平板**，于是第一次点击被吃掉。
+- **根因**：按键状态是 Raw Input 的**粘性位图**——`RI_MOUSE_BUTTON_n_DOWN` 置位、`_UP` 清位（`win/rawinput.rs` → `service/engine.rs` 的 Raw Input 回调）。这条链路没有任何物理真值可核对：锁屏、休眠唤醒、设备重连会切走输入桌面，**此刻发生的抬起永远不会送达**，位图就永久停在按下。于是两个后果同时成立：
+  1. `Router::handle_captured` 的出口判定是「`inner.buttons != 0` 或不在入口边就 `overflow = 0` 直接返回」——第一位为真就短路，出口永远不评估；
+  2. `enter_captured` 看到 `buttons != 0` 会把 `neutral_until_release` 置真，平板侧按键被静默（`effective_buttons` 恒 0），点击全部丢掉。
+  只有重启引擎（位图归零）能恢复，所以现场看起来像「跑一会儿就坏了」。
+- **为什么不是 2.2.x 的回归**：出口门、`neutral_until_release`、粘性位图都是 Rust 移植（80cc63c / c5adae1）带过来的，2.2.0 / 2.2.1 / 2.2.2 的 diff 都没碰；2.2.x 只是把机器连续跑起来的时间拉长，更容易撞上这个潜伏缺陷。
+- **修法**：新增 `padlend-core/src/win/buttons.rs`——用 `GetAsyncKeyState` 的高位（`0x8000` = 此刻真的按住）读 `VK_LBUTTON/RBUTTON/MBUTTON/XBUTTON1/XBUTTON2`，`reconcile_sticky(sticky, physical) = sticky & physical`，**只清位、绝不凭空造按下**。`engine.rs` 把位图封成 `StickyButtons`，真正清位时打 `[engine] buttons.healed sticky=0x.. physical=0x.. healed=0x..`。**2.3.0 又补了两处**：① 校正从「读位图时顺带做」升级成**独立的 20ms 看门狗**（`spawn_button_watchdog`）——位图非零就与物理状态比对，清掉的位立刻以 `RawDelta{dx:0,dy:0,buttons:healed}` 交给路由，不必等鼠标移动才触发；② **带按键变化的报文直接信任报文本身**（`current_with_physical(changed, …)`），不再拿 `GetAsyncKeyState` 复核，否则刚按下的那一键会被几毫秒的时序差剪掉。排障用 `PADLEND_RAW_DEBUG=1` 按设备名打印 `[engine] raw.btn dev=… abs=… flags=0x… mask=0x… phys=0x…`。
+- **为什么取交集而不是照抄物理状态**：Raw Input 报文比 `GetAsyncKeyState` 早到几毫秒，「物理上按住了、位图还没置位」是正常时序，照抄会把用户真按住的那一路剪断。只清「物理上没按住、位图里却有」的位，既修掉卡死又不误伤。
+- **回归测试**：`service/engine.rs` 的 `sticky_buttons_follow_down_and_up` / `sticky_buttons_stay_stuck_without_the_up_packet`（丢抬起 → 位图卡死，即本 bug 的现场）/ `heal_clears_only_physically_released_buttons` / `heal_keeps_a_real_hold_and_never_invents_presses`；`win/buttons.rs` 的位图拼装与 `reconcile_only_clears_bits`；2.3.0 再加 `packet_that_carries_a_button_change_is_trusted`、`plain_movement_packet_heals_a_lost_up`、`watchdog_heal_ignores_the_packet_throttle`；另补了 `logic/router.rs` 的 `top_edge_exit_works_when_tablet_hangs_below_the_monitor`——出口用例过去只有右边缘（垂直侧），上下边零覆盖。
+- **相关文件**：`padlend-core/src/win/buttons.rs`（新）、`padlend-core/src/service/engine.rs`（`StickyButtons` / `spawn_button_watchdog`）、`padlend-core/src/win/rawinput.rs`（`device_name`）、`padlend-core/src/logic/router.rs`（出口判定里的按键短路）
+- **版本**：2.3.0
+- **第一版为什么没修干净**：校正挂在「读位图」上，而路由只在鼠标移动时才读位图；用户点击时鼠标恰好不动，卡住的位图正好把这一下吞掉。**状态类的修复要自带定时驱动（看门狗），不能依赖别的动作顺带触发**——否则修好的只是「有动作时的那条路」。
+- **再犯的代价**：症状是「进得去、回不来、平板点不动」，但现场所有可见指标（RTT、背压、上报率、指针坐标）全部正常——很容易去查比例校准、显示器拓扑或遮罩，绕很远。这类「没有证据的输入异常」，先问一句：这份状态有没有物理真值可以比对？
+
 ## 3. Windows 遮罩与光标
 
 ### 3.1 交还后遮罩残留，透明层盖住屏幕

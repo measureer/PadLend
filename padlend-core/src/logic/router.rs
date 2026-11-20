@@ -5993,6 +5993,49 @@ mod tests {
         assert_eq!(rig.router.state(), State::Idle);
     }
 
+    /// 平板摆在显示器下方（`edge: bottom`）时，穿回方向是平板**顶边**：
+    /// 向上推到估算器 y=0 并继续外推才累计溢出。
+    ///
+    /// 出口用例长期只有右边缘那四条（右边缘是 `is_vertical()` 的一侧，走的是
+    /// `along = estimator.y` 分支）；上下边属水平侧，走的是另一条分支与另一组
+    /// 法线/落点，过去零覆盖。「怎么推都回不来」的现网摆位正好落在这一侧。
+    #[test]
+    fn top_edge_exit_works_when_tablet_hangs_below_the_monitor() {
+        let rig = make_rig(test_config());
+        let bottom = EdgeSegment::new(1, Edge::Bottom, 0, 1921).expect("底边段合法");
+        rig.desktop.set_segments(vec![bottom]);
+        rig.router
+            .set_placement(Placement::new(bottom, 0.5, Align::Proportional, None).expect("底边摆位合法"));
+
+        rig.capture_manually();
+        rig.flush();
+        assert_eq!(
+            rig.inner(|inner| inner.entry_edge),
+            Some(Edge::Top),
+            "平板在显示器下方时，平板侧入口边就是顶边（出口也在这条边）"
+        );
+
+        rig.raw(0, 30); // 向下：远离顶边
+        assert_eq!(rig.inner(|inner| inner.overflow), 0.0, "离开出口方向不累计");
+        assert_eq!(rig.router.state(), State::Captured);
+
+        rig.raw(0, -30); // 推回顶边并外推
+        assert_eq!(
+            rig.inner(|inner| inner.overflow),
+            30.0,
+            "贴住顶边继续外推才累计"
+        );
+        assert_eq!(rig.router.state(), State::Captured);
+
+        rig.raw(0, -60);
+        assert_eq!(rig.router.state(), State::Returning);
+        assert!(rig.transitions().contains(&(
+            State::Captured,
+            State::Returning,
+            "exit".to_string()
+        )));
+    }
+
     /// 按住键时不得因溢出退出。
     #[test]
     fn held_button_blocks_exit() {

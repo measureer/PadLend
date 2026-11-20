@@ -2,6 +2,44 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.3.0] — 2026-11-21
+
+### 修复
+
+- **丢一次鼠标「抬起」之后，鼠标再也穿不回电脑、平板上还点不动**：按键状态是 Raw Input
+  的粘性位图（`RI_MOUSE_BUTTON_n_DOWN` 置位、`_UP` 清位），而这条链路没有任何物理真值
+  可以核对——锁屏、休眠唤醒、设备重连会切走输入桌面，此时发生的抬起永远不送达，位图就
+  永久停在按下状态。后果是连锁的：路由的出口判定是「有键按住就不评估出口」，于是鼠标推
+  进平板后往上推到底也回不来；同一份状态又让进入接管时把平板侧按键静默
+  （`neutral_until_release`），平板上连点击都没有反应；只有重启引擎才能恢复。现在引擎用
+  `win/buttons.rs` 读 `GetAsyncKeyState` 的高位判断按键此刻是否真的按住，
+  `reconcile_sticky = sticky & physical` **只清位、绝不凭空造出按下**。这是 Rust 端口
+  （80cc63c）以来就有的缺陷，不是 2.2.x 引入的回归。
+- **平板上「点两下才算一下」**：上一条的位图卡在按下时，平板侧一直处于拖拽态；用户紧接
+  着按下左键，位图从 `0x01` 到 `0x01` 没有变化，路由按「按键未变」不补发按键帧，这一次
+  按下**根本没送到平板**——看起来就是第一下被吃掉。第一次的修法只在「读位图」时顺带校正
+  （200ms 节流，而且只有鼠标在动、路由真的去读位图时才触发），卡住的窗口足够长到吃掉一
+  整次点击。现在把校正改成**独立的 20ms 看门狗**：位图非零就与物理状态比对，清掉的位立刻
+  以 `RawDelta{dx:0,dy:0,buttons:healed}` 交给路由，不必等下一次鼠标移动；同时**带按键变化
+  的报文直接信任报文本身**，不再拿 `GetAsyncKeyState` 复核，避免几毫秒的时序差把刚按下的
+  那一键剪掉。排障时设 `PADLEND_RAW_DEBUG=1` 可按设备名打印
+  `[engine] raw.btn dev=… abs=… flags=0x… mask=0x… phys=0x…`（本机有 8 个鼠标类设备，含
+  两个 VHF 虚拟鼠标与 Zako Virtual Mouse，它们与真实鼠标共用同一份位图）。
+
+### 验证
+
+- `padlend-core` `cargo test` 全绿（565 passed / 10 ignored）；新增粘性位图回归用例：
+  `sticky_buttons_follow_down_and_up`、`sticky_buttons_stay_stuck_without_the_up_packet`
+  （丢抬起 → 位图卡死，即本 bug 的现场）、`heal_clears_only_physically_released_buttons`、
+  `heal_keeps_a_real_hold_and_never_invents_presses`、`packet_that_carries_a_button_change_is_trusted`
+  （带按键变化的报文不被物理复核剪掉）、`plain_movement_packet_heals_a_lost_up`、
+  `watchdog_heal_ignores_the_packet_throttle`，以及 `win/buttons.rs` 的位图拼装与
+  `reconcile_only_clears_bits`。另补上下边出口用例
+  `top_edge_exit_works_when_tablet_hangs_below_the_monitor`（平板在显示器下方时，
+  穿回走平板顶边；过去出口用例只有右边缘）。
+- 真机（平板在显示器下方，`edge: bottom`）：修改后连续使用，穿回与平板点击均正常；
+  丢抬起再发生时 `service.log` 会出现 `[engine] buttons.healed`，点击不再被吃掉。
+
 ## [2.2.2] — 2026-11-20
 
 ### 修复

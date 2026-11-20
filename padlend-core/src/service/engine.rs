@@ -54,6 +54,184 @@ const AUTO_RELOCATE_HINTS: u32 = 3;
 /// `adb disconnect` 的超时（秒）。断开/退出是同步路径，宁可放过也不能卡住。
 const ADB_DISCONNECT_TIMEOUT_S: f64 = 3.0;
 
+/// 粘性按键位图的自愈节流：200ms 一次，跟得上人手又不必每个报文都去查系统。
+const BUTTON_HEAL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 看门狗的自愈节拍。位图非零时每 20ms 按物理状态校正一次——比一次点击还短，
+/// 所以「丢了的抬起」来不及在平板上变成一段拖拽，也不会把紧接着的下一次点击吞掉
+/// （那正是现场「点一下没反应、得点第二下」的成因）。
+const BUTTON_WATCHDOG_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Raw Input 按键排障日志开关（`PADLEND_RAW_DEBUG=1`）：只在按键变化时打，
+/// 记下设备名、向量类型与当时的物理状态，用来判断是哪个设备在发不配对的 DOWN。
+fn raw_debug() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var_os("PADLEND_RAW_DEBUG").is_some())
+}
+
+/// Raw Input 的粘性按键位图。
+///
+/// Raw Input 只报「按下 / 抬起」的变化，位图负责合成当前状态。这条链路**没有自愈能力**：
+/// 锁屏、休眠唤醒、设备重连会切走输入桌面，此时发生的抬起永远不会送达，位图就永久停在
+/// 按下状态。后果见 `win/buttons.rs` 的模块注释——出口判定永远跳过（鼠标推进平板就回
+/// 不来），平板侧还会因为 `neutral_until_release` 收不到任何点击。
+///
+/// 所以每次读位图都可能顺手用物理按键状态（`GetAsyncKeyState`）校正一次：只清掉物理上
+/// 没按住的位，绝不凭空造出按下（那样会把用户真按住的那一路剪掉）。
+struct StickyButtons {
+    state: Mutex<i32>,
+    last_heal: Mutex<Option<Instant>>,
+    /// 最近一条带按键 flag 的报文来自哪个设备（只给排障日志看）。
+    last_device: Mutex<u64>,
+}
+
+impl StickyButtons {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(0),
+            last_heal: Mutex::new(None),
+            last_device: Mutex::new(0),
+        }
+    }
+
+    /// 用一条 Raw Input 报文更新位图（没有按键 flag 的报文完全不进锁）。
+    ///
+    /// 返回位图是否真的变了——调用方据此决定要不要信这条报文、要不要打排障日志。
+    fn apply(&self, flags: u16, device: u64) -> bool {
+        if flags == 0 {
+            return false;
+        }
+        if let Ok(mut last) = self.last_device.lock() {
+            *last = device;
+        }
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let before = *state;
+        for bit in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100] {
+            if flags & bit != 0 {
+                if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                    *state |= i32::from(mask);
+                }
+            }
+        }
+        for bit in [0x0002u16, 0x0008, 0x0020, 0x0080, 0x0200] {
+            if flags & bit != 0 {
+                if let Some(mask) = crate::constants::raw_button_flag(bit) {
+                    *state &= !i32::from(mask);
+                }
+            }
+        }
+        *state != before
+    }
+
+    /// 当前位图（只读，不自愈）。
+    fn value(&self) -> i32 {
+        *self.state.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    /// 用给定的物理按键状态校正位图，返回校正后的值（不节流；看门狗与测试都走这里）。
+    ///
+    /// 先读设备号再拿状态锁——`apply` 也是这个顺序，两把锁不会反向抱死。
+    fn heal_with(&self, physical: i32) -> i32 {
+        let device = *self.last_device.lock().unwrap_or_else(|err| err.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let healed = crate::win::buttons::reconcile_sticky(*state, physical);
+        if healed != *state {
+            if raw_debug() {
+                eprintln!(
+                    "[engine] buttons.healed sticky=0x{:02x} physical=0x{:02x} healed=0x{:02x} dev={}",
+                    *state,
+                    physical,
+                    healed,
+                    crate::win::rawinput::device_name(device)
+                );
+            } else {
+                eprintln!(
+                    "[engine] buttons.healed sticky=0x{:02x} physical=0x{:02x} healed=0x{:02x}",
+                    *state, physical, healed
+                );
+            }
+            *state = healed;
+        }
+        healed
+    }
+
+    /// 事件路径入口：位图非零时按 200ms 节流用系统真实按键状态自愈一次。
+    fn current(&self, packet_changed_buttons: bool) -> i32 {
+        self.current_with_physical(packet_changed_buttons, || {
+            crate::win::buttons::physical_buttons()
+        })
+    }
+
+    /// `current` 的可注入版本（测试用；生产实现只把物理状态换成了系统调用）。
+    fn current_with_physical(
+        &self,
+        packet_changed_buttons: bool,
+        physical: impl FnOnce() -> i32,
+    ) -> i32 {
+        let state = self.value();
+        if state == 0 {
+            return 0;
+        }
+        // 带按键变化的报文直接信它：这一刻去问系统，可能读到「还没把这一下算进去」的旧
+        // 状态，真按下的那一键就被剪掉了。丢抬起由纯位移报文与看门狗兜住。
+        if packet_changed_buttons {
+            return state;
+        }
+        if !self.heal_window_open() {
+            return state;
+        }
+        self.heal_with(physical())
+    }
+
+    /// 报文路径的自愈节流：窗口开着就推开窗口并返回 true。
+    fn heal_window_open(&self) -> bool {
+        let mut last = self.last_heal.lock().unwrap_or_else(|err| err.into_inner());
+        match *last {
+            Some(prev) if prev.elapsed() < BUTTON_HEAL_INTERVAL => false,
+            _ => {
+                *last = Some(Instant::now());
+                true
+            }
+        }
+    }
+}
+
+/// 按键位图看门狗：位图非零时每 20ms 用物理状态校正一次，校正掉了就把新的按键状态
+/// 推给 Router。
+///
+/// 为什么必须有它：粘性位图只能靠「抬起的报文」清零，而报文可能永远不来（锁屏/唤醒/设备
+/// 掉线/虚拟鼠标只发 DOWN）。报文路径的 200ms 节流只能在下一条鼠标报文到达时才生效——
+/// 用户点完就停手的话，平板会一直以为左键按着（拖拽状态），紧接着的下一次点击还会被吞掉。
+/// 看门狗不依赖鼠标报文，20ms 内就能把抬起补上。
+fn spawn_button_watchdog(
+    router: Arc<Router>,
+    buttons: Arc<StickyButtons>,
+) -> Option<JoinHandle<()>> {
+    thread::Builder::new()
+        .name("padlend-button-watchdog".to_string())
+        .spawn(move || loop {
+            thread::sleep(BUTTON_WATCHDOG_INTERVAL);
+            let before = buttons.value();
+            if before == 0 {
+                continue;
+            }
+            let healed = buttons.heal_with(crate::win::buttons::physical_buttons());
+            if healed == before {
+                continue;
+            }
+            // 只补按键状态：位移为 0 的报文不推动指针，也不会误触发出口判定。
+            router.on_raw(&crate::logic::events::RawDelta {
+                dx: 0,
+                dy: 0,
+                buttons: healed,
+                wheel: 0,
+                absolute: false,
+                ts: 0.0,
+            });
+        })
+        .ok()
+}
+
 /// 一条日志。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEntry {
@@ -436,29 +614,26 @@ impl Engine {
         }
         if let Some(router) = self.router().cloned() {
             let desktop = Arc::clone(&self.desktop);
-            let buttons = Arc::new(std::sync::Mutex::new(0i32));
+            let buttons = Arc::new(StickyButtons::new());
+            // 看门狗要用自己的克隆：下面那个闭包会把 router 与 buttons 移走。
+            let watchdog_router = Arc::clone(&router);
+            let watchdog_buttons = Arc::clone(&buttons);
             let last_abs = Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::<u64, (i32, i32)>::new(),
             ));
             let handler: Arc<dyn Fn(crate::decode::MousePacket) + Send + Sync> =
                 Arc::new(move |packet| {
                     // 纯位移事件占绝大多数：没有按键 flag 就完全不碰这把锁。
-                    if packet.button_flags != 0 {
-                        let mut state = buttons.lock().unwrap_or_else(|err| err.into_inner());
-                        for bit in [0x0001u16, 0x0004, 0x0010, 0x0040, 0x0100] {
-                            if packet.button_flags & bit != 0 {
-                                if let Some(mask) = crate::constants::raw_button_flag(bit) {
-                                    *state |= i32::from(mask);
-                                }
-                            }
-                        }
-                        for bit in [0x0002u16, 0x0008, 0x0020, 0x0080, 0x0200] {
-                            if packet.button_flags & bit != 0 {
-                                if let Some(mask) = crate::constants::raw_button_flag(bit) {
-                                    *state &= !i32::from(mask);
-                                }
-                            }
-                        }
+                    let changed = buttons.apply(packet.button_flags, packet.device);
+                    if changed && raw_debug() {
+                        eprintln!(
+                            "[engine] raw.btn dev={} abs={} flags=0x{:04x} mask=0x{:02x} phys=0x{:02x}",
+                            crate::win::rawinput::device_name(packet.device),
+                            packet.is_absolute(),
+                            packet.button_flags,
+                            buttons.value(),
+                            crate::win::buttons::physical_buttons()
+                        );
                     }
                     let (dx, dy) = if packet.is_absolute() {
                         let rect = desktop.bounding_box();
@@ -485,7 +660,7 @@ impl Engine {
                     let delta = crate::logic::events::RawDelta {
                         dx,
                         dy,
-                        buttons: *buttons.lock().unwrap_or_else(|err| err.into_inner()),
+                        buttons: buttons.current(changed),
                         wheel,
                         absolute: packet.is_absolute(),
                         ts: 0.0,
@@ -496,6 +671,16 @@ impl Engine {
                 // 源必须活到进程结束：忘掉句柄比"drop 掉立刻停止采集"更符合这里的需求。
                 Ok(source) => {
                     eprintln!("[engine] Raw Input 已启动（服务模式）");
+                    match spawn_button_watchdog(watchdog_router, watchdog_buttons) {
+                        Some(handle) => {
+                            eprintln!(
+                                "[engine] 按键位图看门狗已启动（{}ms）",
+                                BUTTON_WATCHDOG_INTERVAL.as_millis()
+                            );
+                            std::mem::forget(handle)
+                        }
+                        None => eprintln!("[engine] 按键位图看门狗启动失败"),
+                    }
                     std::mem::forget(source)
                 }
                 Err(err) => eprintln!("[engine] Raw Input 启动失败：{err}"),
@@ -2194,5 +2379,118 @@ mod tests {
         assert!(config.layouts.get("sim:5555", "landscape").is_none());
         // 第二次迁移同一身份已无 profile → false。
         assert!(!engine.move_layout_identity("sim:5555", "HW1"));
+    }
+
+    // ---- 粘性按键位图：丢一次「抬起」就会永久卡死（出口失效 + 平板点不动）----
+
+    /// Raw Input 的按键 flag（`RI_MOUSE_BUTTON_n_DOWN/UP`）。
+    const RI_LEFT_DOWN: u16 = 0x0001;
+    const RI_LEFT_UP: u16 = 0x0002;
+    const RI_RIGHT_DOWN: u16 = 0x0004;
+
+    #[test]
+    fn sticky_buttons_follow_down_and_up() {
+        let buttons = StickyButtons::new();
+        assert_eq!(buttons.value(), 0);
+        assert!(buttons.apply(RI_LEFT_DOWN, 7), "按下算变化");
+        assert_eq!(buttons.value(), i32::from(C::MOUSE_BTN_LEFT));
+        assert!(buttons.apply(RI_LEFT_UP, 7), "抬起算变化");
+        assert_eq!(buttons.value(), 0);
+        // 纯位移报文（没有按键 flag）不该动位图，也不该报「变了」。
+        assert!(!buttons.apply(0, 7));
+        assert_eq!(buttons.value(), 0);
+        // 同向重复的 DOWN（有的鼠标/虚拟鼠标会重发）不算变化。
+        buttons.apply(RI_LEFT_DOWN, 7);
+        assert!(!buttons.apply(RI_LEFT_DOWN, 7));
+    }
+
+    #[test]
+    fn sticky_buttons_stay_stuck_without_the_up_packet() {
+        // 现场复现：锁屏 / 休眠 / 虚拟鼠标只发 DOWN 不发 UP，位图就停在按下。
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN, 1);
+        assert_eq!(buttons.value(), i32::from(C::MOUSE_BTN_LEFT));
+        // 之后再多纯位移也不会自己清零——这正是「进得去、回不来、平板点不动」的成因。
+        for _ in 0..3 {
+            buttons.apply(0, 1);
+        }
+        assert_eq!(buttons.value(), i32::from(C::MOUSE_BTN_LEFT));
+    }
+
+    #[test]
+    fn heal_clears_only_physically_released_buttons() {
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN | RI_RIGHT_DOWN, 1);
+        assert_eq!(
+            buttons.value(),
+            i32::from(C::MOUSE_BTN_LEFT | C::MOUSE_BTN_RIGHT)
+        );
+        // 物理上只剩右键按住 → 卡住的左键清掉，右键保留。
+        assert_eq!(
+            buttons.heal_with(i32::from(C::MOUSE_BTN_RIGHT)),
+            i32::from(C::MOUSE_BTN_RIGHT)
+        );
+        assert_eq!(buttons.value(), i32::from(C::MOUSE_BTN_RIGHT));
+        // 物理上一个都没按住 → 全部清掉，出口判定与平板点击立刻恢复。
+        assert_eq!(buttons.heal_with(0), 0);
+        assert_eq!(buttons.value(), 0);
+    }
+
+    #[test]
+    fn heal_keeps_a_real_hold_and_never_invents_presses() {
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN, 1);
+        // 物理上真按着 → 原样保留。
+        assert_eq!(
+            buttons.heal_with(i32::from(C::MOUSE_BTN_LEFT)),
+            i32::from(C::MOUSE_BTN_LEFT)
+        );
+        buttons.apply(RI_LEFT_UP, 1);
+        assert_eq!(buttons.value(), 0);
+        // 物理上多出别的键（Raw Input 还没送到）→ 不能凭空造出按下。
+        assert_eq!(buttons.heal_with(i32::from(C::MOUSE_BTN_RIGHT)), 0);
+        assert_eq!(buttons.value(), 0);
+    }
+
+    #[test]
+    fn packet_that_carries_a_button_change_is_trusted() {
+        // 刚按下的那一包直接信它：这一刻去问系统，可能读到「还没把这一下算进去」的旧状态，
+        // 真按下的键就被剪掉了——现场「点一下没反应」的一种成因。
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN, 1);
+        assert_eq!(
+            buttons.current_with_physical(true, || 0),
+            i32::from(C::MOUSE_BTN_LEFT)
+        );
+        assert_eq!(buttons.value(), i32::from(C::MOUSE_BTN_LEFT));
+    }
+
+    #[test]
+    fn plain_movement_packet_heals_a_lost_up() {
+        // 报文路径兜底：下一条纯位移报文发现物理上已经松手 → 立刻清位。
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN, 1);
+        assert_eq!(buttons.current_with_physical(false, || 0), 0);
+        assert_eq!(buttons.value(), 0);
+    }
+
+    #[test]
+    fn watchdog_heal_ignores_the_packet_throttle() {
+        // 报文路径有 200ms 节流：窗口内不自愈；看门狗走的 heal_with 不受节流限制。
+        let buttons = StickyButtons::new();
+        buttons.apply(RI_LEFT_DOWN, 1);
+        // 第一次：窗口开着，物理上「仍按着」→ 保留，并推开窗口。
+        assert_eq!(
+            buttons.current_with_physical(false, || i32::from(C::MOUSE_BTN_LEFT)),
+            i32::from(C::MOUSE_BTN_LEFT)
+        );
+        // 窗口内即便物理上已松手也不会清——这就是看门狗存在的理由。
+        assert_eq!(
+            buttons.current_with_physical(false, || 0),
+            i32::from(C::MOUSE_BTN_LEFT)
+        );
+        // 看门狗不等窗口：立刻清掉。
+        assert_eq!(buttons.heal_with(0), 0);
+        assert_eq!(buttons.value(), 0);
     }
 }
