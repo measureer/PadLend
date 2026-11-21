@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::core::{implement, GUID, PCWSTR};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Media::Audio::{
@@ -51,8 +51,28 @@ const CHANNELS: u32 = 2;
 const BITS: u32 = 16;
 const HEADER_LEN: usize = 16;
 const READ_SIZE: usize = 4096;
-const TARGET_FRAMES: usize = 4_800; // 100 ms 预缓冲
-const MAX_FRAMES: usize = 48_000; // 最多缓冲 1 s，防止内存无限增长
+/// 起播预缓冲：40 ms（2.3.1 之前是 100 ms，那是整条链路里最大的一笔固定延迟）。
+const TARGET_FRAMES: usize = 1_920;
+/// 自适应目标的下限 / 上限：20 ms ～ 120 ms。
+const MIN_TARGET_FRAMES: usize = 960;
+const MAX_TARGET_FRAMES: usize = 5_760;
+/// 水位死区：误差在 10 ms 以内不修正，避免来回微调。
+const DEADZONE_FRAMES: usize = 480;
+/// 比例修正的时间常数：10 秒吃掉全部水位误差。
+const TRIM_TAU_S: f64 = 10.0;
+/// 最大音调偏移 ±0.5%（约 8 音分，正常听不出来）。
+const TRIM_MAX: f64 = 0.005;
+/// 水位超过目标 60 ms 就直接丢最旧的一段（突发/卡顿后的延迟回收）。
+const HARD_TRIM_FRAMES: usize = 2_880;
+/// 起播 / 丢块后的淡入长度：3 ms，避免爆音。
+const FADE_FRAMES: usize = 144;
+/// 每次欠载目标上调 10 ms。
+const UNDER_RUN_STEP_FRAMES: usize = 480;
+/// 稳定 30 秒才把目标降一档（5 ms）。
+const DECAY_INTERVAL: Duration = Duration::from_secs(30);
+/// 水位统计与日志周期。
+const STATS_INTERVAL: Duration = Duration::from_secs(10);
+const MAX_FRAMES: usize = 48_000; // 最多缓冲 1 s 的硬上限（正常由 trim 收回，不会走到这里）
 /// 设备跟随的轮询周期：正常时事件回调即时唤醒，这里只是兜底；
 /// 也是重试「打开失败设备」的间隔。
 const DEVICE_POLL_S: Duration = Duration::from_millis(500);
@@ -188,6 +208,9 @@ fn play_connection(mut tcp: TcpStream) -> Result<u64, String> {
     };
 
     let mut pending: Vec<u8> = Vec::new();
+    // i16 → f32 的转换挪到锁外：一个 64KB 块是 1.6 万帧，放在 Mutex 里转会让
+    // 输出回调的 try_lock 扑空、整周期静音（目标水位压到 40ms 后尤其明显）。
+    let mut samples: Vec<f32> = Vec::with_capacity(READ_SIZE / 2);
     let mut chunk = [0u8; READ_SIZE];
     let mut received: u64 = 0;
     let mut failure: Option<String> = None;
@@ -213,8 +236,13 @@ fn play_connection(mut tcp: TcpStream) -> Result<u64, String> {
         pending.extend_from_slice(&chunk[..n]);
         let usable = pending.len() - pending.len() % 4;
         if usable > 0 {
+            samples.clear();
+            for frame in pending[..usable].chunks_exact(4) {
+                samples.push(i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0);
+                samples.push(i16::from_le_bytes([frame[2], frame[3]]) as f32 / 32768.0);
+            }
             if let Ok(mut guard) = buffer.lock() {
-                guard.feed(&pending[..usable]);
+                guard.push_samples(&samples);
             }
             pending.drain(..usable);
         }
@@ -295,6 +323,7 @@ fn renderer_loop(
 
     let mut current: Option<LiveStream> = None;
     let mut last_error = String::new();
+    let mut last_stats = Instant::now();
     loop {
         let forced = force.swap(false, Ordering::Relaxed);
         let want_key = match enumerator.as_ref() {
@@ -331,6 +360,19 @@ fn renderer_loop(
                     }
                 }
             }
+        }
+        if last_stats.elapsed() >= STATS_INTERVAL {
+            if let Ok(pcm) = buffer.lock() {
+                let s = pcm.stats();
+                crate::shell_log!(
+                    "[audio] 缓冲水位 {:.1}ms / 目标 {:.0}ms（欠载 {} 次，丢块 {} 次）",
+                    s.fill_ms,
+                    s.target_ms,
+                    s.underruns,
+                    s.drops
+                );
+            }
+            last_stats = Instant::now();
         }
         match wake_rx.recv_timeout(DEVICE_POLL_S) {
             Ok(Wake::Stop) | Err(RecvTimeoutError::Disconnected) => break,
@@ -560,12 +602,38 @@ impl Notifications_Impl {
     }
 }
 
-/// 将交错立体声 f32 样本转换成设备采样率；队列不足时输出静音。
+/// 把交错立体声 f32 样本转换成设备采样率；队列不足时输出静音。
+///
+/// 2.3.1 起水位不再固定 100 ms：起播按 `target_frames`（默认 40 ms），欠载就
+/// 上调、稳定就下调；平板与声卡的时钟差用 ±0.5% 的比例修正吃掉，延迟因此被
+/// 钉在目标值附近，不会随播放时长往上漂。
 struct PcmBuffer {
     queue: VecDeque<f32>,
     step: f64,
     pos: f64,
     started: bool,
+    /// 刚欠载：等水位回到目标一半再恢复出声，避免在水位 0 附近一路断音。
+    starved: bool,
+    /// 当前目标水位（帧）：欠载上调、稳定下调。
+    target_frames: usize,
+    /// 淡入剩余帧数（起播、丢块后防爆音）。
+    fade_remaining: usize,
+    /// 每 1024 帧才查一次要不要降目标，别在回调里每帧读时钟。
+    decay_tick: u32,
+    underruns: u64,
+    drops: u64,
+    /// 最近一次欠载 / 降档的时刻。
+    last_event: Instant,
+    /// 测试里关掉比例修正，让重采样断言保持精确（生产恒为 true）。
+    trim_enabled: bool,
+}
+
+/// 水位统计（写 shell.log 用）。
+struct PcmStats {
+    fill_ms: f64,
+    target_ms: f64,
+    underruns: u64,
+    drops: u64,
 }
 
 impl PcmBuffer {
@@ -575,40 +643,92 @@ impl PcmBuffer {
             step,
             pos: 0.0,
             started: false,
+            starved: false,
+            target_frames: TARGET_FRAMES,
+            fade_remaining: 0,
+            decay_tick: 0,
+            underruns: 0,
+            drops: 0,
+            last_event: Instant::now(),
+            trim_enabled: true,
         }
     }
 
-    fn feed(&mut self, bytes: &[u8]) {
-        for chunk in bytes.chunks_exact(4) {
-            let left = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
-            let right = i16::from_le_bytes([chunk[2], chunk[3]]) as f32 / 32768.0;
-            self.queue.push_back(left);
-            self.queue.push_back(right);
+    fn fill_frames(&self) -> usize {
+        self.queue.len() / 2
+    }
+
+    fn stats(&self) -> PcmStats {
+        PcmStats {
+            fill_ms: self.fill_frames() as f64 * 1000.0 / SAMPLE_RATE as f64,
+            target_ms: self.target_frames as f64 * 1000.0 / SAMPLE_RATE as f64,
+            underruns: self.underruns,
+            drops: self.drops,
         }
+    }
+
+    /// 写入已解码的交错立体声样本（锁内只做搬运，不做转换）。
+    fn push_samples(&mut self, samples: &[f32]) {
+        self.queue.extend(samples.iter().copied());
+        // 1 s 硬上限：极端卡顿后的兜底，正常由目标水位收回。
         let max_samples = MAX_FRAMES * 2;
         if self.queue.len() > max_samples {
             let drop = self.queue.len() - max_samples;
             self.queue.drain(..drop);
-            // 丢弃旧样本后，插值位置也要跟着回退，避免音调跳变。
             self.pos = 0.0;
+            self.fade_remaining = FADE_FRAMES;
+            self.drops += 1;
+        }
+        // 水位超过目标 60 ms（突发、卡顿恢复后）不等比例修正慢慢收：
+        // 直接丢最旧的一段，否则延迟要几十秒才降回来。
+        if self.started {
+            let fill = self.fill_frames();
+            if fill > self.target_frames + HARD_TRIM_FRAMES {
+                let drop = (fill - self.target_frames) * 2;
+                self.queue.drain(..drop.min(self.queue.len()));
+                self.pos = 0.0;
+                self.fade_remaining = FADE_FRAMES;
+                self.drops += 1;
+            }
         }
     }
 
     fn next_frame(&mut self) -> (f32, f32) {
+        let fill = self.fill_frames();
+
+        // 稳定一段时间后把目标水位降回默认，延迟不越用越大。
+        self.decay_tick += 1;
+        if self.decay_tick >= 1_024 {
+            self.decay_tick = 0;
+            self.maybe_decay(fill);
+        }
+
         if !self.started {
-            if self.queue.len() < TARGET_FRAMES * 2 {
+            if fill < self.target_frames {
                 return (0.0, 0.0);
             }
             self.started = true;
+            self.starved = false;
+            self.fade_remaining = FADE_FRAMES;
         }
-        // 起播后只在“不足一帧”时静音；不能继续用 100ms 水位当门槛，
-        // 否则每次缓冲降到水位以下都会插一段静音，形成周期性爆音。
-        if self.queue.len() < 4 {
+
+        if self.starved {
+            // 欠载后必须攒回目标的一半，不然会在水位 0 附近反复断音。
+            if fill < self.target_frames / 2 {
+                return (0.0, 0.0);
+            }
+            self.starved = false;
+            self.fade_remaining = FADE_FRAMES;
+        }
+
+        if fill < 2 {
+            self.on_underrun();
             return (0.0, 0.0);
         }
         let index = self.pos as usize;
         let sample_index = index * 2;
         if sample_index + 3 >= self.queue.len() {
+            self.on_underrun();
             return (0.0, 0.0);
         }
         let frac = self.pos - index as f64;
@@ -616,16 +736,67 @@ impl PcmBuffer {
         let r0 = self.queue[sample_index + 1];
         let l1 = self.queue[sample_index + 2];
         let r1 = self.queue[sample_index + 3];
-        let left = l0 + (l1 - l0) * frac as f32;
-        let right = r0 + (r1 - r0) * frac as f32;
+        let mut left = l0 + (l1 - l0) * frac as f32;
+        let mut right = r0 + (r1 - r0) * frac as f32;
 
-        self.pos += self.step;
+        // 起播 / 丢块后的 3 ms 淡入，避免从半波起点出声时爆一下。
+        if self.fade_remaining > 0 {
+            self.fade_remaining -= 1;
+            let gain = (FADE_FRAMES - self.fade_remaining) as f32 / FADE_FRAMES as f32;
+            left *= gain;
+            right *= gain;
+        }
+
+        // 时钟差补偿：水位富余就快一点点、吃紧就慢一点点（最多 ±0.5%）。
+        let step = self.step * (1.0 + self.trim_for_fill(fill));
+        self.pos += step;
         while self.pos >= 1.0 {
             self.queue.pop_front();
             self.queue.pop_front();
             self.pos -= 1.0;
         }
         (left, right)
+    }
+
+    /// 按水位误差给重采样步长一个比例修正。
+    ///
+    /// 误差 10 ms、时间常数 10 s → 步长偏 0.1%；误差 50 ms 以上封顶 ±0.5%
+    /// （约 8 音分）。10 ms 死区保证在目标附近来回时不抖动。
+    fn trim_for_fill(&self, fill: usize) -> f64 {
+        if !self.trim_enabled {
+            return 0.0;
+        }
+        let error = fill as f64 - self.target_frames as f64;
+        if error.abs() <= DEADZONE_FRAMES as f64 {
+            return 0.0;
+        }
+        (error / SAMPLE_RATE as f64 / TRIM_TAU_S).clamp(-TRIM_MAX, TRIM_MAX)
+    }
+
+    fn on_underrun(&mut self) {
+        self.starved = true;
+        self.underruns += 1;
+        self.last_event = Instant::now();
+        if self.target_frames < MAX_TARGET_FRAMES {
+            self.target_frames =
+                (self.target_frames + UNDER_RUN_STEP_FRAMES).min(MAX_TARGET_FRAMES);
+        }
+    }
+
+    /// 连续 30 秒没有欠载，才把目标水位降 5 ms（最低 20 ms）。
+    fn maybe_decay(&mut self, fill: usize) {
+        if self.target_frames <= MIN_TARGET_FRAMES || fill + DEADZONE_FRAMES < self.target_frames {
+            return;
+        }
+        let now = Instant::now();
+        if now.duration_since(self.last_event) < DECAY_INTERVAL {
+            return;
+        }
+        self.target_frames = self
+            .target_frames
+            .saturating_sub(240)
+            .max(MIN_TARGET_FRAMES);
+        self.last_event = now;
     }
 
     /// 重采样步长随新设备的采样率变化（2.2.2：切换输出设备用）。
@@ -654,26 +825,94 @@ mod tests {
         assert!(!should_rebuild(None, None, false));
     }
 
-    /// 一帧（左右声道同值）的 16-bit LE PCM 字节。
-    fn frame_bytes(value: f32) -> Vec<u8> {
-        let raw = (value * 32768.0) as i16;
-        let bytes = raw.to_le_bytes();
-        [bytes[0], bytes[1], bytes[0], bytes[1]].to_vec()
-    }
-
     #[test]
     fn buffer_retiming_on_step_change() {
         // 设备换采样率（48k → 96k）后只改步长：相位 pos 保留，重采样无缝续播。
         let mut b = PcmBuffer::new(1.0);
-        b.feed(&frame_bytes(0.5));
-        b.feed(&frame_bytes(0.25));
-        b.feed(&frame_bytes(0.125));
-        // 跳过 100ms 预缓冲水位（私有字段，同 crate 测试可直改）。
+        b.trim_enabled = false; // 关掉时钟修正，断言才精确
+        b.push_samples(&[0.5, 0.5]);
+        b.push_samples(&[0.25, 0.25]);
+        b.push_samples(&[0.125, 0.125]);
         b.started = true;
         assert_eq!(b.next_frame(), (0.5, 0.5));
         // 步长 1.0 → 0.5：同一对帧之间走半程。
         b.set_step(0.5);
         assert_eq!(b.next_frame(), (0.25, 0.25));
         assert_eq!(b.next_frame(), (0.1875, 0.1875));
+    }
+
+    #[test]
+    fn starts_at_the_new_40ms_watermark() {
+        let mut b = PcmBuffer::new(1.0);
+        b.trim_enabled = false;
+        // 差 1 帧不到目标：仍然静音。
+        b.push_samples(&vec![0.5; (TARGET_FRAMES - 1) * 2]);
+        assert_eq!(b.next_frame(), (0.0, 0.0));
+        // 补满目标：起播；首帧带 3 ms 淡入，所以只要求「出声」。
+        b.push_samples(&[0.5, 0.5]);
+        let (left, right) = b.next_frame();
+        assert!(left > 0.0 && left < 0.5, "起播首帧应当淡入: {left}");
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn excess_water_is_trimmed_by_resampling() {
+        let mut b = PcmBuffer::new(1.0);
+        b.started = true;
+        // 比目标多 50 ms（2400 帧）：步长应当快 0.5%，水位被慢慢吃掉。
+        b.push_samples(&vec![0.5; (TARGET_FRAMES + 2_400) * 2]);
+        let before = b.fill_frames();
+        // 0.5% 的修正即每秒吃掉 240 帧，攒回目标要 10 秒（48 万帧）。
+        for _ in 0..480_000 {
+            // 生产者按 1x 供数、消费者按约 1.005x 取数。
+            b.push_samples(&[0.5, 0.5]);
+            b.next_frame();
+        }
+        let after = b.fill_frames();
+        assert!(
+            after + 1_000 < before,
+            "水位应当被吃回去: {before} -> {after}"
+        );
+    }
+
+    #[test]
+    fn trim_is_zero_inside_the_deadzone_and_clamped_outside() {
+        // 把目标调大，才能同时构造出「富余 50ms」与「亏欠 50ms」两侧的封顶。
+        let mut b = PcmBuffer::new(1.0);
+        b.target_frames = 10_000;
+        assert_eq!(b.trim_for_fill(10_000), 0.0);
+        assert_eq!(b.trim_for_fill(10_000 + DEADZONE_FRAMES), 0.0);
+        // 误差 50ms（时间常数 10s）正好打在 ±0.5% 的钳位上。
+        assert!((b.trim_for_fill(10_000 + 2_400) - TRIM_MAX).abs() < 1e-9);
+        assert!((b.trim_for_fill(10_000 - 2_400) + TRIM_MAX).abs() < 1e-9);
+    }
+
+    #[test]
+    fn underrun_raises_target_and_waits_for_refill() {
+        let mut b = PcmBuffer::new(1.0);
+        b.trim_enabled = false;
+        b.started = true;
+        // 空队列打一拍：判定欠载，目标涨 10 ms。
+        assert_eq!(b.next_frame(), (0.0, 0.0));
+        assert_eq!(b.underruns, 1);
+        assert_eq!(b.target_frames, TARGET_FRAMES + UNDER_RUN_STEP_FRAMES);
+        // 水位回到目标一半之前继续静音。
+        b.push_samples(&vec![0.5; (b.target_frames / 2 - 1) * 2]);
+        assert_eq!(b.next_frame(), (0.0, 0.0));
+        b.push_samples(&vec![0.5; 2]);
+        let (left, _) = b.next_frame();
+        assert!(left > 0.0, "攒回一半水位后应当恢复出声");
+    }
+
+    #[test]
+    fn burst_above_target_is_dropped_immediately() {
+        let mut b = PcmBuffer::new(1.0);
+        b.started = true;
+        b.push_samples(&vec![
+            0.5;
+            (TARGET_FRAMES + HARD_TRIM_FRAMES + 480) * 2
+        ]);
+        assert_eq!(b.drops, 1);
+        assert!(b.fill_frames() <= TARGET_FRAMES + 8);
     }
 }

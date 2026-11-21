@@ -448,7 +448,7 @@ scrcpy-server audio socket ──裸 PCM 48k/2ch/S16LE──► padlend-core Aud
                                                         │ 127.0.0.1 TCP + 16B PLAU 头
                                                         ▼
                                               Tauri audio.rs（cpal）
-                                                        │ 100ms 预缓冲/线性重采样
+                                                        │ 40ms 自适应水位/线性重采样
                                                         ▼
                                               Windows 默认输出设备
 ```
@@ -461,9 +461,16 @@ scrcpy-server audio socket ──裸 PCM 48k/2ch/S16LE──► padlend-core Aud
   `audio=false` 重连一次。音频永远不能阻止键鼠连接。
 - **格式是裸 PCM**：`raw_stream=true` 下没有帧头、没有时间戳；固定 48 kHz / 双声道 /
   16-bit 小端。Rust 侧按设备实际采样率用 `pos += 48000/device_rate` 线性重采样。
+- **延迟与时钟补偿（2.3.1）**：水位不再固定 100 ms。起播按 40 ms 目标（`TARGET_FRAMES`），
+  欠载一次上调 10 ms、连续 30 s 无欠载再降 5 ms，区间 20–120 ms；平板与声卡的几十 ppm
+  时钟差靠 ±0.5% 的步长修正吃掉（10 ms 死区，偏差超过 50 ms 才封顶），水位超过目标 60 ms
+  的突发直接丢最旧样本并做 3 ms 淡入。读循环在锁外做 i16→f32，不占输出回调的锁。每 10 s
+  往 `shell.log` 写一行 `[audio] 缓冲水位 … / 目标 …（欠载 N 次，丢块 N 次）`。
 - **开关不热切换**：改配置只落盘并提示重新连接；已启动的服务端不会多出一个 socket。
 - **限制**：Android 11+ 才支持音频捕获；所有系统声音（通知、通话）都会转发，DRM
-  保护内容可能无声。当前 Windows 环境无音频端点，播放链路只能在真机验收。
+  保护内容可能无声。当前 Windows 环境无音频端点，播放链路只能在真机验收。延迟预算约为
+  40 ms（目标水位）+ 10 ms（WASAPI shared）+ 20–40 ms（Android 采集块）+ Wi-Fi；输出到
+  蓝牙耳机时另加 150–250 ms，这部分不受本程序控制。
 
 ---
 ## 6.2 输入捕获层（`win/`）
