@@ -1486,3 +1486,50 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
 - **版本**：2.3.1
 - **再犯的代价**：延迟是用户最先骂的一项，而水位漂移在短测里看不出来——只能靠比例修正的
   单测和真机日志钉住。
+
+
+## 34. 2.3.2 补录：Windows 音量合成器把 PadLend 静音（2026-11-23）
+
+### 34.1 链路全绿，就是不出声
+
+- **现象**：平板声音转发开着，电脑完全没有声音。PadLend 界面显示已连接，`shell.log` 里
+  水位正常、没有报错；用户不会想到去看「音量合成器」里 PadLend 那一个小喇叭。
+- **触发条件**：用户在 Windows「音量合成器」里给 PadLend 点过一次静音。这个状态按
+  「输出设备 + 可执行文件」持久化，之后每次启动都照旧静音；换输出设备只会新建一条同样
+  静音的记录。重装、重连、重启 PadLend 都不会恢复。
+- **排查过程**：
+  - `shell.log`：18:07:31 连上接收器、收到头部 48000/2/16、输出设备「扬声器 (Realtek(R)
+    Audio) / F32 / 2 ch / 48000 Hz」；水位 70–120 ms、欠载/丢块几乎不涨 → 播放线程在按实时
+    速率消费 PCM，PCM 本身正常、没有降级；
+  - `service.log`：AudioRelay 结束日志「已转发 7135232 字节」；scrcpy 参数
+    `audio=true raw_stream=true audio_codec=raw` → 采集与转发都在；
+  - WASAPI 探测（C# COM interop：`IAudioSessionManager2` → `GetSessionEnumerator` →
+    `IAudioSessionControl2::GetProcessId` → `ISimpleAudioVolume` / `IAudioMeterInformation`）：
+    默认端点 `{85deadce-…}` 音量 0.80、endpoint 未静音；**pid 43916 (padlend-desktop) 的会话
+    `mute=True`，而同一会话峰值 0.27–0.41**。峰值有数 = 音频确实在渲染，静音只发生在会话的
+    volume/mute 上。
+- **根因**：per-app 静音（`ISimpleAudioVolume::SetMute`），与 3a1fb88 修的「平板侧静音 /
+  scrcpy 采集断」、2.2.2 的「输出设备钉死」都不是同一层的问题——那两处链路侧的证据都正常，
+  所以只会在「链路之外」找。
+- **修法**：`unmute_own_session`——每次打开 / 重建输出流之后，用默认端点的
+  `IAudioSessionManager2` 枚举会话，`GetProcessId == std::process::id()` 的那一路取
+  `ISimpleAudioVolume`，`GetMute` 为真就 `SetMute(false)` 并写一行 `[audio]` 日志；音量
+  0% 只提示、不擅自改（更像有意压低）。会话要等第一次渲染才出现，所以补查 3 轮
+  （`MUTE_SCAN_ROUNDS`），查到即止。
+- **踩坑点**：
+  - 会话对象本身实现 `ISimpleAudioVolume`，`cast` 就行；GUID 版
+    `IAudioSessionManager::GetSimpleAudioVolume` 还要先拿会话 GUID，多绕一步。
+  - windows 0.62 的 `GetMute()` 返回 `windows_result::BOOL`（newtype），`!= 0` 编译不过，
+    用 `as_bool()`；`SetMute` 的 `bmute` 已是 `bool`，event context 传 `std::ptr::null()`。
+  - 打开流的那一刻会话常常还没建出来（要等第一次渲染回调），一次查不到就放弃会导致
+    「修复在真机上永远不生效」——必须补查。
+  - 只在开流后纠正：播放中途的静音是用户主动点的（合成器就在手边），每 10 s 去抢一次会
+    跟用户打架。
+- **如何验证 / 回归**：单测 `mute_scan_stops_when_the_session_shows_up`；真机用例
+  `unmute_own_session_restores_a_muted_session`（`#[ignore]`，需要真实音频设备）：
+  `cargo test unmute_own_session -- --ignored` 本机跑通（起流 → 自己静音 → 被测函数恢复 →
+  `GetMute()` 为假）。现场修复后峰值 0.26–0.41、`mute=False`，用户确认出声。
+- **相关文件**：`src-tauri/src/audio.rs`、`docs/DESIGN.md` 6.1.5。
+- **版本**：2.3.2
+- **再犯的代价**：代码侧完全察觉不到——日志全绿、引擎正常转发、峰值表有数，只有音量
+  合成器里一个图标；用户会认定「PadLend 坏了」，而重装 / 重连都不会恢复。

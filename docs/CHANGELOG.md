@@ -2,6 +2,32 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.3.2] — 2026-11-23
+
+### 修复
+
+- **平板声音转发正常，电脑却没有声音：本应用被 Windows 音量合成器单独静音了**。用户报告
+  「平板的声音转到电脑没有声音」，但整条链路其实全绿：`shell.log` 里 40 ms 水位稳定、
+  欠载几乎不增长，引擎侧 AudioRelay「已转发 7135232 字节」，输出设备是默认扬声器。用 WASAPI
+  会话枚举探测默认端点才发现：`padlend-desktop`（pid 43916）的音频会话
+  `ISimpleAudioVolume::GetMute() = true`，而同一会话的 `IAudioMeterInformation` 峰值在
+  0.27–0.41 之间跳动——音频一直在正常渲染，只是 Windows 把这一路静音了。音量合成器的
+  per-app 静音按「输出设备 + exe」持久化，用户点过一次小喇叭之后每次启动都无声，而
+  PadLend 自己看不出任何异常。现在每次打开 / 重建输出流之后枚举本进程的音频会话，静音就
+  自动恢复并在 `shell.log` 留一行记录；音量被调到 0% 只提示、不擅自改。详见
+  `docs/PITFALLS.md` 34。
+
+### 验证
+
+- `src-tauri` `cargo test audio::` 全绿（8 passed），新增
+  `mute_scan_stops_when_the_session_shows_up`（补查轮数封顶）。
+- 真机用例 `unmute_own_session_restores_a_muted_session`（`#[ignore]`，需要真实音频设备）
+  在本机跑通：起一条输出流 → 在合成器里把本进程会话静音 → 被测函数恢复 → `GetMute()` 变回
+  假。回归命令：`cargo test unmute_own_session -- --ignored`。
+- 现场：取消静音后峰值 0.26–0.41、合成器 `mute=False`，用户确认出声。
+
+> 2.3.1 的 40 ms 水位优化在 2.3.0 之后没有单独发过版，本次 2.3.2 一并提供。
+
 ## [2.3.1] — 2026-11-21
 
 ### 优化

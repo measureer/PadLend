@@ -23,6 +23,13 @@
 //!   读循环与 PCM 缓冲原样保留，换设备不断流；
 //! - 打开设备失败改为周期重试，不再放弃整条转发；输出流错误回调触发重建；
 //! - COM 初始化 / 事件订阅失败时降级为按 cpal 设备名轮询。
+//!
+//! 2.3.2：音量合成器静音自愈。Windows 的 per-app 静音按「输出设备 + exe」
+//! 持久化：用户某天在「音量合成器」里点掉 PadLend 的小喇叭，之后每次启动
+//! 都无声，而本进程侧一切正常（转发在跑、缓冲区有水、峰值表有跳动、日志里
+//! 没有任何错误）。现在每次打开 / 重建输出流之后枚举一遍本进程的音频会话，
+//! `ISimpleAudioVolume::GetMute` 为真就取消静音并写一行日志；音量被调到 0%
+//! 不自动改（更像有意压低），只提示位置。
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
@@ -34,11 +41,11 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use windows::core::{implement, GUID, PCWSTR};
+use windows::core::{implement, Interface, GUID, PCWSTR};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Media::Audio::{
-    eConsole, eRender, DEVICE_STATE, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
-    IMMNotificationClient_Impl,
+    eConsole, eRender, DEVICE_STATE, EDataFlow, ERole, IAudioSessionControl2, IAudioSessionManager2,
+    IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, ISimpleAudioVolume,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -73,6 +80,9 @@ const DECAY_INTERVAL: Duration = Duration::from_secs(30);
 /// 水位统计与日志周期。
 const STATS_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_FRAMES: usize = 48_000; // 最多缓冲 1 s 的硬上限（正常由 trim 收回，不会走到这里）
+/// 打开输出流之后补查「本应用是否被音量合成器静音」的轮数：WASAPI 会话要等
+/// 第一个渲染回调才出现在会话枚举里，一次查不到很正常，按渲染线程的唤醒周期补查。
+const MUTE_SCAN_ROUNDS: u8 = 3;
 /// 设备跟随的轮询周期：正常时事件回调即时唤醒，这里只是兜底；
 /// 也是重试「打开失败设备」的间隔。
 const DEVICE_POLL_S: Duration = Duration::from_millis(500);
@@ -322,6 +332,8 @@ fn renderer_loop(
     }
 
     let mut current: Option<LiveStream> = None;
+    // 2.3.2：还剩几轮「本应用是否被音量合成器静音」的补查（0 = 不查）。
+    let mut mute_scan: u8 = 0;
     let mut last_error = String::new();
     let mut last_stats = Instant::now();
     loop {
@@ -350,6 +362,7 @@ fn renderer_loop(
                         stream,
                     });
                     last_error.clear();
+                    mute_scan = MUTE_SCAN_ROUNDS;
                 }
                 Err(e) => {
                     // 打不开（设备被独占、配置读不出等）不打断转发：保住 TCP
@@ -360,6 +373,19 @@ fn renderer_loop(
                     }
                 }
             }
+        }
+        // 2.3.2：新流的会话刚建出来时还不在枚举里，补查几轮；查到就收手，
+        // 免得每 500 ms 白枚举一次会话表。播放中途用户手动静音是有意为之，
+        // 合成器就在手边——这里不跟用户抢。
+        if mute_scan > 0 {
+            let outcome = match enumerator.as_ref() {
+                Some(enm) => unmute_own_session(enm),
+                None => SessionScan::Failed("COM 不可用".to_string()),
+            };
+            if let SessionScan::Failed(reason) = &outcome {
+                crate::shell_log!("[audio] 音量合成器静音检查未完成（{reason}）：不影响播放");
+            }
+            mute_scan = next_mute_scan(mute_scan, &outcome);
         }
         if last_stats.elapsed() >= STATS_INTERVAL {
             if let Ok(pcm) = buffer.lock() {
@@ -427,6 +453,109 @@ fn default_device_fallback_key() -> Option<String> {
     cpal::default_host()
         .default_output_device()
         .and_then(|d| d.name().ok())
+}
+
+/// 一轮「本应用音频会话是否被音量合成器静音」检查的结果。
+enum SessionScan {
+    /// 找到了本进程的音频会话（无论原本是否静音）。
+    Found,
+    /// 会话还没出现：流的第一次渲染可能尚未发生。
+    NotYet,
+    /// 查询本身失败（COM、会话管理器等）：重试也不会变。
+    Failed(String),
+}
+
+/// 一轮检查之后还剩几轮补查（0 表示不再查）。
+fn next_mute_scan(rounds_left: u8, outcome: &SessionScan) -> u8 {
+    match outcome {
+        SessionScan::NotYet => rounds_left.saturating_sub(1),
+        SessionScan::Found | SessionScan::Failed(_) => 0,
+    }
+}
+
+/// 2.3.2：本应用在 Windows 音量合成器里被单独静音时，把它取消掉。
+///
+/// 合成器的 per-app 静音（`ISimpleAudioVolume::SetMute`）是按「输出设备 + 可执行
+/// 文件」持久化的：用户某天在「音量合成器」里点过一次小喇叭，之后每次启动
+/// PadLend 声音都是哑的。PadLend 自己完全看不出异常——TCP 在转发、缓冲区有水、
+/// 峰值表有跳动、日志里也没有任何错误——只有合成器里那一个静音图标。3a1fb88 修
+/// 的是「平板静音 / scrcpy 采集断」，这类本地静音完全不在那条链路上。
+///
+/// 只在打开 / 重建输出流之后调用：此时 WASAPI 会话刚按「设备 + exe」的持久化
+/// 状态创建出来，正是要纠正的时刻。只清静音、不改音量：把音量调到 0% 更像有意
+/// 压低，只记一行日志交给用户。
+fn unmute_own_session(enm: &IMMDeviceEnumerator) -> SessionScan {
+    // SAFETY: 调用方（renderer_loop）已在本线程把 COM 初始化成 MTA，会话对象只在
+    // 本线程内使用、不跨线程传递。
+    let volumes = match unsafe { own_session_volumes(enm) } {
+        Ok(volumes) => volumes,
+        Err(reason) => return SessionScan::Failed(reason),
+    };
+    if volumes.is_empty() {
+        // 会话要等输出流第一次渲染才出现：这不是错误，留给补查。
+        return SessionScan::NotYet;
+    }
+    for volume in &volumes {
+        let muted = unsafe { volume.GetMute() }
+            .map(|flag| flag.as_bool())
+            .unwrap_or(false);
+        if muted {
+            match unsafe { volume.SetMute(false, std::ptr::null()) } {
+                Ok(()) => crate::shell_log!(
+                    "[audio] 本应用被 Windows 音量合成器静音，已自动恢复（该状态按 设备+程序 持久化）"
+                ),
+                Err(e) => crate::shell_log!(
+                    "[audio] 本应用被 Windows 音量合成器静音，自动取消失败（{e}）：请到 设置→系统→声音→音量合成器 里手动打开 PadLend"
+                ),
+            }
+        }
+        if let Ok(level) = unsafe { volume.GetMasterVolume() } {
+            if level <= 0.001 {
+                crate::shell_log!(
+                    "[audio] 注意：音量合成器里 PadLend 的音量是 0%，请在 设置→系统→声音→音量合成器 里调高（静音会自动恢复，音量不会）"
+                );
+            }
+        }
+    }
+    SessionScan::Found
+}
+
+/// 本进程在当前默认输出端点上的音频会话音量对象。
+///
+/// WASAPI 会话按「进程 + 端点」建：同一个 exe 每起一条输出流就多一个会话，而静音
+/// 标志是这组会话共用的——全部收上来才不会被「另一个会话没静音」骗过去。
+unsafe fn own_session_volumes(
+    enm: &IMMDeviceEnumerator,
+) -> Result<Vec<ISimpleAudioVolume>, String> {
+    let me = std::process::id();
+    let device = enm
+        .GetDefaultAudioEndpoint(eRender, eConsole)
+        .map_err(|e| format!("取默认输出设备失败：{e}"))?;
+    let manager: IAudioSessionManager2 = device
+        .Activate(CLSCTX_ALL, None)
+        .map_err(|e| format!("打开音频会话管理器失败：{e}"))?;
+    let sessions = manager
+        .GetSessionEnumerator()
+        .map_err(|e| format!("枚举音频会话失败：{e}"))?;
+    let mut volumes = Vec::new();
+    for index in 0..sessions.GetCount().unwrap_or(0) {
+        let Ok(control) = sessions.GetSession(index) else {
+            continue;
+        };
+        // 进程 ID 在 IAudioSessionControl2 上；拿不到就跳过这一路。
+        let Ok(control2) = control.cast::<IAudioSessionControl2>() else {
+            continue;
+        };
+        if control2.GetProcessId().ok() != Some(me) {
+            continue;
+        }
+        // 会话对象本身实现 ISimpleAudioVolume（QI 就能拿到），
+        // 不需要按 GUID 版 GetSimpleAudioVolume。
+        if let Ok(volume) = control.cast::<ISimpleAudioVolume>() {
+            volumes.push(volume);
+        }
+    }
+    Ok(volumes)
 }
 
 /// 在系统当前默认输出设备上打开并启动播放流，返回（设备名, 流）。
@@ -823,6 +952,67 @@ mod tests {
         // 瞬时查不到默认设备：保住现有流等下一轮，别拆掉仅剩的流。
         assert!(!should_rebuild(Some("a"), None, false));
         assert!(!should_rebuild(None, None, false));
+    }
+
+    /// 真机用例（默认忽略）：起一条输出流让 WASAPI 为本进程建出会话，把合成器里
+    /// 本进程的静音打开，再让 `unmute_own_session` 去恢复——它必须报 `Found`，并且
+    /// 会话确实从静音变回有声。没装音频设备的机器（CI）跑不了，所以默认忽略，
+    /// 真机回归时用 `cargo test unmute_own_session -- --ignored --nocapture`。
+    #[test]
+    #[ignore = "需要真实音频输出设备"]
+    fn unmute_own_session_restores_a_muted_session() {
+        let com = ComGuard::init();
+        assert!(com.is_some(), "COM 初始化失败");
+        let enm: IMMDeviceEnumerator =
+            unsafe { CoCreateInstance(&CLSID_MM_DEVICE_ENUMERATOR, None, CLSCTX_ALL) }
+                .expect("创建设备枚举器");
+        let buffer = Arc::new(Mutex::new(PcmBuffer::new(1.0)));
+        let force = Arc::new(AtomicBool::new(false));
+        let device = cpal::default_host()
+            .default_output_device()
+            .expect("需要音频输出设备");
+        let supported = device.default_output_config().expect("读默认输出格式");
+        let config = supported.config();
+        let channels = config.channels as usize;
+        let stream = match supported.sample_format() {
+            SampleFormat::F32 => build_stream::<f32>(&device, &config, &buffer, channels, &force),
+            SampleFormat::I16 => build_stream::<i16>(&device, &config, &buffer, channels, &force),
+            other => {
+                // 用例只覆盖本机真实出现过的默认格式，别的格式不代表功能没实现。
+                eprintln!("跳过：本机默认输出格式 {other:?} 不在用例覆盖范围");
+                return;
+            }
+        }
+        .expect("建输出流");
+        stream.play().expect("启动输出");
+        // 会话要等第一帧渲染才出现；静音状态按「设备 + exe」持久化，先自己打开。
+        std::thread::sleep(Duration::from_millis(500));
+        let volumes = unsafe { own_session_volumes(&enm) }.expect("枚举本进程会话");
+        assert!(!volumes.is_empty(), "本进程应当已有音频会话");
+        for volume in &volumes {
+            unsafe { volume.SetMute(true, std::ptr::null()) }.expect("静音");
+        }
+        assert!(
+            matches!(unmute_own_session(&enm), SessionScan::Found),
+            "应能找到本进程的会话"
+        );
+        for volume in &volumes {
+            assert!(
+                !unsafe { volume.GetMute() }.expect("读静音").as_bool(),
+                "静音应当已被恢复"
+            );
+        }
+    }
+
+    #[test]
+    fn mute_scan_stops_when_the_session_shows_up() {
+        // 会话还没出现：按轮数递减，查完为止（说到底也就几次，别无限枚举）。
+        assert_eq!(next_mute_scan(3, &SessionScan::NotYet), 2);
+        assert_eq!(next_mute_scan(1, &SessionScan::NotYet), 0);
+        assert_eq!(next_mute_scan(0, &SessionScan::NotYet), 0);
+        // 找到会话、或查询本身失败：不再补查。
+        assert_eq!(next_mute_scan(3, &SessionScan::Found), 0);
+        assert_eq!(next_mute_scan(3, &SessionScan::Failed("x".to_string())), 0);
     }
 
     #[test]
