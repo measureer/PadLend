@@ -1078,7 +1078,7 @@ Windows 11 默认把**新**图标收进任务栏右下角的「^」溢出区；�
 
 ### 6.10.8 其他界面
 
-- **首次向导**：连接平板/USB 调试 → UHID 可写 → 完成（adb 与 scrcpy-server 随包内置）
+- **首次向导**：仅 USB 数据线连接 / USB 调试 → UHID 可写 → 完成（无线调试不能完成首次添加；adb 与 scrcpy-server 随包内置）
 - **诊断页**：`adb devices`、`dumpsys input` 关键段、`XScale`/`pointer_speed`、UHID 注册情况、一键导出诊断包
 - **关于**：版本 / 许可摘要 / 第三方许可文件 / 打开日志目录 / 检查更新（发行地址配置后启用）；致谢 scrcpy、InputShare
 

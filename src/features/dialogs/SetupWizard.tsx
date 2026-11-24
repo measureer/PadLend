@@ -8,8 +8,8 @@ import { useAppStore } from '../../store/appStore';
 
 const STEPS = [
   {
-    title: '连接平板',
-    subtitle: '用数据线连接平板，并在平板上允许 USB 调试。adb 已随 PadLend 内置，无需另装。',
+    title: '连接平板（USB）',
+    subtitle: '首次设置只支持 USB 数据线：插上数据线，并在平板上允许「USB 调试」。无线调试不能用于首次添加；adb 已随 PadLend 内置，无需另装。',
     action: '开始检测',
   },
   {
@@ -65,7 +65,7 @@ export function SetupWizard() {
     <Modal
       wide
       title="PadLend 首次设置"
-      subtitle="检查平板连接与 UHID；adb 和 scrcpy-server 已随安装包内置。"
+      subtitle="首次设置只检查 USB 连接与 UHID；adb 和 scrcpy-server 已随安装包内置。"
       onClose={close}
       footer={
         <>

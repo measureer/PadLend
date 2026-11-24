@@ -82,7 +82,6 @@ export function DevicesPage() {
       <div className="grid-2">
         <Card
           title="设备列表"
-          desc="一台设备只占一行；双击可直接连接。「从列表移除」只删除记忆记录，不影响在线设备。"
           footer={
             <>
               {busyConnect ? (

@@ -2,6 +2,21 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.4.0] — 2026-11-25
+
+### 变更
+
+- **首次设置向导只接受 USB 数据线**：向导第一步只统计 USB 设备，`adb devices` 里只有无线调试地址时明确提示“无线调试不能完成首次添加”，不再把无线设备当成可继续的平板；向导文案也同步标成“连接平板（USB）”。
+- **「从列表移除」会先断开在线设备**：要移除的设备正在接管时先停会话、清空连接事实，再删除设备记录；在线无线设备还会逐条 `adb disconnect`，避免记录删了、设备还挂在 `adb devices` 里。仍在线的 USB 设备会以未记忆行继续显示（数据线还在，用户仍可点连接）。“一台设备只占一行……”这段说明已从设备列表移除。
+- **设置页「平板快捷键」移到右列**：放在「杂项」下方，左列只保留鼠标、键盘、快捷键。
+- **触发阈值 / 穿回阈值上限改为 1000 px**（原 200 / 120 px），滑条与数值输入范围一致。
+
+### 验证
+
+- `npx vitest run`：89 passed（16 个测试文件）。
+- `cargo test --manifest-path padlend-core\Cargo.toml`：573 passed、10 ignored。
+- `npm run build`（tsc + vite）通过；新增 `devices_remove_disconnects_online_wireless_then_forgets_it`、`usb_online_serials_ignores_wireless_devices` 并更新向导用例。
+
 ## [2.3.2] — 2026-11-23
 
 ### 修复

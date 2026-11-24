@@ -15,6 +15,7 @@ use crate::tablet::adb::normalize_address;
 
 use super::diagnostics;
 use super::engine::Engine;
+use super::registry::{is_wireless_serial, DeviceRecord};
 use super::serializers as S;
 
 /// RPC 连接等待上限（1.6.0 由 Python 版的 45s 缩到 30s）。
@@ -26,6 +27,8 @@ const CONNECT_TIMEOUT_S: f64 = 30.0;
 const CONNECT_ADB_TIMEOUT_S: f64 = 6.0;
 /// 连接过程中每隔多久写一条"仍在连接"日志（用户能看到进度）。
 const CONNECT_PROGRESS_S: f64 = 8.0;
+/// 从列表移除在线设备时，逐条 `adb disconnect` 的超时（与断开按钮一致）。
+const REMOVE_ADB_DISCONNECT_TIMEOUT_S: f64 = 3.0;
 
 /// 分派一个方法；app.shutdown 由 methods 层提前拦截。
 pub fn call(engine: &Arc<Engine>, method: &str, params: &Value) -> Reply {
@@ -369,6 +372,96 @@ fn pointer_calibrate_end(engine: &Arc<Engine>) -> Value {
     }
 }
 
+/// 当前会话的事实快照（Router 是权威；测试环境没有 Router 时退回引擎镜像）。
+fn current_facts(engine: &Arc<Engine>) -> Option<crate::logic::router::DeviceFacts> {
+    match engine.router() {
+        Some(router) => router.facts(),
+        None => engine.facts(),
+    }
+}
+
+/// 当前连着的那台设备是否就是这条注册表记录（serial/别名或硬件序列号命中）。
+fn live_serial_for(
+    record: &DeviceRecord,
+    facts: Option<&crate::logic::router::DeviceFacts>,
+) -> Option<String> {
+    let facts = facts?;
+    let serial = facts.serial.trim();
+    if !serial.is_empty() && record.endpoint(serial).is_some() {
+        return Some(serial.to_string());
+    }
+    let hardware = facts.hardware_serial.trim();
+    if !hardware.is_empty()
+        && !record.hardware_serial.is_empty()
+        && record.hardware_serial.eq_ignore_ascii_case(hardware)
+    {
+        return Some(serial.to_string());
+    }
+    None
+}
+
+/// 最近一次扫描结果里在线的 serial。
+fn online_device_serials(engine: &Arc<Engine>) -> Vec<String> {
+    engine
+        .devices_snapshot()
+        .into_iter()
+        .filter(|dto| dto.get("online").and_then(Value::as_bool).unwrap_or(false))
+        .filter_map(|dto| {
+            dto.get("serial")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+fn record_is_online(record: &DeviceRecord, online: &[String]) -> bool {
+    record.endpoints.iter().any(|endpoint| {
+        online
+            .iter()
+            .any(|serial| endpoint.matches(serial) || serial.eq_ignore_ascii_case(&endpoint.serial))
+    })
+}
+
+/// 移除设备前关掉它的无线 adb 链路；只动这条记录里的端点，不碰别的设备。
+///
+/// USB 设备没有可断开的 adb 链路，能断的只有 PadLend 会话本身（由调用方先停掉）。
+fn disconnect_removed_wireless(
+    engine: &Arc<Engine>,
+    record: &DeviceRecord,
+    online: &[String],
+    active: bool,
+) -> usize {
+    let Some(adb) = engine.adb_api() else {
+        return 0;
+    };
+    let mut targets: Vec<String> = Vec::new();
+    for endpoint in &record.endpoints {
+        let serial = endpoint.serial.trim();
+        if serial.is_empty() || !is_wireless_serial(serial) {
+            continue;
+        }
+        let is_online = online
+            .iter()
+            .any(|item| endpoint.matches(item) || item.eq_ignore_ascii_case(serial));
+        if !active && !is_online {
+            continue;
+        }
+        if !targets.iter().any(|item| item.eq_ignore_ascii_case(serial)) {
+            targets.push(serial.to_string());
+        }
+    }
+    let count = targets.len();
+    for target in targets {
+        let text = adb.disconnect(Some(target.as_str()), REMOVE_ADB_DISCONNECT_TIMEOUT_S);
+        let text = text.trim();
+        eprintln!(
+            "[api] 从列表移除前断开无线调试连接 {target}：{}",
+            if text.is_empty() { "（adb 无输出）" } else { text }
+        );
+    }
+    count
+}
+
 fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
     let serial = text_param(params, "serial");
     if serial.is_empty() {
@@ -376,6 +469,43 @@ fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String>
     }
     let current = engine.config_clone().device.serial;
     let record = engine.with_registry(|registry| registry.find_by_serial(&serial).cloned());
+
+    // 2.4.0：在线设备先断开，再从列表删除。旧实现只删记录，PadLend 的会话照旧连着，
+    // 用户看到的是「点了移除，平板还在接管」；无线设备还会继续挂在 adb devices 里。
+    let facts = current_facts(engine);
+    let was_active = record
+        .as_ref()
+        .and_then(|record| live_serial_for(record, facts.as_ref()))
+        .is_some()
+        || facts.as_ref().is_some_and(|facts| {
+            facts.serial.trim().eq_ignore_ascii_case(serial.trim())
+        });
+    let online = online_device_serials(engine);
+    let online_matched = record
+        .as_ref()
+        .map(|record| record_is_online(record, &online))
+        .unwrap_or_else(|| {
+            online
+                .iter()
+                .any(|item| item.eq_ignore_ascii_case(serial.trim()))
+        });
+    if was_active {
+        if let Some(router) = engine.router() {
+            router.disconnect_device();
+        }
+        engine.sync_facts_now();
+        engine.emit_log("DEVICE", format!("已断开在线设备 {serial}"));
+    }
+    let disconnected_wireless = record
+        .as_ref()
+        .map(|record| {
+            disconnect_removed_wireless(engine, record, &online, was_active || online_matched)
+        })
+        .unwrap_or(0);
+    if !was_active && disconnected_wireless > 0 {
+        engine.emit_log("DEVICE", format!("已断开无线调试连接 {serial}"));
+    }
+
     let mut removed = false;
     let mut removed_current = false;
     match &record {
@@ -406,7 +536,7 @@ fn devices_remove(engine: &Arc<Engine>, params: &Value) -> Result<Value, String>
         }
         engine.remove_located(&serial);
     }
-    if removed_current || current == serial {
+    if removed_current || current == serial || was_active {
         let remaining = engine.with_registry(|registry| registry.serials(""));
         engine.with_config(|config| {
             config.device.serial = remaining.first().cloned().unwrap_or_default();
@@ -707,28 +837,54 @@ fn online_serials(stdout: &str) -> Vec<String> {
         .collect()
 }
 
+/// 首次向导只接受 USB 设备：无线调试（IP:端口 / mDNS）在首次设置里一律忽略。
+fn usb_online_serials(stdout: &str) -> Vec<String> {
+    online_serials(stdout)
+        .into_iter()
+        .filter(|serial| !is_wireless_serial(serial))
+        .collect()
+}
+
 fn wizard_check(engine: &Arc<Engine>, params: &Value) -> Value {
     let step = int_param(params, "step");
     if step == 0 {
         let (code, stdout, stderr) = engine.run_adb(&["devices", "-l"]);
-        let serials = online_serials(&stdout);
+        let all_serials = online_serials(&stdout);
+        let usb_serials = usb_online_serials(&stdout);
         if stdout.contains("unauthorized") {
             return json!({
                 "ok": false,
                 "text": "设备显示 unauthorized：请在平板上点「允许 USB 调试」。",
             });
         }
-        if code != 0 || serials.is_empty() {
+        if code != 0 {
             let text = if stderr.is_empty() {
-                "未检测到设备，请检查数据线与 USB 调试。"
+                "adb 检测失败，请重试。"
             } else {
                 stderr.as_str()
             };
             return json!({ "ok": false, "text": text });
         }
+        if all_serials.is_empty() {
+            return json!({
+                "ok": false,
+                "text": "未检测到设备，请检查数据线与 USB 调试。",
+            });
+        }
+        if usb_serials.is_empty() {
+            // 首次设置必须走 USB：无线调试只添加了 adb 链路，没法在向导里完成
+            // 授权与 UHID 检查，而且端口会变，用户很容易在第一步卡住。
+            return json!({
+                "ok": false,
+                "text": format!(
+                    "只看到无线调试设备（{}）；首次设置必须用 USB 数据线连接平板，无线调试不能完成首次添加。",
+                    all_serials.join("、")
+                ),
+            });
+        }
         return json!({
             "ok": true,
-            "text": format!("已连接：{}；USB 调试已开启。", serials.join(", ")),
+            "text": format!("已通过 USB 连接：{}；USB 调试已开启。", usb_serials.join("、")),
         });
     }
     if step == 1 {
@@ -913,11 +1069,57 @@ mod tests {
     }
 
     #[test]
+    fn usb_online_serials_ignores_wireless_devices() {
+        let mixed = "List of devices attached\n10.0.0.5:5555   device product:CGA\nUSB123\tdevice usb:1-1\n";
+        assert_eq!(usb_online_serials(mixed), vec!["USB123"]);
+        let wireless = "List of devices attached\n10.0.0.5:5555   device product:CGA\n";
+        assert!(usb_online_serials(wireless).is_empty());
+    }
+
+    #[test]
+    fn devices_remove_disconnects_online_wireless_then_forgets_it() {
+        let engine = engine_for("remove-online");
+        let serial = "10.0.0.5:5555";
+        engine
+            .with_registry(|registry| {
+                registry.upsert(serial, "", "CGA W00", "", "", "test")
+            })
+            .expect("应写入设备记录");
+        engine.with_config(|config| config.device.serial = serial.to_string());
+        // 模拟最近一次扫描里这台无线设备在线。
+        engine.publish_devices(
+            &[crate::tablet::adb::DeviceEntry::new(serial, "device")],
+            "",
+        );
+
+        let value = ok_value(call(&engine, "devices.remove", &json!({ "serial": serial })));
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["config"]["device"]["serial"], "");
+        assert!(
+            engine.with_registry(|registry| registry.find_by_serial(serial).is_none()),
+            "记录应被删除"
+        );
+        let logs = engine.logs_recent(20);
+        let messages: Vec<&str> = logs
+            .iter()
+            .filter_map(|entry| entry["message"].as_str())
+            .collect();
+        assert!(
+            messages.iter().any(|text| text.contains("已断开无线调试连接")),
+            "在线无线设备应先断开：{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|text| text.contains("已从列表移除")),
+            "断开后仍要删除记录：{messages:?}"
+        );
+    }
+
+    #[test]
     fn wizard_step0_reports_simulated_device() {
         let engine = engine_for("wizard");
         let value = ok_value(call(&engine, "wizard.check", &json!({ "step": 0 })));
         assert_eq!(value["ok"], true);
-        assert_eq!(value["text"], "已连接：SIMULATEDPAD；USB 调试已开启。");
+        assert_eq!(value["text"], "已通过 USB 连接：SIMULATEDPAD；USB 调试已开启。");
         let step1 = ok_value(call(&engine, "wizard.check", &json!({ "step": 1 })));
         assert_eq!(step1["ok"], true);
         assert!(step1["text"].as_str().unwrap_or_default().contains("uhid 组：有"));

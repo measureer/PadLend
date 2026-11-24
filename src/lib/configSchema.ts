@@ -82,12 +82,12 @@ export const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'arm_px', section: 'motion', key: 'arm_px', label: '触发阈值', kind: 'slider',
-        min: 1, max: 200, step: 1, format: (v) => `${v} px`, unit: 'px',
+        min: 1, max: 1000, step: 1, format: (v) => `${v} px`, unit: 'px',
         hint: '鼠标从屏幕边缘继续往外推多少像素才正式接管平板。太小容易误触。',
       },
       {
         id: 'exit_overflow_px', section: 'motion', key: 'exit_overflow_px', label: '穿回阈值', kind: 'slider',
-        min: 4, max: 120, step: 1, format: (v) => `${v} px`, unit: 'px',
+        min: 4, max: 1000, step: 1, format: (v) => `${v} px`, unit: 'px',
         hint: '在平板边缘反向拖回多少像素才交还 PC。调大可以避免边缘点按晃动误退。',
       },
       {
@@ -151,43 +151,6 @@ export const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
-    id: 'tablet_keys',
-    title: '平板快捷键',
-    icon: 'tablet',
-    description: '不用接管也能操作平板，组合键可逐个改',
-    column: 'main',
-    fields: [
-      {
-        id: 'back', section: 'hotkeys', key: 'back', label: '后退', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+B', hint: '给平板发一次「返回」键，等于平板上划手势的返回。',
-      },
-      {
-        id: 'home', section: 'hotkeys', key: 'home', label: '返回主页', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+H', hint: '回到平板桌面。',
-      },
-      {
-        id: 'recents', section: 'hotkeys', key: 'recents', label: '最近任务', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+R', hint: '打开平板的最近任务（多任务）界面。',
-      },
-      {
-        id: 'notifications', section: 'hotkeys', key: 'notifications', label: '通知栏', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+N', hint: '展开平板的通知面板；与下拉状态栏效果相同。',
-      },
-      {
-        id: 'power', section: 'hotkeys', key: 'power', label: '电源键', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+P', hint: '模拟平板的电源键（锁屏 / 亮屏）。',
-      },
-      {
-        id: 'volume_up', section: 'hotkeys', key: 'volume_up', label: '音量 +', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+PageUp', hint: '调高平板媒体音量。',
-      },
-      {
-        id: 'volume_down', section: 'hotkeys', key: 'volume_down', label: '音量 -', kind: 'hotkey',
-        placeholder: 'Ctrl+Alt+PageDown', hint: '调低平板媒体音量。',
-      },
-    ],
-  },
-  {
     id: 'misc',
     title: '杂项',
     icon: 'sliders',
@@ -220,6 +183,43 @@ export const SETTING_GROUPS: SettingGroup[] = [
         id: 'forward_audio', section: 'misc', key: 'forward_audio', label: '转发平板声音', kind: 'toggle',
         applies: 'reconnect',
         hint: '把平板的声音实时转到电脑，平板自身静音。需要 Android 11+，首次开启可能要在平板上确认；音频通道在连接时建立，改完要断开再连一次。',
+      },
+    ],
+  },
+  {
+    id: 'tablet_keys',
+    title: '平板快捷键',
+    icon: 'tablet',
+    description: '不用接管也能操作平板，组合键可逐个改',
+    column: 'side',
+    fields: [
+      {
+        id: 'back', section: 'hotkeys', key: 'back', label: '后退', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+B', hint: '给平板发一次「返回」键，等于平板上划手势的返回。',
+      },
+      {
+        id: 'home', section: 'hotkeys', key: 'home', label: '返回主页', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+H', hint: '回到平板桌面。',
+      },
+      {
+        id: 'recents', section: 'hotkeys', key: 'recents', label: '最近任务', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+R', hint: '打开平板的最近任务（多任务）界面。',
+      },
+      {
+        id: 'notifications', section: 'hotkeys', key: 'notifications', label: '通知栏', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+N', hint: '展开平板的通知面板；与下拉状态栏效果相同。',
+      },
+      {
+        id: 'power', section: 'hotkeys', key: 'power', label: '电源键', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+P', hint: '模拟平板的电源键（锁屏 / 亮屏）。',
+      },
+      {
+        id: 'volume_up', section: 'hotkeys', key: 'volume_up', label: '音量 +', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+PageUp', hint: '调高平板媒体音量。',
+      },
+      {
+        id: 'volume_down', section: 'hotkeys', key: 'volume_down', label: '音量 -', kind: 'hotkey',
+        placeholder: 'Ctrl+Alt+PageDown', hint: '调低平板媒体音量。',
       },
     ],
   },

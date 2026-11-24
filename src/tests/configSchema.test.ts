@@ -19,14 +19,22 @@ describe('声明式设置 schema', () => {
     expect(fields.map((f) => f.id)).toContain('close_to_tray');
     expect(fields.map((f) => f.id)).not.toContain('clipboard');
 
-    // 左列放鼠标 / 键盘 / 快捷键 / 平板快捷键，右列只放杂项；标题按用户习惯叫「鼠标」。
+    // 左列放鼠标 / 键盘 / 快捷键；平板快捷键在右列，紧跟在杂项下面。
     expect(SETTING_GROUPS.filter((g) => g.column === 'main').map((g) => g.title)).toEqual([
       '鼠标',
       '键盘',
       '快捷键',
+    ]);
+    expect(SETTING_GROUPS.filter((g) => g.column === 'side').map((g) => g.title)).toEqual([
+      '杂项',
       '平板快捷键',
     ]);
-    expect(SETTING_GROUPS.filter((g) => g.column === 'side').map((g) => g.title)).toEqual(['杂项']);
+
+    // 2.4.0：两个阈值滑条都可以调到 1000 px。
+    const arm = SETTING_GROUPS[0].fields.find((f) => f.id === 'arm_px');
+    const exit = SETTING_GROUPS[0].fields.find((f) => f.id === 'exit_overflow_px');
+    expect(arm?.max).toBe(1000);
+    expect(exit?.max).toBe(1000);
 
     const keepScreen = fields.find((f) => f.id === 'keep_screen_on');
     expect(keepScreen?.hint).toContain('临时调到');
