@@ -157,7 +157,7 @@ describe('动作层错误分支', () => {
     const config = defaultConfig();
     const fallback = {
       monitorHandle: 1, edge: 'left' as const, spanStart: 0, spanEnd: 1080, length: 1080,
-      offset: 0.5, align: 'proportional' as const, cornerPriority: null,
+      offset: 0.5, scale: 1, cornerPriority: null,
     };
     useAppStore.setState({ layoutDirty: true });
     mocks.call.mockResolvedValueOnce({ ok: true, removed: true, config, placement: fallback });
@@ -183,7 +183,7 @@ describe('动作层错误分支', () => {
     const config = defaultConfig();
     const current = {
       monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080, length: 1080,
-      offset: 0.5, align: 'proportional' as const, cornerPriority: 'right' as const,
+      offset: 0.5, scale: 1, cornerPriority: 'right' as const,
     };
     useAppStore.setState({ placement: current, layoutDirty: false });
     mocks.call
@@ -205,7 +205,7 @@ describe('动作层错误分支', () => {
   it('移除布局失败时保留预览并提示错误', async () => {
     const current = {
       monitorHandle: 2, edge: 'right' as const, spanStart: 0, spanEnd: 1080, length: 1080,
-      offset: 0.5, align: 'proportional' as const, cornerPriority: null,
+      offset: 0.5, scale: 1, cornerPriority: null,
     };
     useAppStore.setState({ placement: current });
     mocks.call.mockRejectedValueOnce(new Error('engine down'));

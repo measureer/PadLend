@@ -52,7 +52,35 @@ export function segmentOffset(segment: Segment, x: number, y: number): number {
   return clamp01((along - segment.spanStart) / Math.max(segment.length, 1));
 }
 
-/** 平板矩形（虚拟桌面物理像素）。贴边一侧长度 = 平板高/宽。 */
+/** 显示缩放范围；与引擎 `SCALE_MIN/SCALE_MAX` 一致。 */
+export const SCALE_MIN = 0.1;
+export const SCALE_MAX = 4.0;
+export const SCALE_DEFAULT = 1.0;
+
+export const clampScale = (value: number): number => {
+  if (!Number.isFinite(value)) return SCALE_DEFAULT;
+  return Math.min(SCALE_MAX, Math.max(SCALE_MIN, value));
+};
+
+/** Python 的 `round`（银行家舍入）：与引擎 `py_round_int` 一致，避免预览差 1px。 */
+function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  const diff = value - floor;
+  if (diff > 0.5) return floor + 1;
+  if (diff < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+/** 平板的桌面足迹像素（设备像素 × 缩放，取整只做一次）。 */
+export function footprintSize(deviceW: number, deviceH: number, scale: number): { width: number; height: number } {
+  const s = clampScale(scale);
+  return {
+    width: Math.max(1, roundHalfEven(Math.max(1, deviceW) * s)),
+    height: Math.max(1, roundHalfEven(Math.max(1, deviceH) * s)),
+  };
+}
+
+/** 平板矩形（虚拟桌面物理像素）。贴边一侧长度 = 缩放后的平板高/宽。 */
 export function tabletRect(
   placement: Placement,
   monitor: Monitor,
@@ -60,15 +88,16 @@ export function tabletRect(
   tabletH: number,
 ): Rect {
   const r = monitor.rect;
+  const { width, height } = footprintSize(tabletW, tabletH, placement.scale ?? SCALE_DEFAULT);
   const along = placement.spanStart + clamp01(placement.offset) * Math.max(placement.spanEnd - placement.spanStart, 1);
   if (isVertical(placement.edge)) {
-    const left = placement.edge === 'left' ? r.left - tabletW : r.right;
-    const top = along - tabletH / 2;
-    return { left, top, right: left + tabletW, bottom: top + tabletH, width: tabletW, height: tabletH };
+    const left = placement.edge === 'left' ? r.left - width : r.right;
+    const top = along - height / 2;
+    return { left, top, right: left + width, bottom: top + height, width, height };
   }
-  const top = placement.edge === 'top' ? r.top - tabletH : r.bottom;
-  const left = along - tabletW / 2;
-  return { left, top, right: left + tabletW, bottom: top + tabletH, width: tabletW, height: tabletH };
+  const top = placement.edge === 'top' ? r.top - height : r.bottom;
+  const left = along - width / 2;
+  return { left, top, right: left + width, bottom: top + height, width, height };
 }
 
 export function monitorForSegment(monitors: Monitor[], handle: number): Monitor | undefined {

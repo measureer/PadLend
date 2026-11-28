@@ -44,7 +44,7 @@ export function LayoutPage() {
         <div>
           <h1 className="page-title">桌面布局</h1>
           <p className="page-subtitle">
-            把平板拖到屏幕外轮廓边，点「保存布局」后才会生效；拖动和松手只是预览。每台设备的横屏、竖屏布局分别保存，旋转平板会自动切换。
+            把平板拖到屏幕外轮廓边，点「保存布局」后才会生效；拖动和松手只是预览。右键可以缩放平板在桌面上的显示大小（不改设备分辨率）。每台设备的横屏、竖屏布局分别保存，旋转平板会自动切换。
           </p>
         </div>
         <div className="page-actions canvas-toolbar">
@@ -67,7 +67,7 @@ export function LayoutPage() {
       />
 
       <div className="banner">
-        滚轮缩放 · 按住 Space 平移 · Ctrl+0 复位视野 · 拖动时按 Shift 切换角落优先边 · 双击平板切换横竖 · 右键调整对齐方式或测试穿越
+        滚轮缩放视野 · 按住 Space 平移 · Ctrl+0 复位 · 拖动时按 Shift 切换角落优先边 · 双击平板切换横竖 · 右键调整平板显示比例
       </div>
     </div>
   );

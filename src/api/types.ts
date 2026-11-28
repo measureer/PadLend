@@ -1,7 +1,6 @@
 /** 前后端契约：与 padlend-core/src/service/serializers.rs 一一对应，禁止在各组件里另造形状（历史：原 service/serializers.py）。 */
 
 export type Edge = 'left' | 'right' | 'top' | 'bottom';
-export type Align = 'proportional' | 'center' | 'one_to_one';
 export type Orientation = 'landscape' | 'portrait';
 export type Theme = 'dark' | 'light';
 export type PageId = 'devices' | 'layout' | 'settings' | 'logs' | 'about';
@@ -42,7 +41,8 @@ export interface Segment {
   spanEnd: number;
   length: number;
   offset?: number;
-  align?: Align;
+  /** 显示缩放（0.1–4.0）：平板在桌面上占多大，不改设备像素。 */
+  scale?: number;
   cornerPriority?: Edge | null;
 }
 
@@ -54,7 +54,8 @@ export interface Placement {
   /** 边段像素长度；引擎 placement_dict 总是下发（serializers.rs），前端回传时被 placement_from_dict 忽略。 */
   length: number;
   offset: number;
-  align: Align;
+  /** 显示缩放（0.1–4.0）：平板在桌面上占多大，不改设备像素。 */
+  scale: number;
   cornerPriority: Edge | null;
 }
 
@@ -116,7 +117,7 @@ export interface PlacementCfg {
   span_start: number;
   span_end: number;
   offset: number;
-  align: Align;
+  scale: number;
   corner_priority: string;
 }
 

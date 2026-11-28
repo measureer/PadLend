@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { Monitor, Placement, Segment } from '../api/types';
 import {
   clamp01,
+  clampScale,
+  footprintSize,
   monitorForSegment,
   nearbySegments,
   padded,
@@ -27,7 +29,7 @@ const right: Segment = { monitorHandle: 1, edge: 'right', spanStart: 0, spanEnd:
 const top: Segment = { monitorHandle: 1, edge: 'top', spanStart: -1920, spanEnd: 0, length: 1920 };
 const placement: Placement = {
   monitorHandle: 1, edge: 'right', spanStart: 0, spanEnd: 1080, length: 1080,
-  offset: 0.5, align: 'proportional', cornerPriority: null,
+  offset: 0.5, scale: 1, cornerPriority: null,
 };
 
 describe('画布几何（与 padlend-core/src/logic/geometry.rs 保持一致）', () => {
@@ -52,6 +54,22 @@ describe('画布几何（与 padlend-core/src/logic/geometry.rs 保持一致）'
     expect(rect.left).toBe(0);
     expect(rect.top).toBe(540 - 2136 / 2);
     expect(rect.width).toBe(3200);
+  });
+
+  it('scale 只改桌面足迹：0.5 时边长减半，设备像素不变', () => {
+    const half = tabletRect({ ...placement, scale: 0.5 }, monitor, 3200, 2136);
+    expect(half.width).toBe(1600);
+    expect(half.height).toBe(1068);
+    expect(half.left).toBe(0);
+    expect(half.top).toBe(540 - 1068 / 2);
+    // 映射比必须取整后的足迹（与引擎同一规则）。
+    expect(footprintSize(3200, 2136, 0.375)).toEqual({ width: 1200, height: 801 });
+  });
+
+  it('scale 越界时夹到 0.1..4.0，NaN 回 1.0', () => {
+    expect(clampScale(9)).toBe(4);
+    expect(clampScale(0)).toBe(0.1);
+    expect(clampScale(Number.NaN)).toBe(1);
   });
 
   it('只返回吸附带内的边段，找不到时退回最近一条', () => {

@@ -8,9 +8,10 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Align, Desktop, DeviceFacts, Edge, Placement } from '../../api/types';
-import { removeLayout, toggleManual } from '../../lib/actions';
+import type { Desktop, DeviceFacts, Edge, Placement } from '../../api/types';
+import { removeLayout } from '../../lib/actions';
 import {
+  clampScale,
   isVertical,
   monitorForSegment,
   nearbySegments,
@@ -27,6 +28,14 @@ const SNAP_BAND = 64;
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 8;
 const DEFAULT_TABLET = { width: 3200, height: 2136 };
+/** 右键菜单的缩放预设（100% = 真实像素，与引擎默认 scale=1.0 一致）。 */
+const SCALE_PRESETS: [number, string][] = [
+  [0.5, '50%'],
+  [0.75, '75%'],
+  [1, '100%'],
+  [1.25, '125%'],
+  [1.5, '150%'],
+];
 
 interface View { k: number; tx: number; ty: number }
 
@@ -61,6 +70,8 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
   const [fit, setFit] = useState({ x: 0, y: 0, w: 4480, h: 1600 });
   const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customScale, setCustomScale] = useState('100');
 
   const tablet = useMemo(() => {
     void sizeNonce;
@@ -184,7 +195,7 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
       spanEnd: segment.spanEnd,
       length: segment.length,
       offset: segmentOffset(segment, sceneX, sceneY),
-      align: current.align,
+      scale: current.scale,
       cornerPriority: corner,
     };
   }, [desktop.segments, desktop.monitors]);
@@ -255,17 +266,36 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
     if (drag) onPlacementChange(drag.placement);
   }, [onPlacementChange]);
 
-  const setAlign = (align: Align) => {
-    if (!placement) return;
-    onPlacementChange({ ...placement, align });
+  const closeCtx = useCallback(() => {
     setCtx(null);
-  };
+    setCustomOpen(false);
+  }, []);
+
+  const setScale = useCallback((next: number) => {
+    if (!placement) return;
+    onPlacementChange({ ...placement, scale: clampScale(next) });
+    setCtx(null);
+    setCustomOpen(false);
+  }, [placement, onPlacementChange]);
+
+  const applyCustomScale = useCallback(() => {
+    const percent = Number.parseFloat(customScale);
+    if (Number.isFinite(percent)) {
+      setScale(percent / 100);
+    } else {
+      closeCtx();
+    }
+  }, [customScale, setScale, closeCtx]);
 
   const size = tabletSizeRef.current;
   // 标签跟着画出来的尺寸走：双击预览横竖时不会出现「写着竖屏却是横的」。
   const portrait = size.width < size.height;
   const tabletLabel = facts ? `${size.width} × ${size.height}` : '未连接设备';
-  const tabletMeta = facts ? `${portrait ? '竖屏' : '横屏'} · 拖动吸附` : '连接后显示实际尺寸';
+  // 缩放百分比：0.375 → 37.5%，整数时不带小数点。
+  const scalePercent = Math.round((placement?.scale ?? 1) * 1000) / 10;
+  const tabletMeta = facts
+    ? `${portrait ? '竖屏' : '横屏'} · ${scalePercent}% · 拖动吸附`
+    : '连接后显示实际尺寸';
 
   return (
     <div className="canvas-frame" ref={frameRef}>
@@ -281,7 +311,15 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
         onContextMenu={(e) => {
           e.preventDefault();
           const rect = frameRef.current?.getBoundingClientRect();
-          setCtx({ x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) });
+          setCustomOpen(false);
+          // 菜单本身约 200×320（展开自定义输入后更高）：贴着右下角右键时
+          // 反方向收一点，否则会被 .canvas-frame 的 overflow:hidden 裁掉。
+          const maxLeft = Math.max(0, (rect?.width ?? 800) - 220);
+          const maxTop = Math.max(0, (rect?.height ?? 500) - 330);
+          setCtx({
+            x: Math.min(e.clientX - (rect?.left ?? 0), maxLeft),
+            y: Math.min(e.clientY - (rect?.top ?? 0), maxTop),
+          });
         }}
       >
         <g ref={viewportRef}>
@@ -319,19 +357,19 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
             <g ref={tabletRef} transform={`translate(${tablet.left} ${tablet.top})`}>
               <rect
                 className="canvas-tablet"
-                x={0} y={0} width={size.width} height={size.height} rx={44}
+                x={0} y={0} width={tablet.width} height={tablet.height} rx={44}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   tabletSizeRef.current = { width: size.height, height: size.width };
                   setSizeNonce((n) => n + 1);
                 }}
               />
-              <text className="canvas-tablet-label" x={size.width / 2} y={size.height / 2 - 30}>{tabletLabel}</text>
-              <text className="canvas-tablet-meta" x={size.width / 2} y={size.height / 2 + 140}>{tabletMeta}</text>
+              <text className="canvas-tablet-label" x={tablet.width / 2} y={tablet.height / 2 - 30}>{tabletLabel}</text>
+              <text className="canvas-tablet-meta" x={tablet.width / 2} y={tablet.height / 2 + 140}>{tabletMeta}</text>
               <circle
                 className="canvas-attachment"
-                cx={isVertical(placement.edge) ? (placement.edge === 'left' ? size.width : 0) : size.width / 2}
-                cy={isVertical(placement.edge) ? size.height / 2 : (placement.edge === 'top' ? size.height : 0)}
+                cx={isVertical(placement.edge) ? (placement.edge === 'left' ? tablet.width : 0) : tablet.width / 2}
+                cy={isVertical(placement.edge) ? tablet.height / 2 : (placement.edge === 'top' ? tablet.height : 0)}
                 r={60}
               />
             </g>
@@ -346,25 +384,52 @@ export const DesktopCanvas = memo(function DesktopCanvas({ desktop, placement, f
       </div>
 
       {ctx && (
-        <div className="ctx-menu" style={{ left: Math.min(ctx.x, 520), top: Math.min(ctx.y, 300) }}>
-          <div className="sidebar-label" style={{ padding: '6px 10px' }}>对齐方式</div>
-          {([['proportional', '等比'], ['center', '居中'], ['one_to_one', '1:1']] as [Align, string][]).map(([value, label]) => (
-            <button key={value} className="menu-item" onClick={() => setAlign(value)}>
-              {placement?.align === value ? '● ' : '○ '}{label}
+        <div className="ctx-menu" style={{ left: ctx.x, top: ctx.y }}>
+          <div className="sidebar-label" style={{ padding: '6px 10px' }}>缩放</div>
+          {SCALE_PRESETS.map(([value, label]) => (
+            <button key={value} className="menu-item" onClick={() => setScale(value)}>
+              {placement && Math.abs((placement.scale ?? 1) - value) < 1e-6 ? '● ' : '○ '}{label}
             </button>
           ))}
+          {customOpen ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px' }}>
+              <input
+                className="input"
+                style={{ width: 64 }}
+                autoFocus
+                value={customScale}
+                inputMode="decimal"
+                onChange={(e) => setCustomScale(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applyCustomScale();
+                  if (e.key === 'Escape') closeCtx();
+                }}
+              />
+              <span>%</span>
+              <button className="btn btn-ghost" onClick={applyCustomScale}>确定</button>
+            </div>
+          ) : (
+            <button
+              className="menu-item"
+              onClick={() => {
+                setCustomScale(String(Math.round((placement?.scale ?? 1) * 100)));
+                setCustomOpen(true);
+              }}
+            >
+              自定义…
+            </button>
+          )}
           <div className="menu-sep" />
           <button
             className="menu-item"
             title="删除本设备此方向的布局档，回退到全局摆位（只清预览不会保存）"
             onClick={() => {
-              setCtx(null);
+              closeCtx();
               void removeLayout(facts?.hardwareSerial || facts?.serial || '', facts?.orientation || '');
             }}
           >
             移除
           </button>
-          <button className="menu-item" onClick={() => { setCtx(null); void toggleManual(); }}>测试穿越</button>
         </div>
       )}
     </div>

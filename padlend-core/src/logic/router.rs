@@ -56,8 +56,8 @@ use crate::constants as C;
 use crate::win::hotkeys::HotkeyAction;
 use crate::logic::events::{KeyEvent, RawDelta};
 use crate::logic::geometry::{
-    exit_offset_px, segment_contacts_tablet, tablet_entry_point, tablet_exit_point, tablet_rect,
-    Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect, TabletRect,
+    exit_offset_px, segment_contacts_tablet, tablet_entry_point, tablet_exit_point,
+    tablet_footprint, Edge, EdgeSegment, MonitorInfo, Placement, Rect, TabletRect, SCALE_DEFAULT,
 };
 use crate::logic::metrics::{Metrics, NullProcessUsage, Snapshot};
 use crate::logic::state::{can_transition, State};
@@ -2288,12 +2288,13 @@ impl Router {
                 return Ok(());
             }
         };
-        let tablet = tablet_rect(
+        let tablet = tablet_footprint(
             &placement.segment,
             &anchor,
             placement.offset,
             estimator.width(),
             estimator.height(),
+            placement.scale,
         );
         let mut contacts: Vec<EdgeSegment> = Vec::new();
         for segment in &segments {
@@ -2368,12 +2369,13 @@ impl Router {
         let monitor = self.monitor_for_handle(active.monitor_handle);
         let anchor = self.monitor_for_handle(placement.segment.monitor_handle);
         if let (Some(monitor), Some(estimator), Some(anchor)) = (monitor, inner.estimator, anchor) {
-            let tablet = tablet_rect(
+            let tablet = tablet_footprint(
                 &placement.segment,
                 &anchor,
                 placement.offset,
                 estimator.width(),
                 estimator.height(),
+                placement.scale,
             );
             let along = if active.edge.is_vertical() {
                 f64::from(y)
@@ -2796,12 +2798,13 @@ impl Router {
             Some(estimator) => estimator,
             None => return Err(RouterError::unexpected("进入 CAPTURED 时缺少 estimator")),
         };
-        let tablet = tablet_rect(
+        let tablet = tablet_footprint(
             &placement.segment,
             &anchor,
             placement.offset,
             estimator.width(),
             estimator.height(),
+            placement.scale,
         );
         let (mut cursor_x, mut cursor_y) =
             inner.pc_cursor.unwrap_or_else(|| self.default_cursor());
@@ -3102,12 +3105,13 @@ impl Router {
                 .clone()
                 .or_else(|| self.monitor_for_handle(segment.monitor_handle));
             if let (Some(anchor), Some(monitor)) = (anchor, monitor) {
-                let tablet = tablet_rect(
+                let tablet = tablet_footprint(
                     &placement.segment,
                     &anchor,
                     placement.offset,
                     estimator.width(),
                     estimator.height(),
+                    placement.scale,
                 );
                 let along = if segment.edge.is_vertical() {
                     estimator.y
@@ -3125,6 +3129,8 @@ impl Router {
                     &tablet,
                     along,
                     offset_px,
+                    estimator.width(),
+                    estimator.height(),
                 ));
             }
         }
@@ -3728,13 +3734,13 @@ impl Router {
             Some(placement) => placement.corner_priority,
             None => self.config_edge_opt(),
         };
-        // 2.2.0：新摆位默认 1:1；已有摆位保留用户选过的对齐方式，
-        // 避免显示器拓扑变化时把 center/one_to_one 重置回旧默认。
-        let align = match &old {
-            Some(placement) => placement.align,
-            None => Align::OneToOne,
+        // 2.5.0：重锚定只换边段，保留用户调过的显示缩放；
+        // 新摆位默认 1.0（真实像素）。
+        let scale = match &old {
+            Some(placement) => placement.scale,
+            None => SCALE_DEFAULT,
         };
-        match Placement::new(best, 0.5, align, corner_priority) {
+        match Placement::new(best, 0.5, scale, corner_priority) {
             Ok(placement) => {
                 inner.placement = Some(placement);
                 eprintln!(
@@ -4313,7 +4319,7 @@ mod tests {
     use std::sync::atomic::AtomicI32;
     use std::sync::Weak;
 
-    use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
+    use crate::logic::geometry::{Edge, EdgeSegment, MonitorInfo, Placement, Rect};
 
     /// GetCursorPos 必须在 Inner 锁外调用（2.2.0 热路径）。
     /// 每个 Raw Input 事件不得再向桌面端口克隆整套显示器列表。
@@ -5050,7 +5056,7 @@ mod tests {
 
     /// 默认摆位：显示器 1 的右边缘（等价 make_placement）。
     fn default_placement() -> Placement {
-        Placement::new(right_segment(), 0.5, Align::Proportional, None).expect("默认摆位合法")
+        Placement::new(right_segment(), 0.5, 1.0, None).expect("默认摆位合法")
     }
 
     /// 构造一套装置（不调用 start，避免真起线程）。
@@ -6005,7 +6011,7 @@ mod tests {
         let bottom = EdgeSegment::new(1, Edge::Bottom, 0, 1921).expect("底边段合法");
         rig.desktop.set_segments(vec![bottom]);
         rig.router
-            .set_placement(Placement::new(bottom, 0.5, Align::Proportional, None).expect("底边摆位合法"));
+            .set_placement(Placement::new(bottom, 0.5, 1.0, None).expect("底边摆位合法"));
 
         rig.capture_manually();
         rig.flush();
@@ -6381,6 +6387,10 @@ mod tests {
             96,
             true,
         );
+        // 用户先前调过缩放（0.75）；重锚定只换边段，不能重置这个值。
+        rig.router.set_placement(
+            Placement::new(right_segment(), 0.5, 0.75, None).expect("缩放摆位合法"),
+        );
         rig.desktop.set_monitors(vec![second]);
         rig.desktop.set_segments(vec![
             EdgeSegment::new(2, Edge::Top, 0, 1920).expect("顶边段合法"),
@@ -6392,8 +6402,8 @@ mod tests {
         assert_eq!(placement.segment.monitor_handle, 2);
         assert_eq!(placement.segment.edge, Edge::Top);
         assert!((placement.offset - 0.5).abs() < 1e-9);
-        // 已有摆位保留了用户选过的 proportional，不被重锚定重置。
-        assert_eq!(placement.align, Align::Proportional);
+        // 已有摆位保留了用户调过的缩放，不被重锚定重置。
+        assert_eq!(placement.scale, 0.75);
     }
 
     /// CAPTURED 期间拓扑变化 → 先交还再校验摆位。
@@ -6636,7 +6646,7 @@ mod tests {
         let placement = Placement::new(
             EdgeSegment::new(1, Edge::Right, 100, 900).expect("段合法"),
             0.25,
-            Align::Center,
+            1.25,
             Some(Edge::Right),
         )
         .expect("摆位合法");

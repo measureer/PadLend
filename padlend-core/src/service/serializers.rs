@@ -6,7 +6,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::config::Config;
-use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
+use crate::logic::geometry::{clamp_scale, Edge, EdgeSegment, MonitorInfo, Placement, Rect, SCALE_DEFAULT};
 use crate::logic::router::DeviceFacts;
 use crate::tablet::adb::DeviceEntry;
 use crate::tablet::locator::Located;
@@ -59,7 +59,7 @@ pub fn placement_dict(placement: Option<&Placement>) -> Value {
         "spanEnd": placement.segment.span_end,
         "length": placement.segment.length(),
         "offset": placement.offset,
-        "align": placement.align.as_str(),
+        "scale": placement.scale,
         "cornerPriority": placement.corner_priority.map(|edge| edge.as_str()),
     })
 }
@@ -77,11 +77,13 @@ pub fn placement_from_dict(data: &Value) -> Placement {
         .unwrap_or(Edge::Right);
     let span_start = int_field(data, "spanStart");
     let span_end = int_field(data, "spanEnd");
-    let align = data
-        .get("align")
-        .and_then(Value::as_str)
-        .and_then(|text| Align::try_from(text).ok())
-        .unwrap_or(Align::OneToOne);
+    // 旧前端 / 旧存档没有 scale：按 1.0 处理；越界值夹到合法范围而不是拒绝，
+    // 因为这条路径只服务 GUI 拖拽结果（config 校验另有严格规则）。
+    let scale = data
+        .get("scale")
+        .and_then(Value::as_f64)
+        .map(clamp_scale)
+        .unwrap_or(SCALE_DEFAULT);
     let corner_priority = data
         .get("cornerPriority")
         .and_then(Value::as_str)
@@ -99,7 +101,7 @@ pub fn placement_from_dict(data: &Value) -> Placement {
             span_end,
         },
         offset,
-        align,
+        scale,
         corner_priority,
     }
 }
@@ -310,7 +312,8 @@ fn placement_field_kind(field: &str) -> Option<Value> {
     match field {
         "offset" => Some(Value::from(0.0_f64)),
         "span_start" | "span_end" => Some(Value::from(0_i64)),
-        "monitor" | "edge" | "align" | "corner_priority" => Some(Value::from("")),
+        "monitor" | "edge" | "corner_priority" => Some(Value::from("")),
+        "scale" => Some(Value::from(0.0_f64)),
         _ => None,
     }
 }
@@ -484,7 +487,7 @@ mod tests {
             "spanStart": 0,
             "spanEnd": 1481,
             "offset": 0.25,
-            "align": "center",
+            "scale": 0.75,
             "cornerPriority": "top",
         });
         let placement = placement_from_dict(&data);
@@ -492,18 +495,22 @@ mod tests {
         assert_eq!(value["monitorHandle"], 65537);
         assert_eq!(value["edge"], "left");
         assert_eq!(value["length"], 1481);
-        assert_eq!(value["align"], "center");
+        assert_eq!(value["scale"], 0.75);
         assert_eq!(value["cornerPriority"], "top");
         assert_eq!(value["offset"], 0.25);
     }
 
     #[test]
     fn placement_from_dict_falls_back_on_invalid_values() {
-        let placement = placement_from_dict(&json!({"edge": "diagonal", "align": "stretch", "cornerPriority": "middle", "offset": 9}));
+        let placement = placement_from_dict(&json!({"edge": "diagonal", "scale": 9, "cornerPriority": "middle", "offset": 9}));
         assert_eq!(placement.segment.edge.as_str(), "right");
-        assert_eq!(placement.align.as_str(), "one_to_one");
+        assert_eq!(placement.scale, 4.0, "越界 scale 夹到上限");
         assert!(placement.corner_priority.is_none());
         assert_eq!(placement.offset, 1.0);
+        // 缺 scale / 非数字 → 默认 1.0；NaN 也回默认。
+        assert_eq!(placement_from_dict(&json!({})).scale, 1.0);
+        assert_eq!(placement_from_dict(&json!({"scale": "big"})).scale, 1.0);
+        assert_eq!(placement_from_dict(&json!({"scale": f64::NAN})).scale, 1.0);
     }
 
     #[test]

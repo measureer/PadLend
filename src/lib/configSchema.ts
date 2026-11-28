@@ -262,8 +262,8 @@ export function validateConfig(config: Config): string[] {
   if (!['left', 'right', 'top', 'bottom'].includes(placement.edge)) {
     problems.push('placement.edge 必须是 left/right/top/bottom');
   }
-  if (!['proportional', 'center', 'one_to_one'].includes(placement.align)) {
-    problems.push('placement.align 必须是 proportional/center/one_to_one');
+  if (!(placement.scale >= 0.1 && placement.scale <= 4.0)) {
+    problems.push('placement.scale 必须在 0.1..=4.0');
   }
   if (placement.offset < 0 || placement.offset > 1) problems.push('placement.offset 必须在 0.0..1.0');
   if (placement.span_end <= placement.span_start) problems.push('placement.span_end 必须大于 span_start');

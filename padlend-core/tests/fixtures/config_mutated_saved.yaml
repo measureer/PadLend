@@ -15,7 +15,7 @@ placement:
   span_start: 0
   span_end: 1600
   offset: 0.5
-  align: proportional
+  scale: 1.0
   corner_priority: right
 layouts:
   devices:
@@ -26,7 +26,7 @@ layouts:
         span_start: -2560
         span_end: 0
         offset: 0.25
-        align: one_to_one
+        scale: 1.0
         corner_priority: left
       portrait:
         monitor: ''
@@ -34,7 +34,7 @@ layouts:
         span_start: 0
         span_end: 1600
         offset: 0.75
-        align: proportional
+        scale: 1.0
         corner_priority: right
 motion:
   gain: 1.75

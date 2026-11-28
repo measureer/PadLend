@@ -600,6 +600,10 @@ fn layout_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
             let mut profile = crate::config::PlacementCfg::default();
             engine.apply_placement_to_config(&placement, &mut profile);
             config.layouts.set(&identity, &bucket, profile);
+            // 缩放两个方向共用（DESIGN_LAYOUT_SCALE Q1）：另一方向已有存档时
+            // 只同步 scale，保留它自己的边与位置。
+            let other = if bucket == "landscape" { "portrait" } else { "landscape" };
+            config.layouts.set_scale(&identity, other, placement.scale);
         }
         engine.apply_placement_to_config(&placement, &mut config.placement);
         // 布局页只校验自己负责的字段。
@@ -635,9 +639,10 @@ fn layout_save(engine: &Arc<Engine>, params: &Value) -> Result<Value, String> {
     engine.emit_log(
         "PLACE",
         format!(
-            "布局已保存（{bucket_text}）：吸附 {} offset={:.2}",
+            "布局已保存（{bucket_text}）：吸附 {} offset={:.2} scale={:.2}",
             placement.segment.edge.as_str(),
-            placement.offset
+            placement.offset,
+            placement.scale
         ),
     );
     Ok(json!({

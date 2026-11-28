@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 
 use crate::config::{Config, PlacementCfg};
 use crate::constants as C;
-use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
+use crate::logic::geometry::{clamp_scale, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
 use crate::logic::ports::{DesktopAdapter, MaskAdapter};
 use crate::logic::router::{CaptureHotkey, DesktopPort, DeviceFacts, MaskPort, Router, SessionPort};
 use crate::tablet::adb::{Adb, AdbApi, AdbErrorCode, DeviceEntry};
@@ -1311,7 +1311,7 @@ impl Engine {
             .into_iter()
             .max_by_key(|segment| segment.length())?
             .clone();
-        let align = Align::try_from(source.align.as_str()).unwrap_or(Align::OneToOne);
+        let scale = clamp_scale(source.scale);
         let corner_priority = if source.corner_priority.trim().is_empty() {
             None
         } else {
@@ -1320,7 +1320,7 @@ impl Engine {
         Some(Placement {
             segment: chosen,
             offset: source.offset.clamp(0.0, 1.0),
-            align,
+            scale,
             corner_priority,
         })
     }
@@ -1335,7 +1335,7 @@ impl Engine {
             target.monitor = device;
         }
         target.offset = placement.offset;
-        target.align = placement.align.as_str().to_string();
+        target.scale = placement.scale;
         target.corner_priority = placement
             .corner_priority
             .map(|edge| edge.as_str().to_string())

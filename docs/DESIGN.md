@@ -596,7 +596,7 @@ for m in monitors:
 class Placement:
     segment: EdgeSegment      # 吸附到的外轮廓段
     offset: float = 0.5       # 平板中心在段上的相对位置 [0,1]
-    align: Align = Align.PROPORTIONAL   # PROPORTIONAL | CENTER | ONE_TO_ONE
+    scale: float = 1.0        # 平板在桌面上的显示缩放 [0.1,4.0]；2.5.0 起取代 align
     corner_priority: Edge | None = None # 角落同时命中两条边时的优先边
 ```
 
@@ -607,19 +607,21 @@ class Placement:
 | 角落裁决 | 6.3.6 |
 | 显示器热插拔 | 重建 `DesktopMap`；`segment` 失效 → 重锚到主屏同 `edge` 最长段 + 提示 |
 
-### 6.3.5 沿边对齐（跨屏手感核心）
+### 6.3.5 沿边映射（跨屏手感核心）
+
+2.5.0 起平板在桌面上有独立足迹：`footprint = round(device × scale)`（取整只做一次，
+矩形、映射比、触发带都读同一份足迹）。映射比 `s = 足迹 / 设备`，入口与出口**必须**用同一个
+`s`：
 
 ```python
-def pc_to_tablet_along(pc_along: int, seg: EdgeSegment, t_size: int) -> float:
-    t = (pc_along - seg.span_start) / max(seg.length, 1)
-    return clamp(t, 0.0, 1.0) * (t_size - 1)
-
-def tablet_to_pc_along(t_along: float, seg: EdgeSegment, t_size: int) -> int:
-    t = clamp(t_along / max(t_size - 1, 1), 0.0, 1.0)
-    return int(round(seg.span_start + t * (seg.length - 1)))
+s = footprint_size / device_size          # 沿边方向：竖边用高、横边用宽
+# rect_along_start = 竖边的 rect.top，横边的 rect.left
+entry = clamp((pc_along - rect_along_start) / s, 0, device_size - 1)  # PC 压线点 → 平板像素
+exit  = round(rect_along_start + tablet_along * s)                     # 平板像素 → PC 落点
 ```
 
-`align = ONE_TO_ONE` 时取段中点、按 1:1 像素平移（段比平板短时两侧留白），用于"段长与平板边长差 10 倍以上"的极端布局。
+`scale = 1.0`（默认）时与 2.4.0 的 1:1 行为逐像素一致。触发带判定的是**足迹矩形**：
+画布上看到多大，实际能穿过的范围就多大。详见 docs/DESIGN_LAYOUT_SCALE.md。
 
 ### 6.3.6 角落裁决
 
@@ -922,7 +924,7 @@ placement:                      # 由 GUI 写入
   span_start: 0
   span_end: 1600
   offset: 0.5                   # 平板贴在该边的位置：只在「布局」页点「保存布局」时写（0.3.17 起没有滑条）
-  align: proportional           # proportional | center | one_to_one
+  scale: 1.0                    # 平板显示缩放 0.1 ~ 4.0（2.5.0 起取代 align；不改设备分辨率）
   corner_priority: right        # 角落优先边：只在「布局」页按 Shift 预览，点「保存布局」写入（0.3.17 起没有下拉）
 
 motion:
@@ -1005,7 +1007,7 @@ misc:
 | 拖平板 | 实时命中最近合法外轮廓段并高亮；松手只生成预览，点「保存布局」才写入配置并生效 |
 | 拖到角落 | 显示两条候选边，`Shift` 切换优先边（同样需保存） |
 | 双击平板 | 不再切换横/竖屏预览；画布尺寸只认真机朝向 |
-| 右键平板 | 对齐方式 / 移除 / 测试穿越（对齐和移除也只改预览，需保存） |
+| 右键平板 | 缩放（50% / 75% / 100% / 125% / 150% / 自定义…）/ 移除（都只改预览，需保存） |
 | 显示全部 | 缩放到同时看见所有显示器和平板；滚轮缩放，`Ctrl+0` 也可恢复 |
 | 滚轮 / 空格拖 / `Ctrl+0` | 缩放 / 平移 / 复位 |
 | 悬停显示器 | ToolTip：设备名、分辨率、DPI、缩放、主屏标记 |
@@ -1279,13 +1281,8 @@ class EdgeSegment:
 class Placement:
     segment: EdgeSegment
     offset: float = 0.5
-    align: Align = Align.PROPORTIONAL
+    scale: float = 1.0
     corner_priority: Edge | None = None
-
-class Align(Enum):
-    PROPORTIONAL = "proportional"
-    CENTER = "center"
-    ONE_TO_ONE = "one_to_one"
 
 # core/state.py
 class State(Enum):

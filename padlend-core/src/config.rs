@@ -43,14 +43,13 @@ use serde_json::Value as JsonValue;
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::constants as C;
+use crate::logic::geometry::{SCALE_DEFAULT, SCALE_MAX, SCALE_MIN};
 
 /// 当前配置版本；`version` 字段驱动迁移（目前只有 v1）。
 pub const CURRENT_VERSION: i64 = 1;
 
 /// 平板可以贴的桌面边。
 pub const PLACEMENT_EDGES: [&str; 4] = ["left", "right", "top", "bottom"];
-/// 摆位对齐方式。
-pub const ALIGNS: [&str; 3] = ["proportional", "center", "one_to_one"];
 /// `layouts` 二级键只允许这两个屏幕方向。
 pub const LAYOUT_ORIENTATIONS: [&str; 2] = ["landscape", "portrait"];
 
@@ -243,8 +242,10 @@ pub struct PlacementCfg {
     pub span_end: i64,
     /// 沿边的相对位置 0.0~1.0。
     pub offset: f64,
-    /// 对齐方式：proportional | center | one_to_one。
-    pub align: String,
+    /// 平板显示缩放 0.1~4.0（2.5.0）；1.0 = 真实像素。
+    ///
+    /// 只影响平板在桌面/画布上占多大与入口/出口映射，不改设备分辨率。
+    pub scale: f64,
     /// 角落优先边（只允许 left/right/top/bottom 或空）。
     pub corner_priority: String,
 }
@@ -257,7 +258,7 @@ impl Default for PlacementCfg {
             span_start: 0,
             span_end: 1600,
             offset: 0.5,
-            align: "one_to_one".to_string(),
+            scale: 1.0,
             corner_priority: "right".to_string(),
         }
     }
@@ -283,6 +284,26 @@ impl LayoutsCfg {
             return None;
         }
         profiles.get(&py_strip(orientation).to_lowercase())
+    }
+
+    /// 只改某设备某方向摆位的 `scale`；该方向还没有存档时什么都不做。
+    ///
+    /// 布局页保存时用它把另一个方向的缩放一起改掉（2.5.0 的 Q1：两个方向
+    /// 共用同一个显示比例），但不动另一方向的吸附边与位置。
+    pub fn set_scale(&mut self, serial: &str, orientation: &str, scale: f64) -> bool {
+        let key = normalize_layout_key(serial);
+        let bucket = py_strip(orientation).to_lowercase();
+        if key.is_empty() || !LAYOUT_ORIENTATIONS.contains(&bucket.as_str()) {
+            return false;
+        }
+        let Some(profiles) = self.devices.get_mut(&key) else {
+            return false;
+        };
+        let Some(profile) = profiles.get_mut(&bucket) else {
+            return false;
+        };
+        profile.scale = scale;
+        true
     }
 
     /// 写入某设备某方向的摆位；设备身份为空或方向非法时静默忽略（与 Python 一致）。
@@ -1140,7 +1161,7 @@ fn section_placement(raw: Option<&Value>) -> PlacementCfg {
     take_int(map, "span_start", &mut out.span_start);
     take_int(map, "span_end", &mut out.span_end);
     take_float(map, "offset", &mut out.offset);
-    take_str(map, "align", &mut out.align);
+    take_float(map, "scale", &mut out.scale);
     take_str(map, "corner_priority", &mut out.corner_priority);
     out
 }
@@ -1379,8 +1400,12 @@ fn placement_problems(placement: &PlacementCfg, prefix: &str) -> Vec<String> {
     if !PLACEMENT_EDGES.contains(&placement.edge.as_str()) {
         problems.push(format!("{prefix}.edge 必须是 left/right/top/bottom"));
     }
-    if !ALIGNS.contains(&placement.align.as_str()) {
-        problems.push(format!("{prefix}.align 必须是 proportional/center/one_to_one"));
+    if !(SCALE_MIN..=SCALE_MAX).contains(&placement.scale) {
+        problems.push(format!(
+            "{prefix}.scale 必须在 {}..={}",
+            py_float_repr(SCALE_MIN),
+            py_float_repr(SCALE_MAX)
+        ));
     }
     if !placement.corner_priority.is_empty()
         && !PLACEMENT_EDGES.contains(&placement.corner_priority.as_str())
@@ -1520,9 +1545,13 @@ fn placement_tree_problems(placement: &JsonValue, prefix: &str) -> Vec<String> {
             problems.push(format!("{prefix}.edge 必须是 left/right/top/bottom"));
         }
     }
-    if let Some(align) = placement.get("align").and_then(JsonValue::as_str) {
-        if !ALIGNS.contains(&align) {
-            problems.push(format!("{prefix}.align 必须是 proportional/center/one_to_one"));
+    if let Some(scale) = tree_f64(placement.get("scale")) {
+        if !(SCALE_MIN..=SCALE_MAX).contains(&scale) {
+            problems.push(format!(
+                "{prefix}.scale 必须在 {}..={}",
+                py_float_repr(SCALE_MIN),
+                py_float_repr(SCALE_MAX)
+            ));
         }
     }
     if let Some(corner) = placement.get("corner_priority").and_then(JsonValue::as_str) {
@@ -1570,12 +1599,22 @@ fn repair_placement(placement: &mut PlacementCfg, prefix: &str, found: &mut Vec<
         ));
         placement.edge = "right".to_string();
     }
-    if !ALIGNS.contains(&placement.align.as_str()) {
-        found.push(format!(
-            "{prefix}.align={} 非法，已回退 one_to_one",
-            py_repr_str(&placement.align)
-        ));
-        placement.align = "one_to_one".to_string();
+    if !(SCALE_MIN..=SCALE_MAX).contains(&placement.scale) {
+        let text = py_float_repr(placement.scale);
+        if placement.scale.is_finite() {
+            found.push(format!(
+                "{prefix}.scale={text} 越界，已夹紧到 [{},{}]",
+                py_float_repr(SCALE_MIN),
+                py_float_repr(SCALE_MAX)
+            ));
+            placement.scale = placement.scale.clamp(SCALE_MIN, SCALE_MAX);
+        } else {
+            found.push(format!(
+                "{prefix}.scale={text} 非法，已回退 {}",
+                py_float_repr(SCALE_DEFAULT)
+            ));
+            placement.scale = SCALE_DEFAULT;
+        }
     }
     if !placement.corner_priority.is_empty()
         && !PLACEMENT_EDGES.contains(&placement.corner_priority.as_str())
@@ -2096,7 +2135,7 @@ mod tests {
         assert!(cfg.validate().is_empty());
         assert_eq!(cfg.device.server_port, 1234);
         assert_eq!(cfg.device.serial, "");
-        assert_eq!(cfg.placement.align, "one_to_one");
+        assert_eq!(cfg.placement.scale, 1.0);
         assert!(cfg.device.prefer_usb);
         assert!(cfg.device.auto_connect);
     }
@@ -2127,7 +2166,7 @@ mod tests {
             "repair",
             "version: 1\n\
              device:\n  server_port: 80\n\
-             placement:\n  edge: diagonal\n  align: stretch\n  offset: 3.0\n  span_start: 100\n  span_end: 10\n\
+             placement:\n  edge: diagonal\n  scale: 9.0\n  offset: 3.0\n  span_start: 100\n  span_end: 10\n\
              motion:\n  gain: 99\n  report_hz: 3\n  hid_clamp: 999\n  arm_px: 0\n\
              keyboard:\n  layout: \"\"\n  passthrough_keys: not-a-list\n\
              hotkeys:\n  toggle: \"\"\n",
@@ -2142,6 +2181,7 @@ mod tests {
             .issues()
             .contains(&"motion.hid_clamp=999 越界，已夹紧到 [1,127]".to_string()));
         assert!(cfg.placement.offset >= 0.0 && cfg.placement.offset <= 1.0);
+        assert_eq!(cfg.placement.scale, 4.0, "越界 scale 夹到上限");
         assert!((0.25..=3.0).contains(&cfg.motion.gain));
         assert!(cfg.motion.hid_clamp >= 1 && cfg.motion.hid_clamp <= 127);
         assert_eq!(cfg.motion.report_hz, 125);
@@ -2151,7 +2191,7 @@ mod tests {
             strings(&[
                 "device.server_port=80 越界，已恢复默认",
                 "placement.edge='diagonal' 非法，已回退 right",
-                "placement.align='stretch' 非法，已回退 one_to_one",
+                "placement.scale=9.0 越界，已夹紧到 [0.1,4.0]",
                 "placement.offset=3.0 越界，已夹紧到 [0,1]",
                 "placement.span_end 必须大于 span_start，已恢复默认",
                 "motion.hid_clamp=999 越界，已夹紧到 [1,127]",
@@ -2391,7 +2431,7 @@ mod tests {
         let (temp, cfg) = load_text(
             "layouts",
             "version: 1\n\
-             layouts:\n  devices:\n    \"SerialA\":\n      landscape:\n        edge: top\n        span_start: 10\n        span_end: 500\n        align: center\n        offset: 0.25\n        corner_priority: left\n      portrait:\n        edge: left\n",
+             layouts:\n  devices:\n    \"SerialA\":\n      landscape:\n        edge: top\n        span_start: 10\n        span_end: 500\n        scale: 0.75\n        offset: 0.25\n        corner_priority: left\n      portrait:\n        edge: left\n",
         );
         assert!(cfg.issues().is_empty(), "{:?}", cfg.issues());
         // 设备键按 normalize_layout_key 归一化成小写
@@ -2405,7 +2445,7 @@ mod tests {
         assert_eq!(landscape.edge, "top");
         assert_eq!(landscape.span_start, 10);
         assert_eq!(landscape.span_end, 500);
-        assert_eq!(landscape.align, "center");
+        assert_eq!(landscape.scale, 0.75);
         assert_eq!(landscape.offset, 0.25);
         assert_eq!(landscape.corner_priority, "left");
 
@@ -2418,6 +2458,35 @@ mod tests {
             &again.to_dict().expect("to_dict"),
             &cfg.to_dict().expect("to_dict"),
         );
+    }
+
+    #[test]
+    fn layouts_set_scale_syncs_only_existing_bucket() {
+        let mut layouts = LayoutsCfg::default();
+        let mut landscape = PlacementCfg::default();
+        landscape.edge = "top".to_string();
+        landscape.scale = 1.0;
+        layouts.set("SerialB", "landscape", landscape);
+
+        // 另一方向还没有存档：不能凭空创建（会丢掉落点信息）。
+        assert!(!layouts.set_scale("SerialB", "portrait", 0.5));
+        assert_eq!(layouts.get("SerialB", "landscape").map(|p| p.scale), Some(1.0));
+
+        let mut portrait = PlacementCfg::default();
+        portrait.edge = "left".to_string();
+        portrait.scale = 1.0;
+        layouts.set("serialb", "portrait", portrait);
+
+        // 只改 scale，边与位置保持原样。
+        assert!(layouts.set_scale("SerialB", "portrait", 0.375));
+        let portrait = layouts.get("SerialB", "portrait").expect("portrait 档");
+        assert_eq!(portrait.scale, 0.375);
+        assert_eq!(portrait.edge, "left");
+        assert_eq!(layouts.get("SerialB", "landscape").map(|p| p.scale), Some(1.0));
+
+        // 空身份 / 非法方向静默忽略。
+        assert!(!layouts.set_scale("", "portrait", 0.5));
+        assert!(!layouts.set_scale("SerialB", "sideways", 0.5));
     }
 
     #[test]
@@ -2487,9 +2556,10 @@ mod tests {
     // -- 与 Python 生成的 fixture 逐字段对拍 --------------------------------
     #[test]
     fn fixture_cases_match_python() {
-        // 2.2.0 起 `placement.align` 默认从 proportional 改为 one_to_one：
-        // fixture 里只把「YAML 未写 align / 写了非法值」的 expected 改成新默认，
-        // YAML 显式写出的 proportional / center / one_to_one 仍与旧 Python 输出一致。
+        // 2.5.0 删掉了死字段 `align`，fixture 已按同一规则机械改写：
+        // - YAML / JSON 里的 align（proportional / center / one_to_one）→ scale: 1.0
+        // - 原来测「非法 align 回退」的用例 → scale: 9.0 / scale: 0.0，测越界夹紧
+        // 其余字段仍与 Python 生成的 fixture 逐字段一致。
         let dir = fixtures_dir();
         let index_text =
             fs::read_to_string(dir.join("config_cases.json")).expect("缺少 config_cases.json");

@@ -18,6 +18,7 @@ import type {
   PlacementCfg,
 } from './types';
 import { APP_VERSION } from '../lib/version';
+import { clampScale, SCALE_DEFAULT } from '../lib/geometry';
 
 export type EventHandler = (payload: unknown) => void;
 
@@ -40,7 +41,7 @@ export function defaultConfig(): Config {
       span_start: 0,
       span_end: 1600,
       offset: 0.5,
-      align: 'one_to_one',
+      scale: 1.0,
       corner_priority: 'right',
     },
     layouts: { devices: {} },
@@ -132,7 +133,7 @@ function placementToConfig(placement: Placement): PlacementCfg {
     span_start: placement.spanStart,
     span_end: placement.spanEnd,
     offset: placement.offset,
-    align: placement.align,
+    scale: placement.scale ?? SCALE_DEFAULT,
     corner_priority: placement.cornerPriority ?? '',
   };
 }
@@ -151,7 +152,6 @@ function placementFromConfig(cfg: Config['placement']): Placement | null {
   const segments = DESKTOP.segments.filter((item) => item.monitorHandle === monitor.handle);
   const segment = segments.find((item) => item.edge === edge) ?? segments[0];
   if (!segment) return null;
-  const align = (['proportional', 'center', 'one_to_one'] as const).find((value) => value === cfg.align) ?? 'one_to_one';
   const corner = (['left', 'right', 'top', 'bottom'] as const).find((value) => value === cfg.corner_priority) ?? null;
   return {
     monitorHandle: segment.monitorHandle,
@@ -160,7 +160,7 @@ function placementFromConfig(cfg: Config['placement']): Placement | null {
     spanEnd: segment.spanEnd,
     length: segment.length,
     offset: Math.min(1, Math.max(0, cfg.offset)),
-    align,
+    scale: clampScale(cfg.scale ?? SCALE_DEFAULT),
     cornerPriority: corner,
   };
 }
@@ -238,7 +238,7 @@ export class MockBackend {
     spanEnd: 1080,
     length: 1080,
     offset: 0.5,
-    align: 'one_to_one',
+    scale: 1.0,
     cornerPriority: 'right',
   };
   private diagnosticsText = '';
@@ -463,7 +463,7 @@ export class MockBackend {
             span_start: saved.span_start,
             span_end: saved.span_end,
             offset: saved.offset,
-            align: saved.align,
+            scale: saved.scale,
             corner_priority: saved.corner_priority,
           },
         };

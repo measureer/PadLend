@@ -17,13 +17,16 @@
 //! span_start: 0
 //! span_end: 1600
 //! offset: 0.5
-//! align: one_to_one
+//! scale: 1.0
 //! corner_priority: right
 //! ```
 //!
-//! 字段名与枚举取值都对齐 Python：`edge` / `align` / `corner_priority` 是下划线
-//! 枚举的小写字符串（`align` 的 `one_to_one` 带下划线）；`corner_priority` 为
+//! 字段名都是下划线：`edge` / `scale` / `corner_priority`；`corner_priority` 为
 //! `None` 时写空串，与 `PlacementCfg.corner_priority = ""` 一致。
+//!
+//! 2.5.0 起删掉了从未生效的 `align`（proportional / center / one_to_one 三态
+//! 在引擎里没有任何几何差别），换成真正生效的 `scale`：平板在桌面/画布上
+//! 的显示缩放，见 `tablet_footprint`。
 //!
 //! 与配置文件唯一的差异是显示器身份：文件里 `monitor` 是设备名
 //! （`\"\\\\\\\\.\\\\DISPLAY1\"`，见 `config.py:PlacementCfg.monitor`），运行时类型只能
@@ -51,13 +54,13 @@ pub enum GeometryError {
     /// 非法的边名（Python `Edge("x")` 的 ValueError）。
     #[error("'{value}' is not a valid Edge")]
     UnknownEdge { value: String },
-    /// 非法的对齐名（Python `Align("x")` 的 ValueError）。
-    #[error("'{value}' is not a valid Align")]
-    UnknownAlign { value: String },
+    /// `Placement.scale` 超出 `[SCALE_MIN, SCALE_MAX]`（2.5.0）。
+    #[error("Placement.scale out of range: {scale:?} (0.1..=4.0)")]
+    ScaleOutOfRange { scale: f64 },
 }
 
 // ---------------------------------------------------------------------------
-// Edge / Align
+// Edge
 // ---------------------------------------------------------------------------
 
 /// 虚拟桌面的四条外轮廓边（Python `Edge(StrEnum)`）。
@@ -146,60 +149,23 @@ impl TryFrom<&str> for Edge {
     }
 }
 
-/// 平板在边段内的对齐方式（Python `Align(StrEnum)`）。
+/// 平板显示缩放的合法范围与默认值（2.5.0）。
 ///
-/// 默认 `OneToOne`（`one_to_one`）：2.2.0 起默认 1:1 对齐，按真实像素
-/// 摆放，不再把整段 PC 边归一化到整条平板边。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Align {
-    /// 按比例。
-    Proportional,
-    /// 居中。
-    Center,
-    /// 1:1（默认）。
-    #[default]
-    OneToOne,
-}
+/// 下限 0.1 保证足迹至少还有几百像素，上限 4.0 足够把平板放大看；
+/// config 层的 placement_problems / repair_placement 必须复用这三个常量，
+/// 否则 UI 与引擎会给出两套边界。
+pub const SCALE_MIN: f64 = 0.1;
+/// 见 SCALE_MIN。
+pub const SCALE_MAX: f64 = 4.0;
+/// 1.0 = 真实像素（2.2.0 以来一直是这个行为）。
+pub const SCALE_DEFAULT: f64 = 1.0;
 
-impl Align {
-    /// 枚举的小写字符串取值（等价于 Python StrEnum 的 `.value`）。
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Align::Proportional => "proportional",
-            Align::Center => "center",
-            Align::OneToOne => "one_to_one",
-        }
+/// 把任意 scale 夹到合法范围；NaN / 无穷回退默认值（读取旧配置、GUI 回传时用）。
+pub fn clamp_scale(scale: f64) -> f64 {
+    if !scale.is_finite() {
+        return SCALE_DEFAULT;
     }
-}
-
-impl fmt::Display for Align {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Align {
-    type Err = GeometryError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "proportional" => Ok(Align::Proportional),
-            "center" => Ok(Align::Center),
-            "one_to_one" => Ok(Align::OneToOne),
-            other => Err(GeometryError::UnknownAlign {
-                value: other.to_string(),
-            }),
-        }
-    }
-}
-
-impl TryFrom<&str> for Align {
-    type Error = GeometryError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        value.parse()
-    }
+    scale.clamp(SCALE_MIN, SCALE_MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +379,7 @@ impl TryFrom<EdgeSegmentRaw> for EdgeSegment {
 // Placement
 // ---------------------------------------------------------------------------
 
-/// 平板摆位（6.3.4）：吸附到某个外轮廓段 + 段内相对位置。
+/// 平板摆位（6.3.4）：吸附到某个外轮廓段 + 段内相对位置 + 显示缩放。
 ///
 /// 序列化是**扁平**的 config.yaml 形状（见模块文档），不是嵌套 `segment`。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -423,8 +389,10 @@ pub struct Placement {
     pub segment: EdgeSegment,
     /// 段内相对位置，`0.0 .. 1.0`（0 靠 `span_start`，1 靠 `span_end`）。
     pub offset: f64,
-    /// 对齐方式。
-    pub align: Align,
+    /// 平板在桌面上的显示缩放（2.5.0）：`[SCALE_MIN, SCALE_MAX]`，1.0 = 真实像素。
+    ///
+    /// 只改"平板占多大、入口/出口怎么映射"，不改设备分辨率与指针坐标。
+    pub scale: f64,
     /// 角落优先边；`None` 表示没有偏好（配置里写空串）。
     pub corner_priority: Option<Edge>,
 }
@@ -438,8 +406,8 @@ struct PlacementRaw {
     span_end: i32,
     #[serde(default = "default_offset")]
     offset: f64,
-    #[serde(default)]
-    align: Align,
+    #[serde(default = "default_scale")]
+    scale: f64,
     #[serde(default, deserialize_with = "deserialize_corner_priority")]
     corner_priority: Option<Edge>,
 }
@@ -447,6 +415,11 @@ struct PlacementRaw {
 /// `Placement.offset` 的 Python 默认值。
 fn default_offset() -> f64 {
     0.5
+}
+
+/// 旧配置没有 `scale` 时按真实像素摆（2.2.0 以来的行为）。
+fn default_scale() -> f64 {
+    SCALE_DEFAULT
 }
 
 /// `corner_priority` 既接受边名，也接受空串 / null / 缺失（配置里表示“无偏好”）。
@@ -469,25 +442,29 @@ impl Placement {
     pub fn new(
         segment: EdgeSegment,
         offset: f64,
-        align: Align,
+        scale: f64,
         corner_priority: Option<Edge>,
     ) -> Result<Self, GeometryError> {
         let placement = Self {
             segment,
             offset,
-            align,
+            scale,
             corner_priority,
         };
         placement.validate()?;
         Ok(placement)
     }
 
-    /// 复刻 Python `__post_init__` 的校验（NaN 也会被拒，与 Python 相同）。
+    /// 复刻 Python `__post_init__` 的校验（NaN 也会被拒，与 Python 相同），
+    /// 并校验 2.5.0 的 `scale` 范围。
     pub fn validate(&self) -> Result<(), GeometryError> {
         if !(0.0..=1.0).contains(&self.offset) {
             return Err(GeometryError::OffsetOutOfRange {
                 offset: self.offset,
             });
+        }
+        if !(SCALE_MIN..=SCALE_MAX).contains(&self.scale) {
+            return Err(GeometryError::ScaleOutOfRange { scale: self.scale });
         }
         Ok(())
     }
@@ -513,7 +490,7 @@ impl Serialize for Placement {
         state.serialize_field("span_start", &self.segment.span_start)?;
         state.serialize_field("span_end", &self.segment.span_end)?;
         state.serialize_field("offset", &self.offset)?;
-        state.serialize_field("align", &self.align)?;
+        state.serialize_field("scale", &self.scale)?;
         state.serialize_field("corner_priority", &self.corner_priority_str())?;
         state.end()
     }
@@ -524,7 +501,7 @@ impl TryFrom<PlacementRaw> for Placement {
 
     fn try_from(raw: PlacementRaw) -> Result<Self, Self::Error> {
         let segment = EdgeSegment::new(raw.monitor_handle, raw.edge, raw.span_start, raw.span_end)?;
-        Placement::new(segment, raw.offset, raw.align, raw.corner_priority)
+        Placement::new(segment, raw.offset, raw.scale, raw.corner_priority)
     }
 }
 
@@ -641,8 +618,9 @@ fn clamp_i32(value: i64) -> i32 {
 /// 平板矩形 `(left, top, right, bottom)`，单位是虚拟桌面物理像素。
 ///
 /// 平板贴在外轮廓段外侧，段上的投影点对准平板中心。贴边一侧的长度是
-/// 平板的高（left/right 边）或宽（top/bottom 边）。画布和 Router 共用这
-/// 一份几何，否则拖动预览与实际穿越范围会不一致。
+/// 足迹的高（left/right 边）或宽（top/bottom 边），即设备像素 × `scale`
+/// 取整后的值。画布和 Router 共用这一份几何，否则拖动预览与实际穿越范
+/// 围会不一致。
 pub fn tablet_rect(
     segment: &EdgeSegment,
     monitor: &MonitorInfo,
@@ -679,6 +657,50 @@ pub fn tablet_rect(
     }
 }
 
+/// 设备像素尺寸 × 缩放 → 沿边足迹（至少 1px，2.5.0）。
+///
+/// 取整只发生在这一处：矩形、映射比 `s` 与触发带都读同一份足迹，
+/// 否则画布预览与实际穿越范围会错开（见 DESIGN_LAYOUT_SCALE 的坑 3）。
+pub fn footprint_size(device_w: i32, device_h: i32, scale: f64) -> (i32, i32) {
+    let scale = clamp_scale(scale);
+    let w = py_round_int(f64::from(device_w.max(1)) * scale).clamp(1, i64::from(i32::MAX));
+    let h = py_round_int(f64::from(device_h.max(1)) * scale).clamp(1, i64::from(i32::MAX));
+    (clamp_i32(w), clamp_i32(h))
+}
+
+/// 平板在桌面上的足迹矩形：设备像素按 `scale` 缩放后交给 tablet_rect。
+///
+/// Router 的所有几何入口（arm / 入口 / 出口 / clip）都必须走这里，
+/// 避免有的地方用设备像素、有的地方用足迹像素。
+pub fn tablet_footprint(
+    segment: &EdgeSegment,
+    monitor: &MonitorInfo,
+    offset: f64,
+    device_w: i32,
+    device_h: i32,
+    scale: f64,
+) -> TabletRect {
+    let (w, h) = footprint_size(device_w, device_h, scale);
+    tablet_rect(segment, monitor, offset, w, h)
+}
+
+/// 沿边方向的映射比 `s = 足迹 / 设备`；入口与出口必须用同一个值。
+///
+/// 用**取整后的足迹**而不是原始 `scale`：否则 `round(device × scale)`
+/// 与 `device × scale` 的零点几像素差会在出口累积成跳点。
+fn along_ratio(edge: Edge, tablet: &TabletRect, device_w: i32, device_h: i32) -> f64 {
+    let (footprint, device) = if edge.is_vertical() {
+        (tablet.height(), f64::from(device_h.max(1)))
+    } else {
+        (tablet.width(), f64::from(device_w.max(1)))
+    };
+    if footprint > 0.0 {
+        footprint / device
+    } else {
+        1.0
+    }
+}
+
 /// 鼠标在 `along` 处压线时，这条外轮廓段是否真的贴着平板。
 ///
 /// 只比较段所在的那条 1px 扫描线：线必须落在平板范围内，且光标沿边坐标
@@ -711,11 +733,12 @@ pub fn segment_contacts_tablet(
     }
 }
 
-/// PC 压线点 → 平板入口点（1:1 几何）。
+/// PC 压线点 → 平板入口点（2.5.0：按足迹等比映射）。
 ///
-/// 画布按真实像素摆放平板，因此鼠标从哪一点穿过去，就落在平板对应的那一点。
-/// 不再把整段 PC 边归一化到整条平板边；平板跨在两块显示器之间时，这样才
-/// 不会发生落点跳变。
+/// 鼠标从足迹上的哪一点穿过去，就落在平板对应的那一点：先把 PC 偏移
+/// `pc - rect` 除以映射比 `s = 足迹 / 设备`，再夹到设备像素边界。
+/// `s == 1` 时与 2.2.0 的 1:1 行为逐像素一致；平板跨在两块显示器之间时
+/// 也不会发生落点跳变，因为偏移是相对足迹矩形算的。
 pub fn tablet_entry_point(
     segment: &EdgeSegment,
     tablet: &TabletRect,
@@ -726,15 +749,16 @@ pub fn tablet_entry_point(
 ) -> (f64, f64) {
     let max_x = (tablet_w as i64 - 1).max(0) as f64;
     let max_y = (tablet_h as i64 - 1).max(0) as f64;
+    let ratio = along_ratio(segment.edge, tablet, tablet_w, tablet_h);
     match segment.edge {
-        Edge::Left => (max_x, py_min(py_max(pc_y - tablet.top, 0.0), max_y)),
-        Edge::Right => (0.0, py_min(py_max(pc_y - tablet.top, 0.0), max_y)),
+        Edge::Left => (max_x, py_min(py_max((pc_y - tablet.top) / ratio, 0.0), max_y)),
+        Edge::Right => (0.0, py_min(py_max((pc_y - tablet.top) / ratio, 0.0), max_y)),
         Edge::Top => {
-            let x = py_min(py_max(pc_x - tablet.left, 0.0), max_x);
+            let x = py_min(py_max((pc_x - tablet.left) / ratio, 0.0), max_x);
             (x, max_y)
         }
         Edge::Bottom => {
-            let x = py_min(py_max(pc_x - tablet.left, 0.0), max_x);
+            let x = py_min(py_max((pc_x - tablet.left) / ratio, 0.0), max_x);
             (x, 0.0)
         }
     }
@@ -742,17 +766,17 @@ pub fn tablet_entry_point(
 
 /// 出口落点距边线的像素数：`max(1, entry_margin_px) + max(0, boundary_inset_px)`。
 ///
-/// Python 在调用 `tablet_exit_point` 前用同一公式算 offset；这里收敛成一个函数，
-/// 让 `motion.entry_margin_px` 与 `motion.boundary_inset_px` 两个配置项只有一份
-/// 生效规则（win 侧遗留的 `DesktopMap::exit_position` 也应改用本函数）。
+/// 收敛成一个函数，让 `motion.entry_margin_px` 与 `motion.boundary_inset_px`
+/// 两个配置项只有一份生效规则。
 pub fn exit_offset_px(entry_margin_px: i64, boundary_inset_px: i64) -> i32 {
     let margin = entry_margin_px.max(1);
     let inset = boundary_inset_px.max(0);
     margin.saturating_add(inset).clamp(1, i64::from(i32::MAX)) as i32
 }
 
-/// 平板入口边上的点 → PC 落点（1:1 几何，已夹到显示器与段范围内）。
+/// 平板入口边上的点 → PC 落点（2.5.0：按足迹等比映射，已夹到显示器与段范围内）。
 ///
+/// `tablet_along` 是设备像素坐标；乘上映射比 `s = 足迹 / 设备` 后才落到桌面上。
 /// `offset_px` 是落点距边线的像素数（调用方用 [`exit_offset_px`] 由
 /// `motion.entry_margin_px` + `motion.boundary_inset_px` 算好后传入）；落点永远在
 /// 桌面内部，因为 Windows 不允许把光标留在所有显示器之外。
@@ -762,9 +786,12 @@ pub fn tablet_exit_point(
     tablet: &TabletRect,
     tablet_along: f64,
     offset_px: i32,
+    tablet_w: i32,
+    tablet_h: i32,
 ) -> (i32, i32) {
     let area = monitor.rect;
     let margin = (offset_px as i64).max(1);
+    let ratio = along_ratio(segment.edge, tablet, tablet_w, tablet_h);
     if segment.edge.is_vertical() {
         let area_top = area.top as i64;
         let area_bottom = area.bottom as i64;
@@ -774,7 +801,7 @@ pub fn tablet_exit_point(
             lo = area_top;
             hi = area_bottom;
         }
-        let y = py_round_int(tablet.top + tablet_along);
+        let y = py_round_int(tablet.top + tablet_along * ratio);
         let y = y.max(lo).min(lo.max(hi - 1));
         let x = if segment.edge == Edge::Left {
             area.left as i64 + margin - 1
@@ -792,7 +819,7 @@ pub fn tablet_exit_point(
             lo = area_left;
             hi = area_right;
         }
-        let x = py_round_int(tablet.left + tablet_along);
+        let x = py_round_int(tablet.left + tablet_along * ratio);
         let x = x.max(lo).min(lo.max(hi - 1));
         let y = if segment.edge == Edge::Top {
             area.top as i64 + margin - 1
@@ -819,6 +846,17 @@ mod tests {
     fn single_segment(edge: Edge) -> EdgeSegment {
         let span_end = if edge.is_vertical() { 1080 } else { 1920 };
         EdgeSegment::new(1, edge, 0, span_end).unwrap()
+    }
+
+    /// 测试夹具里的设备尺寸固定，出口调用不必每次都写两遍。
+    fn exit_point(
+        segment: &EdgeSegment,
+        monitor: &MonitorInfo,
+        tablet: &TabletRect,
+        tablet_along: f64,
+        offset_px: i32,
+    ) -> (i32, i32) {
+        tablet_exit_point(segment, monitor, tablet, tablet_along, offset_px, TABLET_W, TABLET_H)
     }
 
     // -- 类型契约 --------------------------------------------------------
@@ -874,7 +912,7 @@ mod tests {
 
     /// 枚举在 YAML / JSON 里都是 Python StrEnum 的小写串。
     #[test]
-    fn edge_and_align_serde_use_python_values() {
+    fn edge_serde_uses_python_values() {
         for (edge, text) in [
             (Edge::Left, "left"),
             (Edge::Right, "right"),
@@ -885,26 +923,10 @@ mod tests {
             assert_eq!(serde_yaml_ng::to_string(&edge).unwrap().trim(), text);
             assert_eq!(text.parse::<Edge>(), Ok(edge));
         }
-        for (align, text) in [
-            (Align::Proportional, "proportional"),
-            (Align::Center, "center"),
-            (Align::OneToOne, "one_to_one"),
-        ] {
-            assert_eq!(serde_json::to_string(&align).unwrap(), format!("\"{text}\""));
-            assert_eq!(serde_yaml_ng::to_string(&align).unwrap().trim(), text);
-            assert_eq!(text.parse::<Align>(), Ok(align));
-        }
-        assert_eq!(Align::default(), Align::OneToOne);
         assert_eq!(
             "middle".parse::<Edge>(),
             Err(GeometryError::UnknownEdge {
                 value: "middle".to_string()
-            })
-        );
-        assert_eq!(
-            "one-to-one".parse::<Align>(),
-            Err(GeometryError::UnknownAlign {
-                value: "one-to-one".to_string()
             })
         );
     }
@@ -981,7 +1003,7 @@ mod tests {
     fn placement_rejects_out_of_range_offset() {
         let segment = single_segment(Edge::Right);
         assert_eq!(
-            Placement::new(segment, 1.5, Align::Proportional, None).unwrap_err(),
+            Placement::new(segment, 1.5, 1.0, None).unwrap_err(),
             GeometryError::OffsetOutOfRange { offset: 1.5 }
         );
         assert_eq!(
@@ -994,15 +1016,50 @@ mod tests {
             "Placement.offset out of range: 2.0"
         );
         assert_eq!(
-            Placement::new(segment, -0.1, Align::Proportional, None).unwrap_err(),
+            Placement::new(segment, -0.1, 1.0, None).unwrap_err(),
             GeometryError::OffsetOutOfRange { offset: -0.1 }
         );
         // 边界值 0.0 / 1.0 合法；-0.0 也合法（Python 同样接受）。
         for offset in [0.0, 1.0, -0.0] {
-            assert!(Placement::new(segment, offset, Align::Proportional, None).is_ok());
+            assert!(Placement::new(segment, offset, 1.0, None).is_ok());
         }
         // NaN 会被拒（Python: not (0.0 <= nan <= 1.0) == True）。
-        assert!(Placement::new(segment, f64::NAN, Align::Proportional, None).is_err());
+        assert!(Placement::new(segment, f64::NAN, 1.0, None).is_err());
+    }
+
+    /// 2.5.0：`scale` 必须在 [0.1, 4.0]，NaN / 无穷也拒绝。
+    #[test]
+    fn placement_rejects_out_of_range_scale() {
+        let segment = single_segment(Edge::Right);
+        for scale in [0.0, 0.09, 4.01, 10.0, -1.0] {
+            assert_eq!(
+                Placement::new(segment, 0.5, scale, None).unwrap_err(),
+                GeometryError::ScaleOutOfRange { scale },
+                "{scale}"
+            );
+        }
+        // NaN != NaN，只能按变体断言。
+        for scale in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                matches!(
+                    Placement::new(segment, 0.5, scale, None).unwrap_err(),
+                    GeometryError::ScaleOutOfRange { .. }
+                ),
+                "{scale}"
+            );
+        }
+        for scale in [0.1, 1.0, 4.0] {
+            assert!(Placement::new(segment, 0.5, scale, None).is_ok(), "{scale}");
+        }
+        assert_eq!(
+            GeometryError::ScaleOutOfRange { scale: 9.0 }.to_string(),
+            "Placement.scale out of range: 9.0 (0.1..=4.0)"
+        );
+        // clamp_scale：越界夹紧、NaN 回默认，供 config / GUI 回传使用。
+        assert_eq!(clamp_scale(9.0), 4.0);
+        assert_eq!(clamp_scale(-1.0), 0.1);
+        assert_eq!(clamp_scale(f64::NAN), 1.0);
+        assert_eq!(clamp_scale(0.375), 0.375);
     }
 
     /// YAML 形状必须能直接写进 config.yaml 的 placement 段。
@@ -1011,7 +1068,7 @@ mod tests {
         let placement = Placement::new(
             single_segment(Edge::Right),
             0.5,
-            Align::Proportional,
+            1.0,
             Some(Edge::Right),
         )
         .unwrap();
@@ -1024,14 +1081,14 @@ mod tests {
                 "span_start: 0\n",
                 "span_end: 1080\n",
                 "offset: 0.5\n",
-                "align: proportional\n",
+                "scale: 1.0\n",
                 "corner_priority: right\n",
             )
         );
 
         // 没有角落偏好时写空串（Python PlacementCfg.corner_priority = ""）。
         let no_corner =
-            Placement::new(single_segment(Edge::Top), 0.25, Align::Center, None).unwrap();
+            Placement::new(single_segment(Edge::Top), 0.25, 0.5, None).unwrap();
         let yaml = serde_yaml_ng::to_string(&no_corner).unwrap();
         assert!(yaml.ends_with("corner_priority: ''\n"), "{yaml}");
         assert_eq!(
@@ -1048,7 +1105,7 @@ mod tests {
             "span_start: 100\n",
             "span_end: 200\n",
             "offset: 0.75\n",
-            "align: one_to_one\n",
+            "scale: 1.5\n",
             "corner_priority: bottom\n",
         );
         let placement: Placement = serde_yaml_ng::from_str(yaml).unwrap();
@@ -1057,15 +1114,16 @@ mod tests {
         assert_eq!(placement.segment.span_start, 100);
         assert_eq!(placement.segment.span_end, 200);
         assert_eq!(placement.offset, 0.75);
-        assert_eq!(placement.align, Align::OneToOne);
+        assert_eq!(placement.scale, 1.5);
         assert_eq!(placement.corner_priority, Some(Edge::Bottom));
 
-        // 缺省字段回退默认值（offset=0.5 / one_to_one / None）。
+        // 缺省字段回退默认值（offset=0.5 / scale=1.0 / None）。
+        // 2.5.0 之前保存的配置没有 scale，读回来必须还是 1:1 足迹。
         let defaults: Placement =
             serde_yaml_ng::from_str("monitor_handle: 1\nedge: top\nspan_start: 0\nspan_end: 10\n")
                 .unwrap();
         assert_eq!(defaults.offset, 0.5);
-        assert_eq!(defaults.align, Align::OneToOne);
+        assert_eq!(defaults.scale, SCALE_DEFAULT);
         assert_eq!(defaults.corner_priority, None);
 
         // 空串 / null 都表示“无偏好”。
@@ -1081,6 +1139,8 @@ mod tests {
             "monitor_handle: 1\nedge: middle\nspan_start: 0\nspan_end: 10\n",
             "monitor_handle: 1\nedge: left\nspan_start: 10\nspan_end: 5\n",
             "monitor_handle: 1\nedge: left\nspan_start: 0\nspan_end: 10\noffset: 1.5\n",
+            "monitor_handle: 1\nedge: left\nspan_start: 0\nspan_end: 10\nscale: 9.0\n",
+            "monitor_handle: 1\nedge: left\nspan_start: 0\nspan_end: 10\nscale: 0.0\n",
         ] {
             assert!(serde_yaml_ng::from_str::<Placement>(bad).is_err(), "{bad}");
         }
@@ -1256,7 +1316,7 @@ mod tests {
         for (edge, tablet_along, offset_px, want) in cases {
             let segment = single_segment(edge);
             let tablet = tablet_rect(&segment, &monitor, 0.5, TABLET_W, TABLET_H);
-            let got = tablet_exit_point(&segment, &monitor, &tablet, tablet_along, offset_px);
+            let got = exit_point(&segment, &monitor, &tablet, tablet_along, offset_px);
             assert_eq!(got, want, "{edge} along={tablet_along}");
         }
     }
@@ -1270,17 +1330,17 @@ mod tests {
             let right = single_segment(Edge::Right);
             let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
             assert_eq!(
-                tablet_exit_point(&right, &monitor, &tablet, 1067.5, offset_px),
+                exit_point(&right, &monitor, &tablet, 1067.5, offset_px),
                 (1919, 540)
             );
             assert_eq!(
-                tablet_exit_point(&right, &monitor, &tablet, 100.0, offset_px),
+                exit_point(&right, &monitor, &tablet, 100.0, offset_px),
                 (1919, 0)
             );
             let left = single_segment(Edge::Left);
             let tablet = tablet_rect(&left, &monitor, 0.5, TABLET_W, TABLET_H);
             assert_eq!(
-                tablet_exit_point(&left, &monitor, &tablet, 1067.5, offset_px),
+                exit_point(&left, &monitor, &tablet, 1067.5, offset_px),
                 (0, 540)
             );
         }
@@ -1288,7 +1348,7 @@ mod tests {
         let right = single_segment(Edge::Right);
         let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&right, &monitor, &tablet, 1067.5, 2),
+            exit_point(&right, &monitor, &tablet, 1067.5, 2),
             (1918, 540)
         );
     }
@@ -1308,7 +1368,7 @@ mod tests {
         let right = single_segment(Edge::Right);
         let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&right, &monitor, &tablet, 1067.5, exit_offset_px(4, 8)),
+            exit_point(&right, &monitor, &tablet, 1067.5, exit_offset_px(4, 8)),
             (1908, 540)
         );
     }
@@ -1319,15 +1379,15 @@ mod tests {
         let merged = EdgeSegment::new(1, Edge::Top, 0, 3840).unwrap();
         let tablet = tablet_rect(&merged, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&merged, &monitor, &tablet, 799.75, 2),
+            exit_point(&merged, &monitor, &tablet, 799.75, 2),
             (1120, 1)
         );
         assert_eq!(
-            tablet_exit_point(&merged, &monitor, &tablet, 3199.0, 2),
+            exit_point(&merged, &monitor, &tablet, 3199.0, 2),
             (1919, 1)
         );
         assert_eq!(
-            tablet_exit_point(&merged, &monitor, &tablet, 0.0, 2),
+            exit_point(&merged, &monitor, &tablet, 0.0, 2),
             (320, 1)
         );
     }
@@ -1345,14 +1405,14 @@ mod tests {
         let tablet = tablet_rect(&left, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(tablet.as_tuple(), (-5120.0, -528.0, -1920.0, 1608.0));
         assert_eq!(
-            tablet_exit_point(&left, &monitor, &tablet, 1067.5, 2),
+            exit_point(&left, &monitor, &tablet, 1067.5, 2),
             (-1919, 540)
         );
         // 右侧段必须落在负坐标显示器内部（right - margin = -2）。
         let right = EdgeSegment::new(2, Edge::Right, 0, 1080).unwrap();
         let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&right, &monitor, &tablet, 1067.5, 2),
+            exit_point(&right, &monitor, &tablet, 1067.5, 2),
             (-2, 540)
         );
     }
@@ -1365,30 +1425,30 @@ mod tests {
         let tablet = tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H);
         // tablet.top = -528；-528 + 1068.5 = 540.5 -> 540（偶），不是 541。
         assert_eq!(
-            tablet_exit_point(&right, &monitor, &tablet, 1068.5, 2),
+            exit_point(&right, &monitor, &tablet, 1068.5, 2),
             (1918, 540)
         );
         // -528 + 1069.5 = 541.5 -> 542（偶）。
         assert_eq!(
-            tablet_exit_point(&right, &monitor, &tablet, 1069.5, 2),
+            exit_point(&right, &monitor, &tablet, 1069.5, 2),
             (1918, 542)
         );
         // 水平边同理：tablet.left = -640；-640 + 1272.5 = 632.5 -> 632。
         let top = single_segment(Edge::Top);
         let tablet = tablet_rect(&top, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&top, &monitor, &tablet, 1272.5, 2),
+            exit_point(&top, &monitor, &tablet, 1272.5, 2),
             (632, 1)
         );
         // 段被夹到 [span_start, span_end-1]：越界落点不会跑出段。
         let short = EdgeSegment::new(1, Edge::Top, 100, 200).unwrap();
         let tablet = tablet_rect(&short, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&short, &monitor, &tablet, 10_000.0, 2),
+            exit_point(&short, &monitor, &tablet, 10_000.0, 2),
             (199, 1)
         );
         assert_eq!(
-            tablet_exit_point(&short, &monitor, &tablet, -10_000.0, 2),
+            exit_point(&short, &monitor, &tablet, -10_000.0, 2),
             (100, 1)
         );
     }
@@ -1401,9 +1461,114 @@ mod tests {
         let segment = EdgeSegment::new(1, Edge::Top, 5000, 6000).unwrap();
         let tablet = tablet_rect(&segment, &monitor, 0.5, TABLET_W, TABLET_H);
         assert_eq!(
-            tablet_exit_point(&segment, &monitor, &tablet, -10_000.0, 2),
+            exit_point(&segment, &monitor, &tablet, -10_000.0, 2),
             (0, 1)
         );
+    }
+
+    // -- 2.5.0：显示缩放（footprint） ------------------------------------
+
+    /// 足迹取整只发生一次，且必须夹到至少 1px。
+    #[test]
+    fn footprint_size_rounds_once_and_clamps() {
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, 1.0), (3200, 2136));
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, 0.5), (1600, 1068));
+        // 3200×0.375 = 1200，2136×0.375 = 801（.0 就近取偶）。
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, 0.375), (1200, 801));
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, 0.1), (320, 214));
+        // 越界 / NaN 先夹到合法范围，再由 footprint 兜底到 1px。
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, 9.0), (12800, 8544));
+        assert_eq!(footprint_size(1, 1, 0.1), (1, 1));
+        assert_eq!(footprint_size(TABLET_W, TABLET_H, f64::NAN), (3200, 2136));
+    }
+
+    /// 足迹矩形 = 设备尺寸 × scale 之后贴边；贴边侧长度变成足迹尺寸。
+    #[test]
+    fn tablet_footprint_scales_the_rect() {
+        let monitor = display1();
+        let right = single_segment(Edge::Right);
+        let tablet = tablet_footprint(&right, &monitor, 0.5, TABLET_W, TABLET_H, 0.5);
+        assert_eq!(tablet.as_tuple(), (1920.0, 6.0, 3520.0, 1074.0));
+        assert_eq!(tablet.width(), 1600.0);
+        assert_eq!(tablet.height(), 1068.0);
+        // scale = 1.0 必须与旧 tablet_rect 逐值一致。
+        assert_eq!(
+            tablet_footprint(&right, &monitor, 0.5, TABLET_W, TABLET_H, 1.0).as_tuple(),
+            tablet_rect(&right, &monitor, 0.5, TABLET_W, TABLET_H).as_tuple()
+        );
+    }
+
+    /// 入口按 s = 足迹/设备 映射：足迹中点仍落在设备中点。
+    #[test]
+    fn tablet_entry_point_scales_with_footprint() {
+        let monitor = display1();
+        let right = single_segment(Edge::Right);
+        let tablet = tablet_footprint(&right, &monitor, 0.5, TABLET_W, TABLET_H, 0.5);
+        // 足迹纵向 6..1074，PC y=540 → 设备 (540-6)/0.5 = 1068。
+        assert_eq!(
+            tablet_entry_point(&right, &tablet, 0.0, 540.0, TABLET_W, TABLET_H),
+            (0.0, 1068.0)
+        );
+        // 足迹顶端 → 设备 0；底端 → 设备 H-1（夹紧）。
+        assert_eq!(
+            tablet_entry_point(&right, &tablet, 0.0, 0.0, TABLET_W, TABLET_H),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            tablet_entry_point(&right, &tablet, 0.0, 5000.0, TABLET_W, TABLET_H),
+            (0.0, 2135.0)
+        );
+    }
+
+    /// 出口反向换算：入口 → 出口必须回到同一个 PC 坐标（±1px）。
+    #[test]
+    fn entry_exit_round_trip_at_every_scale() {
+        let monitor = display1();
+        for edge in ALL_EDGES {
+            let segment = single_segment(edge);
+            for scale in [0.25, 0.375, 0.5, 1.0, 1.5, 2.0] {
+                let tablet = tablet_footprint(&segment, &monitor, 0.5, TABLET_W, TABLET_H, scale);
+                // 从段中点压线：PC 坐标 → 平板入口 → 再原样送回 PC。
+                let want = if edge.is_vertical() { 540.0 } else { 960.0 };
+                let (ex, ey) = tablet_entry_point(
+                    &segment,
+                    &tablet,
+                    want,
+                    want,
+                    TABLET_W,
+                    TABLET_H,
+                );
+                let along = if edge.is_vertical() { ey } else { ex };
+                let (px, py) = tablet_exit_point(
+                    &segment,
+                    &monitor,
+                    &tablet,
+                    along,
+                    2,
+                    TABLET_W,
+                    TABLET_H,
+                );
+                let pc_along = if edge.is_vertical() { py } else { px };
+                assert!(
+                    (f64::from(pc_along) - want).abs() <= 1.0,
+                    "{edge:?} scale={scale}: {pc_along} != {want}"
+                );
+            }
+        }
+    }
+
+    /// 缩放只改足迹，不改设备像素：同一台平板在不同 scale 下入口都落在设备坐标系内。
+    #[test]
+    fn device_coordinates_are_scale_invariant() {
+        let monitor = display1();
+        let right = single_segment(Edge::Right);
+        let small = tablet_footprint(&right, &monitor, 0.5, TABLET_W, TABLET_H, 0.375);
+        let big = tablet_footprint(&right, &monitor, 0.5, TABLET_W, TABLET_H, 2.0);
+        for tablet in [small, big] {
+            let (x, y) = tablet_entry_point(&right, &tablet, 0.0, 540.0, TABLET_W, TABLET_H);
+            assert_eq!(x, 0.0);
+            assert!((0.0..=2135.0).contains(&y), "{y}");
+        }
     }
 }
 

@@ -11,8 +11,12 @@
     一起算进 SHA256SUMS.txt，导致校验和对应着一堆早已过期的安装包。
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File tools\release.ps1
-    powershell -ExecutionPolicy Bypass -File tools\release.ps1 -SkipTests -NoBundle
+    pwsh -File tools\release.ps1
+    pwsh -File tools\release.ps1 -SkipTests -NoBundle
+
+.NOTES
+    本文件是 UTF-8 无 BOM 且含中文：Windows PowerShell 5.1 会按 ANSI 解码，
+    直接报 "Missing expression after ','" 之类的语法错误。必须用 PowerShell 7（pwsh）。
 #>
 [CmdletBinding()]
 param(

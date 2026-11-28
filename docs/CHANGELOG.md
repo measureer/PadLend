@@ -2,6 +2,42 @@
 
 遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.5.0] — 2026-11-29
+
+### 变更
+
+- **布局页可以缩放平板了**：右键平板 →「缩放」选 50% / 75% / 100% / 125% / 150%，或
+  「自定义…」输入百分比（10%–400%）。缩放只改「平板在桌面上占多大」，不改设备分辨率；
+  画布上看到多大，实际能穿过的触发带就多长——解决「3K 平板在画布上比显示器还大」
+  （13" 3K 平板竖放在 1440p 显示器旁，画布比例 2.22 倍，物理比例只有 0.84 倍，建议 ~38%）。
+  改动只进预览，点「保存布局」才写盘；缩放比例横竖屏共用，保存时同步另一方向已有存档。
+- **删除「对齐方式」（等比 / 居中 / 1:1）**：这个字段只在配置、校验和菜单里出现，几何函数
+  从未读过它（tablet_rect / tablet_entry_point / tablet_exit_point 都不看 align）。现在
+  配置字段、Align 枚举、右键三项、前端类型与校验一起删除；旧配置里的 align 会被忽略，
+  scale 缺省 1.0，行为与旧版 1:1 逐像素一致。
+- **穿越改为按足迹等比映射**：足迹 = round(设备像素 × scale)，取整只做一次；入口
+  (pc − rect) / s、出口 rect + tablet × s，s = 足迹 / 设备。触发带、入口落点、出口
+  落点、遮挡条全部读同一份足迹，scale = 1 时与 2.4.0 完全一致。
+- **画布右键菜单删掉「测试穿越」**：手动接管/交还仍可从主界面菜单、托盘和快捷键使用，只是
+  不在布局画布上重复放一个入口。
+- **删除死代码**：win/desktop.rs 里已无调用方的 pc_to_tablet_along / tablet_to_pc_along
+  与对应测试一并删除，沿边映射只保留 logic/geometry.rs 一份实现。
+
+### 验证
+
+- cargo test --manifest-path padlend-core\Cargo.toml：579 passed、10 ignored（新增
+  footprint_size_rounds_once_and_clamps、tablet_footprint_scales_the_rect、
+  tablet_entry_point_scales_with_footprint、entry_exit_round_trip_at_every_scale、
+  device_coordinates_are_scale_invariant、placement_rejects_out_of_range_scale、
+  layouts_set_scale_syncs_only_existing_bucket）。
+- npm test：91 passed（16 个测试文件），新增「scale 只改桌面足迹」「scale 越界夹紧」两组。
+- 夹具机械改写：config_cases.json / config_default_saved.yaml /
+  config_mutated_saved.yaml 里的 align 全部替换为 scale，repair 文案改为
+  placement.scale=… 越界，已夹紧到 [0.1,4.0]。
+- 设计文档见 docs/DESIGN_LAYOUT_SCALE.md（含实现记录与偏差说明）。
+- 本地构建：dist/PadLend-2.5.0-setup.exe（5.68 MB）与 PadLend-2.5.0-win64.zip（7.58 MB），
+  SHA256SUMS.txt 已生成；安装器文件版本 2.5.0。
+
 ## [2.4.0] — 2026-11-25
 
 ### 变更

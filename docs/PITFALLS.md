@@ -1411,6 +1411,9 @@ pointer_speed`；失败时再补一条 `settings put` + 再读一次。每个 `a
   `center` 后被显示器拓扑变化重置。已有配置里显式写的 `proportional` 不迁移。
 - **教训**：改默认值先全仓搜字符串与枚举构造点，再补「缺省字段」和「非法值回退」两类测试；
   默认值本身也是契约，不能只测显式值。
+- **后续（2.5.0）**：这个字段从头到尾没参与几何计算，已整体删除；`Placement.scale` 取代它，
+  默认值仍是 1.0（见 DESIGN_LAYOUT_SCALE.md）。上面的教训同样适用于 scale：默认值散落在
+  `PlacementCfg::default`、serde 默认、repair 回退、`placement_from_dict` 回退、mock 共五处。
 
 ## 32. 2.2.2 补录：音频转发绑死连接建立时的输出设备（2026-11-20）
 

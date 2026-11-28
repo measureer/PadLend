@@ -44,7 +44,7 @@ use crate::constants::CORNER_DIRECTION_RATIO;
 use crate::logic::geometry::ALL_EDGES;
 use crate::win::dpi;
 
-pub use crate::logic::geometry::{Align, Edge, EdgeSegment, MonitorInfo, Placement, Rect};
+pub use crate::logic::geometry::{Edge, EdgeSegment, MonitorInfo, Placement, Rect};
 
 // ---------------------------------------------------------------------------
 // 错误
@@ -154,34 +154,6 @@ fn edge_index(edge: Edge) -> u8 {
     }
 }
 
-/// 与 Python `_clamp` 同语义的浮点夹取（NaN 会原样传播，因为两个比较都不成立）。
-fn clamp(value: f64, low: f64, high: f64) -> f64 {
-    if value < low {
-        low
-    } else if value > high {
-        high
-    } else {
-        value
-    }
-}
-
-/// 等价于 Python `int(round(value))`：四舍六入五成双（banker's rounding）。
-///
-/// Python 的 `round(float)` 是「就近取偶」，与 Rust `f64::round`（远离零）在 `x.5`
-/// 上不同，所以必须用 `round_ties_even`。NaN / inf 在 Python 会抛，这里退化为 0。
-fn round_to_i32(value: f64) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    let rounded = value.round_ties_even();
-    if rounded >= i32::MAX as f64 {
-        i32::MAX
-    } else if rounded <= i32::MIN as f64 {
-        i32::MIN
-    } else {
-        rounded as i32
-    }
-}
 
 /// 返回边线坐标：外侧 1px 扫描线的 x（垂直边）或 y（水平边）。
 fn edge_line(monitor: &MonitorInfo, edge: Edge) -> i32 {
@@ -297,20 +269,6 @@ fn bounding_box(monitors: &[MonitorInfo]) -> Rect {
         rect = rect.union(&monitor.rect);
     }
     rect
-}
-
-/// PC 沿边坐标 → 平板沿边坐标（6.3.5，返回 `0 .. t_size-1` 的浮点值）。
-pub fn pc_to_tablet_along(pc_along: i32, seg: &EdgeSegment, t_size: i32) -> f64 {
-    let span = (pc_along as i64 - seg.span_start as i64) as f64;
-    let t = span / seg.length().max(1) as f64;
-    clamp(t, 0.0, 1.0) * t_size.saturating_sub(1).max(0) as f64
-}
-
-/// 平板沿边坐标 → PC 沿边坐标（6.3.5，返回虚拟桌面整数坐标）。
-pub fn tablet_to_pc_along(t_along: f64, seg: &EdgeSegment, t_size: i32) -> i32 {
-    let t = clamp(t_along / t_size.saturating_sub(1).max(1) as f64, 0.0, 1.0);
-    let span = seg.span_start as f64 + t * seg.length().saturating_sub(1).max(0) as f64;
-    round_to_i32(span)
 }
 
 // ---------------------------------------------------------------------------
@@ -630,9 +588,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    const TABLET_W: i32 = 3200;
-    const TABLET_H: i32 = 2136;
-
     // -- 测试数据（历史：逐字段内联自 1.x 的 tests/fixtures/desktop_*.json）--
 
     fn monitor(
@@ -725,7 +680,7 @@ mod tests {
     }
 
     fn placement(seg: EdgeSegment) -> Placement {
-        Placement::new(seg, 0.5, Align::Proportional, None).expect("默认摆位合法")
+        Placement::new(seg, 0.5, 1.0, None).expect("默认摆位合法")
     }
 
     fn approx(value: f64, expected: f64) {
@@ -799,14 +754,13 @@ mod tests {
     fn geometry_types_are_reexported_not_redefined() {
         // 编译期证明 desktop 重新导出的就是 logic/geometry 的类型（Python 用的是 is 断言）。
         let edge: crate::logic::geometry::Edge = Edge::Left;
-        let align: crate::logic::geometry::Align = Align::Center;
         let rect: crate::logic::geometry::Rect = Rect::new(0, 0, 1920, 1080);
         let info: crate::logic::geometry::MonitorInfo =
             MonitorInfo::new(1, r"\\.\DISPLAY1", rect, 96, true);
         let segment: crate::logic::geometry::EdgeSegment =
             EdgeSegment::new(info.handle, edge, 0, 1080).expect("合法段");
         let placed: crate::logic::geometry::Placement =
-            Placement::new(segment, 0.5, align, None).expect("合法摆位");
+            Placement::new(segment, 0.5, 1.0, None).expect("合法摆位");
         assert_eq!(placed.segment, segment);
         assert_eq!(rect.width(), 1920);
     }
@@ -1064,37 +1018,6 @@ mod tests {
             map.resolve_corner(&corner, (1, 1), Some(Edge::Right)),
             Some(left)
         );
-    }
-
-    #[test]
-    fn along_mapping_formulas() {
-        let map = map_of("single");
-        let by_edge = segments_by_edge(&map);
-        let right = by_edge[&Edge::Right];
-        let top = by_edge[&Edge::Top];
-
-        approx(pc_to_tablet_along(0, &right, TABLET_H), 0.0);
-        approx(pc_to_tablet_along(540, &right, TABLET_H), 1067.5);
-        approx(
-            pc_to_tablet_along(1079, &right, TABLET_H),
-            1079.0 / 1080.0 * 2135.0,
-        );
-        approx(pc_to_tablet_along(1080, &right, TABLET_H), 2135.0);
-        approx(pc_to_tablet_along(-50, &right, TABLET_H), 0.0);
-
-        assert_eq!(tablet_to_pc_along(0.0, &right, TABLET_H), 0);
-        assert_eq!(tablet_to_pc_along(1067.5, &right, TABLET_H), 540);
-        assert_eq!(tablet_to_pc_along(2135.0, &right, TABLET_H), 1079);
-        assert_eq!(tablet_to_pc_along(-10.0, &right, TABLET_H), 0);
-        assert_eq!(tablet_to_pc_along(9999.0, &right, TABLET_H), 1079);
-
-        // 水平边用平板宽；t_size=1 时避免除零。
-        approx(pc_to_tablet_along(960, &top, TABLET_W), 1599.5);
-        assert_eq!(tablet_to_pc_along(1599.5, &top, TABLET_W), 960);
-        approx(pc_to_tablet_along(500, &right, 1), 0.0);
-        assert_eq!(tablet_to_pc_along(0.0, &right, 1), 0);
-        // t_size=1 时非零 t 夹到 1。
-        assert_eq!(tablet_to_pc_along(50.0, &right, 1), 1079);
     }
 
     // -- 错误文案 -----------------------------------------------------------
